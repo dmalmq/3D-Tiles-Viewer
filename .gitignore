@@ -6,3 +6,7 @@ public/tiles/*
 debug.log
 vite-*.log
 ui-*.png
+
+.claude/
+.playwright-mcp/
+test-results/
