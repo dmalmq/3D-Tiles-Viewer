@@ -1,0 +1,8 @@
+node_modules/
+dist/
+public/tiles/*
+!public/tiles/.gitkeep
+
+debug.log
+vite-*.log
+ui-*.png

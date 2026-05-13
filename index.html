@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Tiles Viewer</title>
+  </head>
+  <body>
+    <div id="cesiumContainer"></div>
+
+    <!-- ── Top header ──────────────────────────────────────── -->
+    <header id="appHeader">
+      <div id="appLogo">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+          <path d="M11 2L20 7V15L11 20L2 15V7L11 2Z" stroke="#0696D7" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M11 20V11M2 7L11 11L20 7" stroke="#0696D7" stroke-width="1.1" stroke-opacity="0.45" stroke-linejoin="round"/>
+        </svg>
+        <span data-i18n="header.title">3D Tiles Viewer</span>
+      </div>
+      <div id="headerActions">
+        <button id="saveSessionBtn" class="header-btn">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 9.5V11.5H12V9.5M6.5 1V8.5M3.5 5.5L6.5 8.5L9.5 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="header.save">Save</span>
+        </button>
+        <button id="loadSessionBtn" class="header-btn">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 9.5V11.5H12V9.5M6.5 8V0.5M3.5 3.5L6.5 0.5L9.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="header.load">Load</span>
+        </button>
+        <input type="file" id="sessionInput" accept=".json" style="display:none" />
+        <div class="header-divider"></div>
+        <button id="languageToggle" class="header-btn header-icon-btn" data-i18n-title="header.lang.title" data-i18n-aria-label="header.lang.aria" title="Switch language" aria-label="Switch language">
+          <span id="languageToggleLabel">あ</span>
+        </button>
+        <button id="themeToggle" class="header-btn header-icon-btn" data-i18n-title="header.theme.title" data-i18n-aria-label="header.theme.aria" title="Toggle light/dark theme" aria-label="Toggle theme">
+          <!-- Moon (shown in dark mode) -->
+          <svg class="theme-icon theme-icon-dark" width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M13 9.5A6 6 0 0 1 5.5 2a6 6 0 1 0 7.5 7.5Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <!-- Sun (shown in light mode) -->
+          <svg class="theme-icon theme-icon-light" width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><circle cx="7.5" cy="7.5" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M7.5 1v1.5M7.5 12.5V14M1 7.5h1.5M12.5 7.5H14M3.1 3.1l1.1 1.1M10.8 10.8l1.1 1.1M10.8 3.1l-1.1 1.1M4.2 10.8l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Left panel ──────────────────────────────────────── -->
+    <aside id="leftPanel">
+
+      <!-- Import Data -->
+      <div class="panel-section">
+        <button class="section-header" type="button">
+          <span class="section-title" data-i18n="section.import">Import Data</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="section-body">
+          <button id="importDataBtn" class="primary-btn" type="button" data-i18n="import.button">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M2 9.5C1.4 9.5 1 9.1 1 8.5V3C1 2.4 1.4 2 2 2H5L6.5 3.5H11C11.6 3.5 12 3.9 12 4.5V8.5C12 9.1 11.6 9.5 11 9.5H2Z" stroke="currentColor" stroke-width="1.3"/><path d="M6.5 5.5V9M4.5 7L6.5 9L8.5 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Import Data…
+          </button>
+          <ul id="importedLayersList"></ul>
+          <p id="noImportedLayersMsg" class="empty-msg" data-i18n="import.empty">No imported layers.</p>
+        </div>
+      </div>
+
+      <!-- 3D Models -->
+      <div class="panel-section">
+        <button class="section-header" type="button">
+          <span class="section-title" data-i18n="section.models">3D Models</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="section-body">
+          <div class="input-row">
+            <input type="text" id="urlInput" placeholder="Tileset URL…" data-i18n-placeholder="models.urlPlaceholder" />
+            <button id="loadUrlBtn" class="secondary-btn" type="button" data-i18n="models.loadUrl">Load</button>
+          </div>
+          <button id="loadFileBtn" class="secondary-btn full-width" type="button" data-i18n="models.browse">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 4C1 3.4 1.4 3 2 3H5L6.5 4.5H11C11.6 4.5 12 4.9 12 5.5V10C12 10.6 11.6 11 11 11H2C1.4 11 1 10.6 1 10V4Z" stroke="currentColor" stroke-width="1.3"/></svg>
+            Browse Files…
+          </button>
+          <input type="file" id="fileInput" webkitdirectory style="display:none" />
+          <p id="fileStatus" class="status-text"></p>
+          <ul id="buildingList"></ul>
+          <p id="noBuildingsMsg" class="empty-msg" data-i18n="models.empty">No models loaded.</p>
+          <label class="toggle-label">
+            <input type="checkbox" id="lodFilterToggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span data-i18n="models.highestLodOnly">Highest LOD only</span>
+          </label>
+          <p id="lodFilterStatus" class="status-text"></p>
+        </div>
+      </div>
+
+      <!-- CityGML Layers -->
+      <div class="panel-section">
+        <button class="section-header" type="button">
+          <span class="section-title" data-i18n="section.cityGml">CityGML Layers</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="section-body">
+          <button id="loadCityGmlBtn" class="secondary-btn full-width" type="button" data-i18n="cityGml.button">Load .gml…</button>
+          <input type="file" id="cityGmlInput" accept=".gml,.xml" style="display:none" />
+          <ul id="cityGmlList"></ul>
+          <p id="noCityGmlMsg" class="empty-msg" data-i18n="cityGml.empty">No CityGML layers loaded.</p>
+        </div>
+      </div>
+
+      <!-- Geodatabase (.gdb) -->
+      <div class="panel-section">
+        <button class="section-header" type="button">
+          <span class="section-title" data-i18n="gdb.section.title">Geodatabase (.gdb)</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="section-body">
+          <button id="loadGdbZipBtn" class="secondary-btn full-width" type="button" data-i18n="gdb.pickZip">Geodatabase (.gdb.zip or .zip)…</button>
+          <button id="loadGdbFolderBtn" class="secondary-btn full-width" type="button" data-i18n="gdb.pickFolder">Geodatabase folder…</button>
+          <button id="reassignGdbBtn" class="secondary-btn full-width" type="button" data-i18n="gdb.reassign.button">Reassign existing layers…</button>
+          <input type="file" id="gdbInput" accept=".gdb.zip,.zip" style="display:none" />
+          <input type="file" id="gdbDirInput" webkitdirectory style="display:none" />
+        </div>
+      </div>
+
+      <!-- Basemap -->
+      <div class="panel-section">
+        <button class="section-header" type="button">
+          <span class="section-title" data-i18n="section.basemap">Basemap</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="section-body">
+          <label class="field-label" for="tokenInput" data-i18n="basemap.tokenLabel">Cesium Ion Token</label>
+          <div class="input-row">
+            <input type="text" id="tokenInput" placeholder="Paste token here…" data-i18n-placeholder="basemap.tokenPlaceholder" />
+            <button id="applyTokenBtn" class="secondary-btn compact" type="button" data-i18n="basemap.applyToken">Apply</button>
+          </div>
+          <label class="field-label" for="imagerySelect" data-i18n="basemap.imageryLabel">Imagery</label>
+          <select id="imagerySelect">
+            <option value="osm" data-i18n="imagery.osm">OpenStreetMap</option>
+            <option value="ion-bing-aerial" data-i18n="imagery.bingAerial">Bing Aerial (Ion)</option>
+            <option value="ion-sentinel" data-i18n="imagery.sentinel">Sentinel-2 (Ion)</option>
+            <option value="esri-street" data-i18n="imagery.esriStreet">Esri World Street Map</option>
+            <option value="esri-topo" data-i18n="imagery.esriTopo">Esri World Topo Map</option>
+            <option value="esri-imagery" data-i18n="imagery.esriImagery">Esri World Imagery</option>
+            <option value="esri-light-gray" data-i18n="imagery.esriLightGray">Esri Light Gray Canvas</option>
+            <option value="carto-positron" selected data-i18n="imagery.cartoPositron">CartoDB Positron</option>
+          </select>
+          <label class="field-label" for="terrainSelect" data-i18n="basemap.terrainLabel">Terrain</label>
+          <select id="terrainSelect">
+            <option value="ellipsoid" data-i18n="terrain.flat">Flat (no elevation)</option>
+            <option value="cesium-world" data-i18n="terrain.cesiumWorld">Cesium World Terrain (Ion)</option>
+            <option value="gsi-dem5a" data-i18n="terrain.gsi5a">Japan DEM 5A – GSI (free)</option>
+            <option value="gsi-dem5b" data-i18n="terrain.gsi5b">Japan DEM 5B – GSI (free)</option>
+            <option value="plateau" selected data-i18n="terrain.plateau">PLATEAU Terrain (Japan)</option>
+          </select>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ── Right panel ─────────────────────────────────────── -->
+    <aside id="rightPanel">
+
+      <!-- Placeholder shown when no building is selected -->
+      <div id="noSelectionMsg" class="no-selection-placeholder">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 3L29 10V22L16 29L3 22V10L16 3Z" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" stroke-linejoin="round"/><path d="M16 29V18M3 10L16 18L29 10" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-linejoin="round"/></svg>
+        <p data-i18n-html="right.noSelection">Select a 3D model<br/>to edit its properties</p>
+      </div>
+
+      <label class="toggle-label right-panel-toggle" id="buildingOverlapToggleLabel" style="display:none">
+        <input type="checkbox" id="buildingOverlapToggle" checked />
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span data-i18n="building.plateauOverlap">Ghost overlapping PLATEAU</span>
+      </label>
+
+      <!-- Building detail (shown by JS when a building is selected) -->
+      <div id="buildingDetail" style="display:none">
+
+        <div class="building-detail-header">
+          <span id="buildingDetailLabel"></span>
+          <div class="building-detail-actions">
+            <button id="zoomExtentsBtn" class="icon-btn" type="button" title="Zoom to extents" data-i18n-title="right.zoomExtents.title">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 4.5V1H4.5M9.5 1H13V4.5M13 9.5V13H9.5M4.5 13H1V9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </button>
+            <button id="removeAllBtn" class="icon-btn danger-icon-btn" type="button" title="Remove model" data-i18n-title="right.removeModel.title">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2 4H12M5.5 4V2.5H8.5V4M5 5V11M7 5V11M9 5V11M3 4L3.5 12H10.5L11 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="reloadTilesetBanner" style="display:none">
+          <p class="reload-tileset-msg" data-i18n="right.reload.message">Model not loaded — select the folder to restore it.</p>
+          <button id="reloadTilesetBtn" class="secondary-btn full-width" type="button" data-i18n="right.reload.button">Re-load 3D Model…</button>
+        </div>
+
+        <!-- Floor Levels -->
+        <div class="panel-section">
+          <button class="section-header" type="button">
+            <span class="section-title" data-i18n="section.floors">Floor Levels</span>
+            <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="section-body">
+            <div class="input-row">
+              <input type="text" id="levelNameInput" placeholder="2F" class="w-short" data-i18n-placeholder="level.namePlaceholder" />
+              <input type="number" id="levelCeilingInput" placeholder="Elevation (m)" step="0.1" class="w-flex" data-i18n-placeholder="level.elevPlaceholder" />
+              <button id="addLevelBtn" class="secondary-btn compact" type="button" data-i18n="level.add">Add</button>
+            </div>
+            <div class="base-elev-row">
+              <span data-i18n="level.baseElev">Base elevation (WGS84 m)</span>
+              <input type="number" id="levelBaseInput" value="0" step="0.1" class="w-short" />
+            </div>
+            <ul id="levelList"></ul>
+          </div>
+        </div>
+
+        <input type="file" id="shpInput" accept=".zip" style="display:none" />
+
+        <!-- Aliases -->
+        <div class="panel-section">
+          <button class="section-header" type="button">
+            <span class="section-title" data-i18n="building.aliases.label">Aliases</span>
+            <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="section-body">
+            <input type="text" id="aliasesInput" placeholder="Comma-separated, e.g. Oazo, オアゾ" data-i18n-placeholder="building.aliases.placeholder" class="w-flex" />
+            <p class="field-help" data-i18n="building.aliases.help">Alternate names used to match GDB layer filenames to this building.</p>
+          </div>
+        </div>
+
+        <!-- Placement -->
+        <div class="panel-section">
+          <button class="section-header" type="button">
+            <span class="section-title" data-i18n="section.placement">Placement</span>
+            <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="section-body">
+            <label class="field-label" for="heightSlider" data-i18n="placement.heightOffset">Height Offset (m)</label>
+            <div class="slider-row">
+              <input type="range" id="heightSlider" min="-100" max="100" value="0" step="0.5" />
+              <input type="number" id="heightOffset" value="0" step="0.5" class="w-number" />
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /buildingDetail -->
+
+      <div id="plateauToolsPanel" class="panel-section plateau-tools-panel" style="display:none">
+        <button class="section-header" type="button">
+          <span class="section-title" data-i18n="plateau.manualTitle">PLATEAU Feature</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="section-body">
+          <p id="noPlateauSelectionMsg" class="empty-msg" data-i18n="plateau.noFeatureSelected">No PLATEAU feature selected.</p>
+          <div id="plateauSelectedFeature" style="display:none">
+            <div class="plateau-feature-name" id="plateauSelectedLabel"></div>
+            <div class="plateau-feature-actions">
+              <button id="plateauGhostBtn" class="secondary-btn compact" type="button" data-i18n="plateau.transparent">Transparent</button>
+              <button id="plateauHideBtn" class="secondary-btn compact" type="button" data-i18n="plateau.hideFeature">Hide</button>
+              <button id="plateauVisibleBtn" class="secondary-btn compact" type="button" data-i18n="plateau.visible">Visible</button>
+            </div>
+          </div>
+          <div class="plateau-overrides-header">
+            <span data-i18n="plateau.overridesTitle">Manual overrides</span>
+            <button id="plateauClearOverridesBtn" class="secondary-btn compact" type="button" data-i18n="plateau.clearAll">Clear all</button>
+          </div>
+          <ul id="plateauOverrideList"></ul>
+          <p id="noPlateauOverridesMsg" class="empty-msg" data-i18n="plateau.noOverrides">No manual overrides.</p>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ── Panel collapse tabs ────────────────────────────── -->
+    <button id="leftPanelToggle" class="panel-toggle panel-toggle-left" type="button" title="Toggle left panel" aria-label="Collapse left panel" data-i18n-title="panel.left.title" data-i18n-aria-label="panel.left.aria">
+      <svg class="toggle-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><polyline points="7,1 3,5 7,9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="rightPanelToggle" class="panel-toggle panel-toggle-right" type="button" title="Toggle right panel" aria-label="Collapse right panel" data-i18n-title="panel.right.title" data-i18n-aria-label="panel.right.aria">
+      <svg class="toggle-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><polyline points="3,1 7,5 3,9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <!-- Revit link split confirmation dialog -->
+    <dialog id="splitConfirmDialog" class="link-split-dialog">
+      <form method="dialog">
+        <h3 data-i18n="split.title">Multiple Revit links detected</h3>
+        <p data-i18n-html="split.bodyHtml">
+          This tileset contains
+          <strong><span id="splitGroupCount">0</span></strong>
+          linked Revit models. Split into separate buildings?
+        </p>
+        <ul id="splitGroupList" class="link-split-group-list"></ul>
+        <div class="link-split-actions">
+          <button id="splitConfirmBtn" value="split" class="primary-btn" type="submit" data-i18n="split.split">Split</button>
+          <button id="splitMergeBtn" value="merge" class="secondary-btn" type="submit" data-i18n="split.merge">Keep merged</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="floatingMenu" class="floating-menu" style="display:none"></div>
+
+    <div id="loadingOverlay" class="loading-overlay" hidden>
+      <div class="loading-overlay-spinner" aria-hidden="true"></div>
+      <p id="loadingOverlayMessage" class="loading-overlay-message"></p>
+      <p id="loadingOverlaySubmessage" class="loading-overlay-submessage"></p>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

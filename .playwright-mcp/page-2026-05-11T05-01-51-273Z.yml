@@ -1,0 +1,127 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - link "Cesium ion" [ref=e11] [cursor=pointer]:
+      - /url: https://cesium.com/
+      - img "Cesium ion" [ref=e12]
+    - generic [ref=e13]:
+      - button "View Home" [ref=e14] [cursor=pointer]
+      - button "3D" [ref=e18] [cursor=pointer]
+      - generic [ref=e25]:
+        - button "Navigation Instructions" [ref=e26] [cursor=pointer]
+        - generic [ref=e29]:
+          - button "Mouse" [ref=e30] [cursor=pointer]:
+            - img [ref=e31]
+            - text: Mouse
+          - button "Touch" [ref=e32] [cursor=pointer]:
+            - img [ref=e33]
+            - text: Touch
+          - table [ref=e35]:
+            - rowgroup [ref=e36]:
+              - row "Pan view Left click + drag" [ref=e37]:
+                - cell [ref=e38]:
+                  - img [ref=e39]
+                - cell "Pan view Left click + drag" [ref=e40]:
+                  - generic [ref=e41]: Pan view
+                  - generic [ref=e42]: Left click + drag
+              - row "Zoom view Right click + drag, or Mouse wheel scroll" [ref=e43]:
+                - cell [ref=e44]:
+                  - img [ref=e45]
+                - cell "Zoom view Right click + drag, or Mouse wheel scroll" [ref=e46]:
+                  - generic [ref=e47]: Zoom view
+                  - generic [ref=e48]: Right click + drag, or
+                  - generic [ref=e49]: Mouse wheel scroll
+              - row "Rotate view Middle click + drag, or CTRL + Left/Right click + drag" [ref=e50]:
+                - cell [ref=e51]:
+                  - img [ref=e52]
+                - cell "Rotate view Middle click + drag, or CTRL + Left/Right click + drag" [ref=e53]:
+                  - generic [ref=e54]: Rotate view
+                  - generic [ref=e55]: Middle click + drag, or
+                  - generic [ref=e56]: CTRL + Left/Right click + drag
+    - button "Full screen" [ref=e58] [cursor=pointer]
+  - banner [ref=e61]:
+    - generic [ref=e62]:
+      - img [ref=e63]
+      - generic [ref=e66]: 3D Tiles Viewer
+    - generic [ref=e67]:
+      - button "Save" [ref=e68] [cursor=pointer]:
+        - img [ref=e69]
+        - generic [ref=e71]: Save
+      - button "Load" [ref=e72] [cursor=pointer]:
+        - img [ref=e73]
+        - generic [ref=e75]: Load
+      - button "Switch language" [ref=e77] [cursor=pointer]:
+        - generic [ref=e78]: あ
+      - button "Toggle theme" [ref=e79] [cursor=pointer]:
+        - img [ref=e80]
+  - complementary [ref=e82]:
+    - generic [ref=e83]:
+      - button "Import Data" [ref=e84] [cursor=pointer]:
+        - generic [ref=e85]: Import Data
+        - img [ref=e86]
+      - generic [ref=e88]:
+        - button "Import Data…" [ref=e89] [cursor=pointer]:
+          - img [ref=e90]
+          - text: Import Data…
+        - list
+        - paragraph [ref=e93]: No imported layers.
+    - generic [ref=e94]:
+      - button "3D Models" [ref=e95] [cursor=pointer]:
+        - generic [ref=e96]: 3D Models
+        - img [ref=e97]
+      - generic [ref=e99]:
+        - generic [ref=e100]:
+          - textbox "Tileset URL…" [ref=e101]
+          - button "Load" [ref=e102] [cursor=pointer]
+        - button "Browse Files…" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+          - text: Browse Files…
+        - paragraph
+        - list
+        - paragraph [ref=e106]: No models loaded.
+        - generic [ref=e110] [cursor=pointer]: Highest LOD only
+        - paragraph
+    - generic [ref=e111]:
+      - button "CityGML Layers" [ref=e112] [cursor=pointer]:
+        - generic [ref=e113]: CityGML Layers
+        - img [ref=e114]
+      - generic [ref=e116]:
+        - button "Load .gml…" [ref=e117] [cursor=pointer]
+        - list
+        - paragraph [ref=e118]: No CityGML layers loaded.
+    - generic [ref=e119]:
+      - button "Basemap" [ref=e120] [cursor=pointer]:
+        - generic [ref=e121]: Basemap
+        - img [ref=e122]
+      - generic [ref=e124]:
+        - generic [ref=e125]: Cesium Ion Token
+        - generic [ref=e126]:
+          - textbox "Cesium Ion Token" [ref=e127]:
+            - /placeholder: Paste token here…
+          - button "Apply" [ref=e128] [cursor=pointer]
+        - generic [ref=e129]: Imagery
+        - combobox "Imagery" [ref=e130] [cursor=pointer]:
+          - option "OpenStreetMap"
+          - option "Bing Aerial (Ion)"
+          - option "Sentinel-2 (Ion)"
+          - option "Esri World Street Map"
+          - option "Esri World Topo Map"
+          - option "Esri World Imagery"
+          - option "Esri Light Gray Canvas"
+          - option "CartoDB Positron" [selected]
+        - generic [ref=e131]: Terrain
+        - combobox "Terrain" [ref=e132] [cursor=pointer]:
+          - option "Flat (no elevation)"
+          - option "Cesium World Terrain (Ion)"
+          - option "Japan DEM 5A – GSI (free)"
+          - option "Japan DEM 5B – GSI (free)"
+          - option "PLATEAU Terrain (Japan)" [selected]
+  - complementary [ref=e133]:
+    - generic [ref=e134]:
+      - img [ref=e135]
+      - paragraph [ref=e138]:
+        - text: Select a 3D model
+        - text: to edit its properties
+  - button "Collapse left panel" [ref=e139] [cursor=pointer]:
+    - img [ref=e140]
+  - button "Collapse right panel" [ref=e142] [cursor=pointer]:
+    - img [ref=e143]
