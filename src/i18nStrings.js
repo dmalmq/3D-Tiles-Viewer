@@ -18,6 +18,10 @@ const en = {
   "header.theme.aria": "Toggle theme",
   "header.lang.title": "Switch language",
   "header.lang.aria": "Switch language",
+  "search.placeholder": "Search points…",
+  "search.noMatches": "No matches",
+  "search.subtitleUnassigned": "{layer} · Unassigned",
+  "search.untitledPoint": "Untitled point",
 
   // Sections
   "section.import": "Import Data",
@@ -26,6 +30,49 @@ const en = {
   "section.basemap": "Basemap",
   "section.floors": "Floor Levels",
   "section.placement": "Placement",
+  "section.scene": "Scene",
+  "section.environment": "Environment",
+  "section.importedLayers": "Imported Layers",
+
+  // Left action bar / Add Data menu / settings popover
+  "leftBar.addData": "+ Add Data",
+  "leftBar.addData.title": "Add data to the scene",
+  "leftBar.settings.title": "Settings",
+  "addData.url": "Tileset URL…",
+  "addData.folder": "Tileset folder…",
+  "addData.cityGml": "CityGML (.gml)…",
+  "addData.gdbZip": "Geodatabase (.gdb.zip)…",
+  "addData.gdbFolder": "Geodatabase folder…",
+  "addData.gdbReassign": "Reassign GDB layers…",
+  "addData.catalog": "PLATEAU catalog…",
+  "scene.filterPlaceholder": "Filter scene…",
+  "scene.itemsCount": "{count} items",
+  "scene.itemsCountFiltered": "{filtered}/{total} items",
+  "scene.empty": "No models. Click + Add Data.",
+  "settings.title": "Settings",
+  "dnd.tooltip": "Drag to reassign — or right-click for menu",
+
+  // Context menus (scene tree)
+  "ctx.building.addLevel": "Add level…",
+  "ctx.building.setBaseElev": "Set base elevation…",
+  "ctx.building.shiftTileset": "Shift tileset…",
+  "ctx.level.editName": "Edit name…",
+  "ctx.level.editElev": "Edit elevation…",
+  "ctx.layer.adjustHeight": "Adjust height…",
+  "ctx.layer.resetHeight": "Reset height offset",
+  "ctx.layer.remove": "Remove",
+
+  // Per-layer height offset
+  "layer.heightOffsetTitle": "Height offset for this layer (m). Lifts the layer above (positive) or below (negative) its level's elevation.",
+
+  // Popover labels
+  "popover.ok": "OK",
+  "popover.cancel": "Cancel",
+  "popover.levelName": "Name",
+  "popover.elevation": "Elevation (m)",
+  "popover.baseElevation": "Base elevation (WGS84 m)",
+  "popover.tilesetShift": "Shift tileset (m)",
+  "popover.layerHeight": "Layer height offset (m)",
 
   // Import Data section (left panel)
   "import.button": "Import Data…",
@@ -115,11 +162,14 @@ const en = {
   "gdb.dialog.option.choose": "—",
   "gdb.dialog.cancel": "Cancel",
   "gdb.dialog.import": "Import",
+  "gdb.dialog.importSelected": "Import selected",
   "gdb.dialog.apply": "Apply",
   "gdb.dialog.reassignTitle": "Reassign GDB layers",
+  "gdb.dialog.reassignSubtitle": "{count} existing GDB layers found. Select rows to move, skip, or leave unchanged.",
   "gdb.dialog.filter.placeholder": "Filter rows by name…",
   "gdb.reassign.button": "Reassign existing layers…",
   "gdb.reassign.empty": "No GDB layers to reassign yet.",
+  "gdb.import.duplicatesSkipped": "Skipped {count} GDB layer(s) that already exist.",
   "gdb.dialog.featureCount": "{count} features · {geom}",
   "gdb.dialog.geom.polygon": "POLYGON",
   "gdb.dialog.geom.line": "LINE",
@@ -127,12 +177,13 @@ const en = {
   "gdb.dialog.geom.mixed": "MIXED",
   "gdb.confidence.high": "High confidence match",
   "gdb.confidence.medium": "Partial match",
-  "gdb.confidence.none": "No match — skipped by default",
+  "gdb.confidence.none": "No name match",
   "gdb.dialog.floor.unresolvedTitle": "Auto-match could not determine a floor — layer will import at the building base.",
   "gdb.dialog.floor.perFeatureBadge": "(per-feature, {count} floors)",
   "gdb.dialog.floor.noFloor": "(no floor)",
   "gdb.dialog.floor.subRowCount": "{count} features",
-  "gdb.unassigned.groupName": "Unassigned layers",
+  "gdb.dialog.parentRowHint": "set defaults, then select floors below",
+  "gdb.unassigned.groupName": "Imported (drag to assign)",
   "gdb.unassigned.moveTitle": "Move to building",
 
   // Placement
@@ -159,6 +210,8 @@ const en = {
   "panel.left.aria": "Collapse left panel",
   "panel.right.title": "Toggle right panel",
   "panel.right.aria": "Collapse right panel",
+  "panel.modelLevels": "Model levels",
+  "panel.buildings": "Buildings",
 
   // Revit link split dialog
   "split.title": "Multiple Revit links detected",
@@ -294,6 +347,10 @@ const ja = {
   "header.theme.aria": "テーマ切替",
   "header.lang.title": "言語切替",
   "header.lang.aria": "言語切替",
+  "search.placeholder": "ポイントを検索…",
+  "search.noMatches": "一致なし",
+  "search.subtitleUnassigned": "{layer} · 未割当",
+  "search.untitledPoint": "名称未設定ポイント",
 
   // Sections
   "section.import": "インポート",
@@ -302,6 +359,49 @@ const ja = {
   "section.basemap": "ベースマップ",
   "section.floors": "フロアレベル",
   "section.placement": "配置",
+  "section.scene": "シーン",
+  "section.environment": "環境",
+  "section.importedLayers": "インポート済みレイヤ",
+
+  // Left action bar / Add Data menu / settings popover
+  "leftBar.addData": "+ データ追加",
+  "leftBar.addData.title": "シーンにデータを追加",
+  "leftBar.settings.title": "設定",
+  "addData.url": "タイルセット URL…",
+  "addData.folder": "タイルセットフォルダ…",
+  "addData.cityGml": "CityGML (.gml)…",
+  "addData.gdbZip": "ジオデータベース (.gdb.zip)…",
+  "addData.gdbFolder": "ジオデータベースフォルダ…",
+  "addData.gdbReassign": "GDB レイヤを再割り当て…",
+  "addData.catalog": "PLATEAU カタログ…",
+  "scene.filterPlaceholder": "シーン内を検索…",
+  "scene.itemsCount": "{count} 件",
+  "scene.itemsCountFiltered": "{filtered}/{total} 件",
+  "scene.empty": "モデルがありません。+ データ追加をクリックしてください。",
+  "settings.title": "設定",
+  "dnd.tooltip": "ドラッグで再割り当て — 右クリックでメニュー",
+
+  // Context menus (scene tree)
+  "ctx.building.addLevel": "フロアを追加…",
+  "ctx.building.setBaseElev": "基準高を設定…",
+  "ctx.building.shiftTileset": "タイルセットを移動…",
+  "ctx.level.editName": "名前を編集…",
+  "ctx.level.editElev": "高さを編集…",
+  "ctx.layer.adjustHeight": "高さを調整…",
+  "ctx.layer.resetHeight": "高さオフセットをリセット",
+  "ctx.layer.remove": "削除",
+
+  // Per-layer height offset
+  "layer.heightOffsetTitle": "このレイヤの高さオフセット (m)。レベル基準より上 (+) または下 (−) にずらします。",
+
+  // Popover labels
+  "popover.ok": "OK",
+  "popover.cancel": "キャンセル",
+  "popover.levelName": "名前",
+  "popover.elevation": "高さ (m)",
+  "popover.baseElevation": "基準高 (WGS84 m)",
+  "popover.tilesetShift": "タイルセットの移動 (m)",
+  "popover.layerHeight": "レイヤ高さオフセット (m)",
 
   // Import Data section (left panel)
   "import.button": "データをインポート…",
@@ -391,11 +491,14 @@ const ja = {
   "gdb.dialog.option.choose": "—",
   "gdb.dialog.cancel": "キャンセル",
   "gdb.dialog.import": "インポート",
+  "gdb.dialog.importSelected": "選択をインポート",
   "gdb.dialog.apply": "適用",
   "gdb.dialog.reassignTitle": "GDB レイヤを再割り当て",
+  "gdb.dialog.reassignSubtitle": "{count} 件の既存 GDB レイヤがあります。移動、スキップ、または変更しない行を選択してください。",
   "gdb.dialog.filter.placeholder": "レイヤ名で絞り込み…",
   "gdb.reassign.button": "既存レイヤを再割り当て…",
   "gdb.reassign.empty": "再割り当て可能な GDB レイヤがありません。",
+  "gdb.import.duplicatesSkipped": "既に存在する GDB レイヤ {count} 件をスキップしました。",
   "gdb.dialog.featureCount": "{count} 件 · {geom}",
   "gdb.dialog.geom.polygon": "ポリゴン",
   "gdb.dialog.geom.line": "ライン",
@@ -403,12 +506,13 @@ const ja = {
   "gdb.dialog.geom.mixed": "混在",
   "gdb.confidence.high": "高一致",
   "gdb.confidence.medium": "部分一致",
-  "gdb.confidence.none": "一致なし — 既定ではスキップ",
+  "gdb.confidence.none": "名前一致なし",
   "gdb.dialog.floor.unresolvedTitle": "自動一致でフロアを特定できませんでした — 建物の基底位置にインポートされます。",
   "gdb.dialog.floor.perFeatureBadge": "(地物ごと、{count} フロア)",
   "gdb.dialog.floor.noFloor": "(フロアなし)",
   "gdb.dialog.floor.subRowCount": "{count} 件",
-  "gdb.unassigned.groupName": "未割当のレイヤ",
+  "gdb.dialog.parentRowHint": "既定値を設定し、下のフロアを選択",
+  "gdb.unassigned.groupName": "インポート済み（ドラッグして割当）",
   "gdb.unassigned.moveTitle": "建物へ移動",
 
   // Placement
@@ -435,6 +539,8 @@ const ja = {
   "panel.left.aria": "左パネルを折り畳む",
   "panel.right.title": "右パネル切替",
   "panel.right.aria": "右パネルを折り畳む",
+  "panel.modelLevels": "モデルフロア",
+  "panel.buildings": "建物",
 
   // Revit link split dialog
   "split.title": "複数の Revit リンクを検出しました",

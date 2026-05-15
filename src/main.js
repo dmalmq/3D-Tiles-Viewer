@@ -63,6 +63,7 @@ import { parseCityGml } from "./cityGmlLoader.js";
 import { loadGdb } from "./gdbLoader.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
+import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber } from "./floorSplit.js";
 
 // -- State --
 let viewer;
@@ -84,7 +85,14 @@ const importedLayers = [];
 // has the same shape as building.shapefileLayers[*] but with no parent
 // building and no levelKey: { name, dataSource, color, features, source }.
 const unassignedLayers = [];
-let _unassignedTreeExpanded = true;
+let _unassignedTreeExpanded = false;
+let _buildingsSectionExpanded = true;
+// Global model-level list, derived from the union of every building's levels by
+// floor number (via levelNameToNumber). User edits to elevation/name are
+// preserved across rebuilds. Drives the single global level selector that fans
+// out to each building.
+let modelLevels = []; // { floorNumber, name, elevation }
+let activeModelLevelIndex = -1; // -1 = "All floors"
 let selectedPlateauFeature = null;
 let plateauOverridesEnabled = true;
 
@@ -134,7 +142,10 @@ const SHAPEFILE_FLOOR_CLEARANCE_M = 0.05;
 // Point markers are vertical primitives (a screen-space circle anchored at a
 // 3D position) so 50 mm isn't enough — depth testing clips the bottom of the
 // marker into the floor. Lift them an extra 100 mm.
-const POINT_EXTRA_HEIGHT_M = 0.10;
+const POINT_EXTRA_HEIGHT_M = 0.25;
+// Fixture layers (_Fixture) need extra lift above the floor plane to avoid
+// overlapping with other units and the floor mesh itself.
+const FIXTURE_EXTRA_HEIGHT_M = 0.10;
 let _shpColorIdx = 0;
 let _shpPendingTarget = null; // { buildingIndex } set by the building-row + button
 let _gdbBusy = false;         // serialize concurrent gdal3.js loads
@@ -161,35 +172,26 @@ const loadFileBtn = document.getElementById("loadFileBtn");
 const fileInput = document.getElementById("fileInput");
 const fileStatus = document.getElementById("fileStatus");
 const terrainSelect = document.getElementById("terrainSelect");
-const buildingListEl = document.getElementById("buildingList");
-const noBuildingsMsg = document.getElementById("noBuildingsMsg");
-const buildingDetailEl = document.getElementById("buildingDetail");
-const buildingDetailLabel = document.getElementById("buildingDetailLabel");
-const reloadTilesetBanner = document.getElementById("reloadTilesetBanner");
-const reloadTilesetBtn = document.getElementById("reloadTilesetBtn");
-const zoomExtentsBtn = document.getElementById("zoomExtentsBtn");
-const removeAllBtn = document.getElementById("removeAllBtn");
+const sceneFilterInput = document.getElementById("sceneFilter");
+const sceneItemCountEl = document.getElementById("sceneItemCount");
+const noScenePlaceholder = document.getElementById("noScenePlaceholder");
+const addDataBtn = document.getElementById("addDataBtn");
+const leftAddDataMenu = document.getElementById("leftAddDataMenu");
+const urlLoadPopover = document.getElementById("urlLoadPopover");
+const leftSettingsBtn = document.getElementById("leftSettingsBtn");
+const leftSettingsPopover = document.getElementById("leftSettingsPopover");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
-const levelNameInput = document.getElementById("levelNameInput");
-const levelCeilingInput = document.getElementById("levelCeilingInput");
-const addLevelBtn = document.getElementById("addLevelBtn");
-const levelBaseInput = document.getElementById("levelBaseInput");
 const levelListEl = document.getElementById("levelList");
-const aliasesInput = document.getElementById("aliasesInput");
 const shpInput = document.getElementById("shpInput");
 const gdbInput = document.getElementById("gdbInput");
 const gdbDirInput = document.getElementById("gdbDirInput");
 const loadGdbZipBtn = document.getElementById("loadGdbZipBtn");
 const loadGdbFolderBtn = document.getElementById("loadGdbFolderBtn");
-const reassignGdbBtn = document.getElementById("reassignGdbBtn");
 const floatingMenu = document.getElementById("floatingMenu");
-const heightSlider = document.getElementById("heightSlider");
-const heightOffsetInput = document.getElementById("heightOffset");
 const importDataBtn = document.getElementById("importDataBtn");
 const importedLayersListEl = document.getElementById("importedLayersList");
 const noImportedLayersMsg = document.getElementById("noImportedLayersMsg");
-const noSelectionMsgEl = document.getElementById("noSelectionMsg");
 const loadCityGmlBtn = document.getElementById("loadCityGmlBtn");
 const cityGmlInput = document.getElementById("cityGmlInput");
 const cityGmlListEl = document.getElementById("cityGmlList");
@@ -198,25 +200,22 @@ const splitConfirmDialog = document.getElementById("splitConfirmDialog");
 const splitGroupCountEl = document.getElementById("splitGroupCount");
 const splitGroupListEl = document.getElementById("splitGroupList");
 const buildingOverlapToggle = document.getElementById("buildingOverlapToggle");
-const buildingOverlapToggleLabel = document.getElementById("buildingOverlapToggleLabel");
-const plateauToolsPanel = document.getElementById("plateauToolsPanel");
-const noPlateauSelectionMsg = document.getElementById("noPlateauSelectionMsg");
-const plateauSelectedFeatureEl = document.getElementById("plateauSelectedFeature");
-const plateauSelectedLabel = document.getElementById("plateauSelectedLabel");
-const plateauGhostBtn = document.getElementById("plateauGhostBtn");
-const plateauHideBtn = document.getElementById("plateauHideBtn");
-const plateauVisibleBtn = document.getElementById("plateauVisibleBtn");
-const plateauClearOverridesBtn = document.getElementById("plateauClearOverridesBtn");
-const plateauOverrideListEl = document.getElementById("plateauOverrideList");
-const noPlateauOverridesMsg = document.getElementById("noPlateauOverridesMsg");
+const plateauFloatingCard = document.getElementById("plateauFloatingCard");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingOverlayMessage = document.getElementById("loadingOverlayMessage");
 const loadingOverlaySub = document.getElementById("loadingOverlaySubmessage");
+const searchInput = document.getElementById("searchInput");
+const searchDropdown = document.getElementById("searchDropdown");
 
 let worldTerrainProvider = null;
 const PLATEAU_TERRAIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
 let plateauTerrainProvider = null;
 const lodFilter = new LodFilter();
+
+let searchQuery = "";
+let searchResults = [];
+let searchSelectedIndex = -1;
+let searchOpen = false;
 
 // -- Initialize --
 async function init() {
@@ -255,7 +254,6 @@ async function init() {
   saveSessionBtn.addEventListener("click", saveSession);
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
   sessionInput.addEventListener("change", handleLoadSession);
-  reloadTilesetBtn.addEventListener("click", handleReloadTilesetClick);
   applyTokenBtn.addEventListener("click", applyToken);
   imagerySelect.addEventListener("change", switchImagery);
   terrainSelect.addEventListener("change", switchTerrain);
@@ -269,23 +267,6 @@ async function init() {
   });
   fileInput.addEventListener("change", handleFileSelect);
   lodFilterToggle.addEventListener("change", handleLodFilterToggle);
-  zoomExtentsBtn.addEventListener("click", () => {
-    if (selectedBuildingIndex !== -1) zoomToBuilding(selectedBuildingIndex);
-  });
-  removeAllBtn.addEventListener("click", handleRemoveAll);
-  addLevelBtn.addEventListener("click", handleAddLevel);
-  levelBaseInput.addEventListener("change", () => {
-    const b = buildings[selectedBuildingIndex];
-    if (!b) return;
-    b.levelBaseElevation = parseFloat(levelBaseInput.value) || 0;
-    applyShapefileLayerHeights(b);
-    if (b.activeLevelIndex !== -1) applyActiveLevelForBuilding(b);
-  });
-  aliasesInput.addEventListener("change", () => {
-    const b = buildings[selectedBuildingIndex];
-    if (!b) return;
-    b.aliases = parseAliases(aliasesInput.value);
-  });
   shpInput.addEventListener("change", handleShpSelect);
   gdbInput.addEventListener("change", handleGdbZipSelect);
   gdbDirInput.addEventListener("change", handleGdbDirSelect);
@@ -297,45 +278,216 @@ async function init() {
     if (_gdbBusy) return;
     gdbDirInput.click();
   });
-  reassignGdbBtn.addEventListener("click", () => {
-    if (_gdbBusy) return;
-    openGdbReassignDialog();
-  });
   loadCityGmlBtn.addEventListener("click", () => cityGmlInput.click());
   cityGmlInput.addEventListener("change", handleCityGmlSelect);
   document.addEventListener("click", hideFloatingMenu);
   document.addEventListener("keydown", e => { if (e.key === "Escape") hideFloatingMenu(); });
-  heightSlider.addEventListener("input", handleHeightChange);
-  heightOffsetInput.addEventListener("change", handleHeightChange);
+  // Clear layer selection when clicking outside any layer row, context menu, or popover.
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".shp-tree-item")) return;
+    if (e.target.closest(".floating-menu")) return;
+    if (e.target.closest(".left-popover")) return;
+    if (clearLayerSelection()) renderLevelList();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && clearLayerSelection()) renderLevelList();
+  });
   buildingOverlapToggle.addEventListener("change", handleBuildingOverlapToggle);
-  plateauGhostBtn.addEventListener("click", () => setSelectedPlateauOverride("ghost"));
-  plateauHideBtn.addEventListener("click", () => setSelectedPlateauOverride("hidden"));
-  plateauVisibleBtn.addEventListener("click", () => setSelectedPlateauOverride(null));
-  plateauClearOverridesBtn.addEventListener("click", clearPlateauOverrides);
   importDataBtn.addEventListener("click", () =>
     openImportDataModal(viewer, loadTilesetFromUrl, (layer) => {
       importedLayers.push(layer);
       initializePlateauLayer(layer);
       renderImportedLayersList();
-      renderBuildingDetail();
+      renderPlateauFloatingCard();
     }, {
       getPreferredImportPosition,
     })
   );
 
-  renderBuildingList();
+  renderLevelList(); syncRemoveAllBtnAndLod();
   renderImportedLayersList();
   initSectionCollapse();
   initPanelToggles();
   initThemeToggle();
   initLanguageToggle();
+  initSearch();
   initHighlight();
+  initInfoBoxStyling();
+  initLeftActionBar();
+  initSceneFilter();
+  initLeftPanelResizer();
 }
 
+function initLeftPanelResizer() {
+  const resizer = document.getElementById("leftPanelResizer");
+  if (!resizer) return;
+
+  const MIN_W = 220;
+  const MAX_W = 600;
+
+  const saved = parseInt(localStorage.getItem("leftPanelWidth") || "", 10);
+  if (Number.isFinite(saved) && saved >= MIN_W && saved <= MAX_W) {
+    document.documentElement.style.setProperty("--panel-width", `${saved}px`);
+  }
+
+  let dragging = false;
+  resizer.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    resizer.setPointerCapture(e.pointerId);
+    document.body.classList.add("panel-resizing");
+    e.preventDefault();
+  });
+  resizer.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const w = Math.min(MAX_W, Math.max(MIN_W, e.clientX));
+    document.documentElement.style.setProperty("--panel-width", `${w}px`);
+  });
+  const stop = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    try { resizer.releasePointerCapture(e.pointerId); } catch (_) {}
+    document.body.classList.remove("panel-resizing");
+    const current = parseInt(
+      getComputedStyle(document.documentElement).getPropertyValue("--panel-width"),
+      10
+    );
+    if (Number.isFinite(current)) {
+      localStorage.setItem("leftPanelWidth", String(current));
+    }
+  };
+  resizer.addEventListener("pointerup", stop);
+  resizer.addEventListener("pointercancel", stop);
+}
+
+// Wires the left panel's action bar: + Add Data dropdown + settings gear.
+// Each Add Data menu item dispatches to an existing handler (file input
+// click or button click) — no new import logic is added here.
+function initLeftActionBar() {
+  if (!addDataBtn || !leftAddDataMenu) return;
+
+  const positionPopover = (anchorBtn, popoverEl) => {
+    const rect = anchorBtn.getBoundingClientRect();
+    popoverEl.style.top = `${rect.bottom + 4}px`;
+    popoverEl.style.left = `${rect.left}px`;
+  };
+
+  const closeAllLeftPopovers = () => {
+    leftAddDataMenu.style.display = "none";
+    if (urlLoadPopover) urlLoadPopover.style.display = "none";
+    if (leftSettingsPopover) leftSettingsPopover.style.display = "none";
+  };
+
+  addDataBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = leftAddDataMenu.style.display !== "none";
+    closeAllLeftPopovers();
+    if (open) return;
+    positionPopover(addDataBtn, leftAddDataMenu);
+    leftAddDataMenu.style.display = "";
+  });
+
+  leftAddDataMenu.querySelectorAll("li[data-action]").forEach((li) => {
+    li.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const action = li.getAttribute("data-action");
+      closeAllLeftPopovers();
+      switch (action) {
+        case "add-url":
+          positionPopover(addDataBtn, urlLoadPopover);
+          urlLoadPopover.style.display = "";
+          urlInput.focus();
+          urlInput.select();
+          break;
+        case "add-folder":
+          loadFileBtn.click();
+          break;
+        case "add-citygml":
+          loadCityGmlBtn.click();
+          break;
+        case "add-gdb-zip":
+          loadGdbZipBtn.click();
+          break;
+        case "add-gdb-folder":
+          loadGdbFolderBtn.click();
+          break;
+        case "review-gdb":
+          openGdbReassignDialog();
+          break;
+        case "add-catalog":
+          importDataBtn.click();
+          break;
+      }
+    });
+  });
+
+  if (leftSettingsBtn && leftSettingsPopover) {
+    leftSettingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = leftSettingsPopover.style.display !== "none";
+      closeAllLeftPopovers();
+      if (open) return;
+      // Right-align to the gear so the popover doesn't overflow the panel.
+      const rect = leftSettingsBtn.getBoundingClientRect();
+      leftSettingsPopover.style.top = `${rect.bottom + 4}px`;
+      // Defer to measure width.
+      leftSettingsPopover.style.display = "";
+      leftSettingsPopover.style.left = `${Math.max(8, rect.right - leftSettingsPopover.offsetWidth)}px`;
+    });
+  }
+
+  // Close popovers on outside click and Escape.
+  document.addEventListener("click", (e) => {
+    if (
+      leftAddDataMenu.contains(e.target) ||
+      (urlLoadPopover && urlLoadPopover.contains(e.target)) ||
+      (leftSettingsPopover && leftSettingsPopover.contains(e.target)) ||
+      addDataBtn.contains(e.target) ||
+      (leftSettingsBtn && leftSettingsBtn.contains(e.target))
+    ) {
+      return;
+    }
+    closeAllLeftPopovers();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAllLeftPopovers();
+  });
+  // After a tileset URL load attempt, hide the popover.
+  if (loadUrlBtn && urlLoadPopover) {
+    loadUrlBtn.addEventListener("click", () => {
+      urlLoadPopover.style.display = "none";
+    });
+  }
+}
+
+function initSceneFilter() {
+  if (!sceneFilterInput) return;
+  sceneFilterInput.addEventListener("input", () => {
+    renderLevelList();
+  });
+}
+
+// Persist each panel section's collapsed state in localStorage keyed by the
+// section title. Sections with .section-header-static (e.g. the Scene tree)
+// are skipped — those are always expanded. Defaults to expanded unless a
+// previous value was stored.
 function initSectionCollapse() {
-  document.querySelectorAll(".section-header").forEach((header) => {
+  document.querySelectorAll(".panel-section").forEach((section) => {
+    const header = section.querySelector(".section-header");
+    if (!header || header.classList.contains("section-header-static")) return;
+    const titleEl = header.querySelector(".section-title");
+    const key = titleEl ? `section:${titleEl.textContent.trim()}:collapsed` : null;
+    if (key && localStorage.getItem(key) === "1") {
+      section.classList.add("collapsed");
+    }
     header.addEventListener("click", () => {
-      header.closest(".panel-section").classList.toggle("collapsed");
+      section.classList.toggle("collapsed");
+      if (key) {
+        if (section.classList.contains("collapsed")) {
+          localStorage.setItem(key, "1");
+        } else {
+          localStorage.removeItem(key);
+        }
+      }
     });
   });
 }
@@ -343,9 +495,6 @@ function initSectionCollapse() {
 function initPanelToggles() {
   document.getElementById("leftPanelToggle").addEventListener("click", () => {
     document.body.classList.toggle("left-collapsed");
-  });
-  document.getElementById("rightPanelToggle").addEventListener("click", () => {
-    document.body.classList.toggle("right-collapsed");
   });
 }
 
@@ -376,8 +525,8 @@ function initLanguageToggle() {
     updateLanguageToggleLabel();
   });
   onLanguageChange(() => {
-    renderBuildingList();
-    renderBuildingDetail();
+    renderLevelList(); syncRemoveAllBtnAndLod();
+    renderPlateauFloatingCard();
     renderImportedLayersList();
     renderLevelList();
     renderCityGmlList();
@@ -433,7 +582,7 @@ function initHighlight() {
       selectPlateauFeature(plateauLayer, picked);
     } else {
       selectedPlateauFeature = null;
-      renderBuildingDetail();
+      renderPlateauFloatingCard();
     }
 
     if (picked instanceof Cesium3DTileFeature) {
@@ -600,6 +749,7 @@ async function switchImagery() {
       );
       break;
   }
+  applyUndergroundMode();
 }
 
 // -- Terrain --
@@ -870,7 +1020,7 @@ function selectPlateauFeature(layer, feature) {
     featureKey,
     label: getPlateauFeatureLabel(feature, featureKey),
   };
-  renderBuildingDetail();
+  renderPlateauFloatingCard();
 }
 
 function setSelectedPlateauOverride(mode) {
@@ -890,7 +1040,7 @@ function setSelectedPlateauOverride(mode) {
   }
 
   applyPlateauLayerStyle(layer);
-  renderPlateauFeatureControls();
+  renderPlateauFloatingCard();
 }
 
 function clearPlateauOverrides() {
@@ -900,7 +1050,7 @@ function clearPlateauOverrides() {
     applyPlateauLayerStyle(layer);
   }
   selectedPlateauFeature = null;
-  renderBuildingDetail();
+  renderPlateauFloatingCard();
 }
 
 function restorePlateauOverride(layerId, featureKey) {
@@ -912,42 +1062,102 @@ function restorePlateauOverride(layerId, featureKey) {
   if (selectedPlateauFeature?.layerId === layerId && selectedPlateauFeature.featureKey === featureKey) {
     selectedPlateauFeature = null;
   }
-  renderBuildingDetail();
+  renderPlateauFloatingCard();
 }
 
 function updateBuildingOverlapToggle() {
-  buildingOverlapToggleLabel.style.display = hasPlateauLayers() ? "" : "none";
-  buildingOverlapToggle.checked = plateauOverridesEnabled;
+  if (buildingOverlapToggle) buildingOverlapToggle.checked = plateauOverridesEnabled;
 }
 
 function handleBuildingOverlapToggle() {
   plateauOverridesEnabled = buildingOverlapToggle.checked;
   refreshAllPlateauOverrideStyles();
-  renderPlateauFeatureControls();
+  renderPlateauFloatingCard();
 }
 
-function renderPlateauFeatureControls() {
+// Populate the floating PLATEAU card. Visible whenever a feature is picked or
+// at least one override exists; hidden otherwise. Replaces the old
+// renderPlateauFeatureControls() which targeted the right panel.
+function renderPlateauFloatingCard() {
   updateBuildingOverlapToggle();
+  if (!plateauFloatingCard) return;
 
   const showTools = shouldShowPlateauToolsPanel();
-  plateauToolsPanel.style.display = showTools ? "" : "none";
-  if (!showTools) return;
+  if (!showTools) {
+    plateauFloatingCard.hidden = true;
+    plateauFloatingCard.innerHTML = "";
+    return;
+  }
+  plateauFloatingCard.hidden = false;
+  plateauFloatingCard.innerHTML = "";
+
+  // Header with title + close
+  const header = document.createElement("div");
+  header.className = "card-header";
+  const title = document.createElement("span");
+  title.textContent = t("plateau.manualTitle");
+  header.appendChild(title);
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "card-close-btn";
+  closeBtn.type = "button";
+  closeBtn.textContent = "×";
+  closeBtn.title = t("modal.close");
+  closeBtn.addEventListener("click", () => {
+    selectedPlateauFeature = null;
+    renderPlateauFloatingCard();
+  });
+  header.appendChild(closeBtn);
+  plateauFloatingCard.appendChild(header);
 
   const selected = selectedPlateauFeature;
-  noPlateauSelectionMsg.style.display = selected ? "none" : "block";
-  plateauSelectedFeatureEl.style.display = selected ? "" : "none";
-
   if (selected) {
     const layer = importedLayers.find((l) => l.id === selected.layerId) || selected.layer;
     const mode = layer?.plateauOverrides?.get(selected.featureKey)?.mode ?? null;
-    plateauSelectedLabel.textContent = selected.label || selected.featureKey;
-    plateauSelectedLabel.title = selected.featureKey;
-    plateauGhostBtn.classList.toggle("active", mode === "ghost");
-    plateauHideBtn.classList.toggle("active", mode === "hidden");
-    plateauVisibleBtn.classList.toggle("active", mode === null);
+
+    const nameDiv = document.createElement("div");
+    nameDiv.className = "plateau-feature-name";
+    nameDiv.textContent = selected.label || selected.featureKey;
+    nameDiv.title = selected.featureKey;
+    plateauFloatingCard.appendChild(nameDiv);
+
+    const actions = document.createElement("div");
+    actions.className = "plateau-feature-actions";
+    const mkBtn = (labelKey, modeValue) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "secondary-btn compact";
+      b.textContent = t(labelKey);
+      b.classList.toggle("active", mode === modeValue);
+      b.addEventListener("click", () => setSelectedPlateauOverride(modeValue));
+      return b;
+    };
+    actions.appendChild(mkBtn("plateau.transparent", "ghost"));
+    actions.appendChild(mkBtn("plateau.hideFeature", "hidden"));
+    actions.appendChild(mkBtn("plateau.visible", null));
+    plateauFloatingCard.appendChild(actions);
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "empty-msg";
+    empty.textContent = t("plateau.noFeatureSelected");
+    plateauFloatingCard.appendChild(empty);
   }
 
-  plateauOverrideListEl.innerHTML = "";
+  // Overrides list
+  const overridesHeader = document.createElement("div");
+  overridesHeader.className = "plateau-overrides-header";
+  const overridesTitle = document.createElement("span");
+  overridesTitle.textContent = t("plateau.overridesTitle");
+  overridesHeader.appendChild(overridesTitle);
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "secondary-btn compact";
+  clearBtn.textContent = t("plateau.clearAll");
+  clearBtn.addEventListener("click", clearPlateauOverrides);
+  overridesHeader.appendChild(clearBtn);
+  plateauFloatingCard.appendChild(overridesHeader);
+
+  const overridesList = document.createElement("ul");
+  overridesList.id = "plateauOverrideList";
   let count = 0;
   for (const layer of getPlateauLayers()) {
     initializePlateauLayer(layer);
@@ -973,12 +1183,18 @@ function renderPlateauFeatureControls() {
       li.appendChild(nameSpan);
       li.appendChild(modeSpan);
       li.appendChild(restoreBtn);
-      plateauOverrideListEl.appendChild(li);
+      overridesList.appendChild(li);
     }
   }
+  plateauFloatingCard.appendChild(overridesList);
 
-  noPlateauOverridesMsg.style.display = count === 0 ? "block" : "none";
-  plateauClearOverridesBtn.disabled = count === 0;
+  if (count === 0) {
+    const emptyOverrides = document.createElement("p");
+    emptyOverrides.className = "empty-msg";
+    emptyOverrides.textContent = t("plateau.noOverrides");
+    plateauFloatingCard.appendChild(emptyOverrides);
+  }
+  clearBtn.disabled = count === 0;
 }
 
 // -- LOD filter --
@@ -1306,8 +1522,8 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
   applyFiltersForTileset(tileset);
 
   selectedBuildingIndex = buildings.indexOf(createdBuildings[0]);
-  renderBuildingList();
-  renderBuildingDetail();
+  renderLevelList(); syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
 
   // Compute per-link bounding spheres in the background; until they're ready,
   // zoomToBuilding falls back to tileset.boundingSphere.
@@ -1376,8 +1592,8 @@ function zoomToBuilding(i) {
     zoomToTileset(viewer, b.tileset);
   }
 
-  renderBuildingList();
-  renderBuildingDetail();
+  renderLevelList(); syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
 }
 
 /**
@@ -1420,9 +1636,8 @@ function promptSplitConfirm(split, baseName) {
 
 function selectBuilding(i) {
   selectedBuildingIndex = i;
-  if (buildings[i]) buildings[i]._levelTreeExpanded = true;
-  renderBuildingList();
-  renderBuildingDetail();
+  renderLevelList(); syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
 }
 
 function handleRemoveBuilding(index) {
@@ -1456,8 +1671,10 @@ function handleRemoveBuilding(index) {
     selectedBuildingIndex--;
   }
   fileStatus.textContent = "";
-  renderBuildingList();
-  renderBuildingDetail();
+  rebuildModelLevels();
+  renderLevelList(); syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
+  applyUndergroundMode();
 }
 
 function handleRemoveAll() {
@@ -1477,60 +1694,15 @@ function handleRemoveAll() {
   }
   buildings.length = 0;
   selectedBuildingIndex = -1;
+  activeModelLevelIndex = -1;
+  rebuildModelLevels();
   fileStatus.textContent = "";
-  renderBuildingList();
-  renderBuildingDetail();
+  renderLevelList(); syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
+  applyUndergroundMode();
 }
 
-function renderBuildingList() {
-  buildingListEl.innerHTML = "";
-  noBuildingsMsg.style.display = buildings.length === 0 ? "block" : "none";
-  removeAllBtn.disabled = buildings.length === 0;
-
-  buildings.forEach((b, i) => {
-    const li = document.createElement("li");
-    li.className = "building-item"
-      + (i === selectedBuildingIndex ? " selected" : "")
-      + (b._tilesetMissing ? " missing-tileset" : "");
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "building-name";
-    nameSpan.textContent = b.name;
-    nameSpan.title = b.name;
-    nameSpan.addEventListener("click", () => selectBuilding(i));
-
-    let chip = null;
-    if (b.linkFilter) {
-      chip = document.createElement("span");
-      chip.className = "building-link-chip";
-      chip.textContent = b.linkFilter.value === "" ? t("building.chip.host") : t("building.chip.link");
-      chip.title = `${b.linkFilter.property}: ${b.linkFilter.value || "(host)"}`;
-    }
-
-    const badge = document.createElement("span");
-    badge.className = "building-level-badge";
-    badge.textContent = b._tilesetMissing
-      ? t("building.noModelBadge")
-      : b.activeLevelIndex === -1
-        ? t("building.allBadge")
-        : b.levels[b.activeLevelIndex]?.name ?? t("building.allBadge");
-
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "building-remove-btn";
-    removeBtn.textContent = t("generic.removeX");
-    removeBtn.title = t("building.removeTitle");
-    removeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      handleRemoveBuilding(i);
-    });
-
-    li.appendChild(nameSpan);
-    if (chip) li.appendChild(chip);
-    li.appendChild(badge);
-    li.appendChild(removeBtn);
-    buildingListEl.appendChild(li);
-  });
-
+function syncRemoveAllBtnAndLod() {
   updateLodFilterStatus();
 }
 
@@ -1591,7 +1763,7 @@ function removeImportedLayer(index, rerender = true) {
   importedLayers.splice(index, 1);
   if (rerender) {
     renderImportedLayersList();
-    renderBuildingDetail();
+    renderPlateauFloatingCard();
   }
 }
 
@@ -1602,42 +1774,8 @@ function clearImportedLayers(rerender = true) {
   selectedPlateauFeature = null;
   if (rerender) {
     renderImportedLayersList();
-    renderBuildingDetail();
+    renderPlateauFloatingCard();
   }
-}
-
-function renderBuildingDetail() {
-  const b = buildings[selectedBuildingIndex];
-  if (!b) {
-    buildingDetailEl.style.display = "none";
-    noSelectionMsgEl.style.display = shouldShowPlateauToolsPanel() ? "none" : "";
-    renderPlateauFeatureControls();
-    return;
-  }
-  buildingDetailEl.style.display = "";
-  noSelectionMsgEl.style.display = "none";
-  buildingDetailLabel.textContent = b.name;
-  if (b._tilesetMissing) {
-    reloadTilesetBanner.style.display = "";
-    const msgEl = reloadTilesetBanner.querySelector(".reload-tileset-msg");
-    const btnEl = reloadTilesetBtn;
-    if (b.directoryHandleId) {
-      msgEl.textContent = t("right.grant.message", { folder: b._directoryFolderName || "unknown" });
-      btnEl.textContent = t("right.grant.button");
-    } else {
-      msgEl.textContent = t("right.reload.message");
-      btnEl.textContent = t("right.reload.button");
-    }
-  } else {
-    reloadTilesetBanner.style.display = "none";
-  }
-  zoomExtentsBtn.disabled = !b.tileset;
-  levelBaseInput.value = b.levelBaseElevation;
-  heightSlider.value = b.heightOffset;
-  heightOffsetInput.value = b.heightOffset;
-  aliasesInput.value = (b.aliases ?? []).join(", ");
-  renderLevelList();
-  renderPlateauFeatureControls();
 }
 
 // -- Levels --
@@ -1654,6 +1792,7 @@ function populateLevelsForBuilding(building, data) {
   // levels.json is ordered bottom→top; sort defensively by floor elevation
   building.levels.sort((a, b) => a.floor - b.floor);
   building.activeLevelIndex = -1;
+  rebuildModelLevels();
 }
 
 async function detectLevelsFromFiles(files) {
@@ -1676,34 +1815,146 @@ async function detectLevelsFromUrl(tilesetUrl) {
   return null;
 }
 
-function handleAddLevel() {
-  const b = buildings[selectedBuildingIndex];
-  if (!b) return;
-  const name = levelNameInput.value.trim();
-  const floor = parseFloat(levelCeilingInput.value);
-  if (!name || isNaN(floor)) return;
-  b.levels.push({ name, key: null, floor });
-  b.levels.sort((a, b) => a.floor - b.floor);
-  levelNameInput.value = "";
-  levelCeilingInput.value = "";
+function handleAddLevel(building, name, floor) {
+  if (!building) return;
+  if (!name || !Number.isFinite(floor)) return;
+  building.levels.push({ name, key: null, floor });
+  building.levels.sort((a, b) => a.floor - b.floor);
+  rebuildModelLevels();
   renderLevelList();
 }
 
+// Rebuild the global modelLevels list from the union of all buildings' levels
+// by floor number. Preserves any user-edited name/elevation across rebuilds.
+// Clamps activeModelLevelIndex if it now points past the end.
+function rebuildModelLevels() {
+  const preserved = new Map(modelLevels.map(m => [m.floorNumber, m]));
+  const seen = new Map(); // floorNumber → derived defaults
+  for (const b of buildings) {
+    if (!b.levels) continue;
+    for (const lvl of b.levels) {
+      const fn = levelNameToNumber(lvl.name);
+      if (fn == null) continue;
+      if (!seen.has(fn)) {
+        seen.set(fn, {
+          name: lvl.name,
+          elevation: (b.levelBaseElevation ?? 0) + (lvl.floor ?? 0),
+        });
+      }
+    }
+  }
+  const next = [];
+  for (const [fn, derived] of seen) {
+    const existing = preserved.get(fn);
+    next.push(existing
+      ? { floorNumber: fn, name: existing.name, elevation: existing.elevation }
+      : { floorNumber: fn, name: derived.name, elevation: derived.elevation });
+  }
+  next.sort((a, b) => a.floorNumber - b.floorNumber);
+  modelLevels = next;
+  if (activeModelLevelIndex >= modelLevels.length) activeModelLevelIndex = -1;
+}
+
+// Set the global active model level and fan out to each building's
+// activeLevelIndex by floor-number match. Buildings without a matching level
+// fall back to -1 (no per-building filter for them).
+function selectModelLevel(modelLevelIndex) {
+  activeModelLevelIndex = modelLevelIndex;
+  if (modelLevelIndex < 0) {
+    for (const b of buildings) {
+      if (b.activeLevelIndex !== -1) {
+        b.activeLevelIndex = -1;
+        applyActiveLevelForBuilding(b);
+      }
+    }
+  } else {
+    const targetFn = modelLevels[modelLevelIndex]?.floorNumber;
+    for (const b of buildings) {
+      let matchIdx = -1;
+      if (targetFn != null) {
+        matchIdx = b.levels.findIndex(l => levelNameToNumber(l.name) === targetFn);
+      }
+      if (b.activeLevelIndex !== matchIdx) {
+        b.activeLevelIndex = matchIdx;
+        applyActiveLevelForBuilding(b);
+      }
+    }
+  }
+  applyUndergroundMode();
+  renderLevelList();
+  syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
+}
+
+// Wrapper preserved for existing UI call sites. Maps a per-building level
+// click to its floor number and updates the global model level.
 function selectLevel(buildingIndex, levelIndex) {
-  const b = buildings[buildingIndex];
-  if (!b) return;
-  b.activeLevelIndex = levelIndex;
-  b._levelTreeExpanded = true;
+  const source = buildings[buildingIndex];
+  if (!source) return;
   selectedBuildingIndex = buildingIndex;
-  applyActiveLevelForBuilding(b);
-  renderBuildingList();
-  renderBuildingDetail();
+  if (levelIndex === -1) {
+    selectModelLevel(-1);
+    return;
+  }
+  const lvl = source.levels[levelIndex];
+  if (!lvl) return;
+  const fn = levelNameToNumber(lvl.name);
+  if (fn == null) {
+    // Unmappable level (no floor-number synonym): apply per-building only.
+    source.activeLevelIndex = levelIndex;
+    applyActiveLevelForBuilding(source);
+    renderLevelList();
+    return;
+  }
+  const mli = modelLevels.findIndex(m => m.floorNumber === fn);
+  if (mli === -1) {
+    rebuildModelLevels();
+    const mli2 = modelLevels.findIndex(m => m.floorNumber === fn);
+    if (mli2 === -1) return;
+    selectModelLevel(mli2);
+    return;
+  }
+  selectModelLevel(mli);
 }
 
 function applyActiveLevelForBuilding(building) {
   if (!building.tileset) return;
   applyFiltersForTileset(building.tileset);
   applyLevelToShapefilesForBuilding(building);
+  applyUndergroundMode();
+}
+
+const UNDERGROUND_BASE_COLOR = Color.fromCssColorString("#1a1a1a");
+let savedGlobeBaseColor = null;
+
+function isUndergroundActive() {
+  if (activeModelLevelIndex < 0) return false;
+  const ml = modelLevels[activeModelLevelIndex];
+  return !!ml && ml.floorNumber < 0;
+}
+
+function applyUndergroundMode() {
+  const layer = viewer.imageryLayers.get(0);
+  const globe = viewer.scene.globe;
+  if (isUndergroundActive()) {
+    if (savedGlobeBaseColor === null) {
+      savedGlobeBaseColor = Color.clone(globe.baseColor);
+    }
+    globe.baseColor = UNDERGROUND_BASE_COLOR;
+    if (layer) {
+      layer.alpha = 0.0;
+      layer.brightness = 1.0;
+    }
+  } else {
+    if (savedGlobeBaseColor !== null) {
+      globe.baseColor = savedGlobeBaseColor;
+      savedGlobeBaseColor = null;
+    }
+    if (layer) {
+      layer.alpha = 1.0;
+      layer.brightness = 1.0;
+    }
+  }
 }
 
 function applyFiltersForTileset(tileset) {
@@ -1730,6 +1981,15 @@ function applyFiltersForTileset(tileset) {
  * set), it falls back to the first sibling. The owning sibling's level filter
  * (activeLevelIndex / levels) then decides feature.show.
  */
+function getFeatureFloorNumber(building, lvlName) {
+  if (lvlName == null) return null;
+  const cache = building._levelNameToFloor ??= new Map();
+  if (cache.has(lvlName)) return cache.get(lvlName);
+  const fn = levelNameToNumber(lvlName);
+  cache.set(lvlName, fn);
+  return fn;
+}
+
 function applyFiltersToContent(tileset, content) {
   const count = content?.featuresLength ?? 0;
   if (count === 0) return;
@@ -1738,13 +1998,13 @@ function applyFiltersToContent(tileset, content) {
   if (siblings.length === 0) return;
 
   const linkProperty = siblings[0]?.linkFilter?.property ?? null;
+  const activeFn = activeModelLevelIndex < 0
+    ? null
+    : modelLevels[activeModelLevelIndex]?.floorNumber ?? null;
 
   const states = siblings.map(b => ({
     building: b,
     linkValue: b.linkFilter?.value ?? null,
-    allowed: b.activeLevelIndex === -1
-      ? null
-      : new Set(b.levels.slice(0, b.activeLevelIndex + 1).map(l => l.name)),
     hidden: !!b._hidden,
   }));
 
@@ -1762,24 +2022,39 @@ function applyFiltersToContent(tileset, content) {
       feature.show = false;
       continue;
     }
-    if (owning.allowed === null) {
+    if (activeFn === null) {
+      // "All floors" — show everything.
       feature.show = true;
     } else {
       const lvl = feature.getProperty("levelName");
-      feature.show = !lvl || lvl === "Unassigned" || owning.allowed.has(lvl);
+      if (lvl === "Unassigned" && feature.getProperty("category") === "Mass") {
+        feature.show = false;
+      } else {
+        const fn = getFeatureFloorNumber(owning.building, lvl);
+        if (fn == null) feature.show = false; // unmappable → hidden when filtering
+        else feature.show = fn <= activeFn;
+      }
     }
   }
 }
 
 function applyLevelToShapefilesForBuilding(building) {
-  const activeKey = building.activeLevelIndex !== -1
-    ? building.levels[building.activeLevelIndex].key
-    : null;
+  const activeFn = activeModelLevelIndex < 0
+    ? null
+    : modelLevels[activeModelLevelIndex]?.floorNumber ?? null;
   for (const layer of building.shapefileLayers) {
-    layer.dataSource.show =
-      activeKey === null ||
-      layer.levelKey === null ||
-      layer.levelKey === activeKey;
+    if (activeFn === null) {
+      layer.dataSource.show = true;
+      continue;
+    }
+    if (layer.levelKey == null) {
+      // Unassigned shapefiles only show on "All floors".
+      layer.dataSource.show = false;
+      continue;
+    }
+    const lvl = building.levels.find(l => (l.key ?? "") === layer.levelKey);
+    const fn = lvl ? levelNameToNumber(lvl.name) : null;
+    layer.dataSource.show = fn === activeFn;
   }
 }
 
@@ -1794,12 +2069,14 @@ function findShapefileLevel(building, layer) {
 
 function shapefileLayerHeight(building, layer) {
   const lvl = findShapefileLevel(building, layer);
-  return building.levelBaseElevation + (building.heightOffset ?? 0) + (lvl ? lvl.floor : 0) + SHAPEFILE_FLOOR_CLEARANCE_M;
+  const fixtureExtra = /_fixture/i.test(layer.name) ? FIXTURE_EXTRA_HEIGHT_M : 0;
+  return building.levelBaseElevation + (building.heightOffset ?? 0) + (lvl ? lvl.floor : 0) + SHAPEFILE_FLOOR_CLEARANCE_M + fixtureExtra + (layer.heightOffset ?? 0);
 }
 
 function shapefileLayerLocalZ(building, layer) {
   const lvl = findShapefileLevel(building, layer);
-  return (lvl ? lvl.floor : 0) + SHAPEFILE_FLOOR_CLEARANCE_M;
+  const fixtureExtra = /_fixture/i.test(layer.name) ? FIXTURE_EXTRA_HEIGHT_M : 0;
+  return (lvl ? lvl.floor : 0) + SHAPEFILE_FLOOR_CLEARANCE_M + fixtureExtra + (layer.heightOffset ?? 0);
 }
 
 function shapefileWorldToLocal(building) {
@@ -1952,169 +2229,323 @@ function resolveShapefileLevels(building, layer) {
   return building?.levels ?? [];
 }
 
+// Module-level drag state. dataTransfer can't read its payload during
+// dragover (only on drop), so the source row is stashed here instead.
+let _dragLayerCtx = null; // { entries: [{ layer, fromBi: number | "unassigned" }, …] }
+
+// Multi-select state. _selectedLayers holds layer object references (which
+// survive renderLevelList() rebuilds). _lastClickedLayer is the anchor for
+// Shift+click range selection.
+const _selectedLayers = new Set();
+let _lastClickedLayer = null;
+
+function clearLayerSelection() {
+  if (_selectedLayers.size === 0 && _lastClickedLayer == null) return false;
+  _selectedLayers.clear();
+  _lastClickedLayer = null;
+  return true;
+}
+
+function setSingleLayerSelection(layer) {
+  _selectedLayers.clear();
+  _selectedLayers.add(layer);
+}
+
+function toggleLayerSelection(layer) {
+  if (_selectedLayers.has(layer)) _selectedLayers.delete(layer);
+  else _selectedLayers.add(layer);
+}
+
+function selectLayerRange(target) {
+  // DOM order gives us the visible sequence of rows. Use __layerRef which we
+  // stash on each .shp-tree-item at render time.
+  const visible = Array.from(document.querySelectorAll(".shp-tree-item"))
+    .map((el) => el.__layerRef)
+    .filter(Boolean);
+  const anchor = _lastClickedLayer && visible.includes(_lastClickedLayer)
+    ? _lastClickedLayer
+    : visible[0];
+  const i1 = visible.indexOf(anchor);
+  const i2 = visible.indexOf(target);
+  if (i1 < 0 || i2 < 0) {
+    setSingleLayerSelection(target);
+    return;
+  }
+  const [lo, hi] = i1 <= i2 ? [i1, i2] : [i2, i1];
+  _selectedLayers.clear();
+  for (let i = lo; i <= hi; i++) _selectedLayers.add(visible[i]);
+}
+
+// Find a layer's current parent (buildingIndex or "unassigned").
+function findLayerParent(layer) {
+  if (unassignedLayers.indexOf(layer) !== -1) return "unassigned";
+  for (let bi = 0; bi < buildings.length; bi++) {
+    if (buildings[bi].shapefileLayers.indexOf(layer) !== -1) return bi;
+  }
+  return null;
+}
+
+// Convert the current selection into drag entries (each with fromBi).
+function buildDragEntriesFromSelection() {
+  const out = [];
+  for (const layer of _selectedLayers) {
+    const fromBi = findLayerParent(layer);
+    if (fromBi == null) continue;
+    out.push({ layer, fromBi });
+  }
+  return out;
+}
+
 function renderLevelList() {
   levelListEl.innerHTML = "";
+
+  const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
+  const visibleBuildings = filterRaw
+    ? buildings
+        .map((b, i) => ({ b, i }))
+        .filter(({ b }) => b.name.toLowerCase().includes(filterRaw))
+    : buildings.map((b, i) => ({ b, i }));
+
+  // Update item count + empty placeholder.
+  if (sceneItemCountEl) {
+    if (buildings.length === 0 && unassignedLayers.length === 0) {
+      sceneItemCountEl.textContent = "";
+    } else if (filterRaw) {
+      sceneItemCountEl.textContent = t("scene.itemsCountFiltered", {
+        filtered: visibleBuildings.length,
+        total: buildings.length,
+      });
+    } else {
+      sceneItemCountEl.textContent = t("scene.itemsCount", { count: buildings.length });
+    }
+  }
+  if (noScenePlaceholder) {
+    noScenePlaceholder.style.display =
+      buildings.length === 0 && unassignedLayers.length === 0 ? "" : "none";
+  }
+
   if (buildings.length === 0 && unassignedLayers.length === 0) return;
 
-  buildings.forEach((b, bi) => {
-    const expanded = b._levelTreeExpanded === undefined
-      ? (bi === selectedBuildingIndex)
-      : b._levelTreeExpanded;
+  // ===== Model Levels section =====
+  const mlSection = document.createElement("li");
+  mlSection.className = "panel-section model-levels-section";
 
-    const buildingLi = document.createElement("li");
-    buildingLi.className = "level-tree-building"
-      + (bi === selectedBuildingIndex ? " selected" : "");
+  const mlHeader = document.createElement("div");
+  mlHeader.className = "panel-section-header";
+  mlHeader.textContent = t("panel.modelLevels");
+  mlSection.appendChild(mlHeader);
 
-    // Header row: chevron + name + optional chip
-    const header = document.createElement("div");
-    header.className = "level-tree-header";
+  const mlUl = document.createElement("ul");
+  mlUl.className = "ml-list";
 
-    const chevron = document.createElement("span");
-    chevron.className = "level-tree-chevron" + (expanded ? " expanded" : "");
-    chevron.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polyline points="3,2 7,5 3,8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    chevron.addEventListener("click", (e) => {
+  // "All floors" row
+  {
+    const li = document.createElement("li");
+    li.className = "level-item ml-row all-floors";
+    appendLevelChevron(li, null, () => {});
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "modelLevelRadio";
+    radio.checked = activeModelLevelIndex === -1;
+    radio.addEventListener("change", () => selectModelLevel(-1));
+    label.appendChild(radio);
+    const text = document.createElement("span");
+    text.className = "level-name-text";
+    text.textContent = t("level.allFloors");
+    text.title = t("level.allFloors");
+    label.appendChild(text);
+    li.appendChild(label);
+    mlUl.appendChild(li);
+  }
+
+  // Per model-level rows, top floor first
+  for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
+    const ml = modelLevels[mli];
+    const li = document.createElement("li");
+    li.className = "level-item ml-row";
+
+    const shapefiles = shapefilesForModelLevel(ml.floorNumber);
+    const expanded = ml._expanded === true;
+    appendLevelChevron(
+      li,
+      shapefiles.length > 0 ? expanded : null,
+      () => { ml._expanded = !expanded; renderLevelList(); }
+    );
+
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "modelLevelRadio";
+    radio.checked = activeModelLevelIndex === mli;
+    radio.addEventListener("change", () => selectModelLevel(mli));
+    label.appendChild(radio);
+    const text = document.createElement("span");
+    text.className = "level-name-text";
+    text.textContent = ml.name;
+    text.title = ml.name;
+    label.appendChild(text);
+    li.appendChild(label);
+
+    const elevSpan = document.createElement("span");
+    elevSpan.className = "level-ceiling";
+    elevSpan.textContent = `${ml.elevation.toFixed(1)} m`;
+    li.appendChild(elevSpan);
+
+    li.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      b._levelTreeExpanded = !expanded;
+      showModelLevelContextMenu(e, mli);
+    });
+    attachDropTarget(li, { kind: "modelLevel", floorNumber: ml.floorNumber });
+    mlUl.appendChild(li);
+
+    if (expanded && shapefiles.length > 0) {
+      mlUl.appendChild(buildShapefileChildrenFlat(shapefiles));
+    }
+  }
+
+  // Unassigned shapefiles row
+  const unassignedAll = unassignedShapefilesAll();
+  if (unassignedAll.length > 0) {
+    const li = document.createElement("li");
+    li.className = "level-item ml-row unassigned-row";
+    const expanded = _unassignedTreeExpanded;
+    appendLevelChevron(
+      li,
+      expanded,
+      () => { _unassignedTreeExpanded = !expanded; renderLevelList(); }
+    );
+    const text = document.createElement("span");
+    text.className = "level-name-text";
+    text.textContent = t("gdb.unassigned.groupName");
+    text.title = t("gdb.unassigned.groupName");
+    li.appendChild(text);
+    attachDropTarget(li, { kind: "unassigned" });
+    mlUl.appendChild(li);
+    if (expanded) {
+      mlUl.appendChild(buildShapefileChildrenFlat(unassignedAll));
+    }
+  }
+
+  mlSection.appendChild(mlUl);
+  levelListEl.appendChild(mlSection);
+
+  // ===== Buildings section =====
+  if (visibleBuildings.length > 0) {
+    const bSection = document.createElement("li");
+    bSection.className = "panel-section buildings-section";
+
+    const bHeader = document.createElement("div");
+    bHeader.className = "panel-section-header collapsible"
+      + (_buildingsSectionExpanded ? " expanded" : "");
+    const bChev = document.createElement("span");
+    bChev.className = "panel-section-chevron";
+    bChev.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polyline points="3,2 7,5 3,8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    bHeader.appendChild(bChev);
+    const bLabel = document.createElement("span");
+    bLabel.textContent = t("panel.buildings");
+    bHeader.appendChild(bLabel);
+    const bCount = document.createElement("span");
+    bCount.className = "panel-section-count";
+    bCount.textContent = String(visibleBuildings.length);
+    bHeader.appendChild(bCount);
+    bHeader.addEventListener("click", () => {
+      _buildingsSectionExpanded = !_buildingsSectionExpanded;
       renderLevelList();
     });
-    header.appendChild(chevron);
+    bSection.appendChild(bHeader);
 
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "level-tree-name";
-    nameSpan.textContent = b.name;
-    nameSpan.title = b.name;
-    header.appendChild(nameSpan);
-
-    if (b.linkFilter) {
-      const chip = document.createElement("span");
-      chip.className = "building-link-chip";
-      chip.textContent = b.linkFilter.value === "" ? t("building.chip.host") : t("building.chip.link");
-      chip.title = `${b.linkFilter.property}: ${b.linkFilter.value || "(host)"}`;
-      header.appendChild(chip);
+    if (!_buildingsSectionExpanded) {
+      levelListEl.appendChild(bSection);
+      return;
     }
 
-    const zoomBtn = document.createElement("button");
-    zoomBtn.className = "level-tree-zoom-btn";
-    zoomBtn.title = t("building.zoomTitle");
-    zoomBtn.innerHTML =
-      '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
-      '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
-      '<path d="M5 8h6M8 5v6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
-      "</svg>";
-    zoomBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      zoomToBuilding(bi);
-    });
-    header.appendChild(zoomBtn);
+    const bUl = document.createElement("ul");
+    bUl.className = "bldg-list";
 
-    const addBtn = document.createElement("button");
-    addBtn.className = "level-add-btn";
-    addBtn.textContent = "+";
-    addBtn.title = t("building.addShapefilesTitle");
-    addBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      handleAddShapefilesToBuilding(bi);
-    });
-    header.appendChild(addBtn);
+    visibleBuildings.forEach(({ b, i: bi }) => {
+      const li = document.createElement("li");
+      li.className = "bldg-row" + (bi === selectedBuildingIndex ? " selected" : "");
 
-    header.addEventListener("click", () => {
-      selectBuilding(bi);
-    });
-    buildingLi.appendChild(header);
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "bldg-name";
+      nameSpan.textContent = b.name;
+      nameSpan.title = b.name;
+      li.appendChild(nameSpan);
 
-    if (expanded) {
-      const childUl = document.createElement("ul");
-      childUl.className = "level-tree-children";
-
-      // -- "All floors" row --
-      const allLi = document.createElement("li");
-      allLi.className = "level-item";
-      const allFloorsExpanded = b._allFloorsExpanded !== false;
-      const allShapefiles = b.shapefileLayers.filter(l => l.levelKey == null);
-      appendLevelChevron(allLi, allShapefiles.length > 0 ? allFloorsExpanded : null, () => {
-        b._allFloorsExpanded = !allFloorsExpanded;
-        renderLevelList();
-      });
-      const allLabel = document.createElement("label");
-      const allRadio = document.createElement("input");
-      allRadio.type = "radio";
-      allRadio.name = `levelRadio-${bi}`;
-      allRadio.checked = b.activeLevelIndex === -1;
-      allRadio.addEventListener("change", () => selectLevel(bi, -1));
-      allLabel.appendChild(allRadio);
-      allLabel.append(" " + t("level.allFloors"));
-      allLi.appendChild(allLabel);
-      childUl.appendChild(allLi);
-      if (allFloorsExpanded && allShapefiles.length > 0) {
-        childUl.appendChild(buildShapefileChildren(b, bi, allShapefiles));
+      if (b.linkFilter) {
+        const chip = document.createElement("span");
+        chip.className = "building-link-chip";
+        chip.textContent = b.linkFilter.value === "" ? t("building.chip.host") : t("building.chip.link");
+        chip.title = `${b.linkFilter.property}: ${b.linkFilter.value || "(host)"}`;
+        li.appendChild(chip);
       }
 
-      // -- Per-floor rows --
-      b.levels.forEach((level, i) => {
-        const li = document.createElement("li");
-        li.className = "level-item";
+      const zoomBtn = document.createElement("button");
+      zoomBtn.className = "level-tree-zoom-btn";
+      zoomBtn.title = t("building.zoomTitle");
+      zoomBtn.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
+        '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
+        '<path d="M5 8h6M8 5v6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
+        "</svg>";
+      zoomBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        zoomToBuilding(bi);
+      });
+      li.appendChild(zoomBtn);
 
-        const levelExpanded = level._expanded !== false;
-        const levelShapefiles = b.shapefileLayers.filter(
-          l => (l.levelKey ?? "") === (level.key ?? "") && l.levelKey != null
-        );
-        appendLevelChevron(li, levelShapefiles.length > 0 ? levelExpanded : null, () => {
-          level._expanded = !levelExpanded;
-          renderLevelList();
-        });
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "level-remove-btn";
+      removeBtn.textContent = t("generic.removeX");
+      removeBtn.title = t("building.removeTitle");
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handleRemoveBuilding(bi);
+      });
+      li.appendChild(removeBtn);
 
-        const label = document.createElement("label");
-        const radio = document.createElement("input");
-        radio.type = "radio";
-        radio.name = `levelRadio-${bi}`;
-        radio.checked = b.activeLevelIndex === i;
-        radio.addEventListener("change", () => selectLevel(bi, i));
-        label.appendChild(radio);
-        label.append(` ${level.name}`);
-
-        const floorSpan = document.createElement("span");
-        floorSpan.className = "level-ceiling";
-        floorSpan.textContent = `${level.floor.toFixed(1)} m`;
-
-        const removeBtn = document.createElement("button");
-        removeBtn.className = "level-remove-btn";
-        removeBtn.textContent = t("generic.removeX");
-        removeBtn.title = t("level.removeTitle");
-        removeBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const wasActive = b.activeLevelIndex === i;
-          b.levels.splice(i, 1);
-          if (wasActive || b.activeLevelIndex >= b.levels.length) {
-            b.activeLevelIndex = -1;
-            applyActiveLevelForBuilding(b);
-          } else if (b.activeLevelIndex > i) {
-            b.activeLevelIndex--;
-          }
-          applyShapefileLayerHeights(b);
-          renderLevelList();
-          renderBuildingList();
-        });
-
-        li.appendChild(label);
-        li.appendChild(floorSpan);
-        li.appendChild(removeBtn);
-        childUl.appendChild(li);
-
-        if (levelExpanded && levelShapefiles.length > 0) {
-          childUl.appendChild(buildShapefileChildren(b, bi, levelShapefiles));
-        }
+      li.addEventListener("click", () => selectBuilding(bi));
+      li.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showBuildingContextMenu(e, b, bi);
       });
 
-      buildingLi.appendChild(childUl);
-    }
+      if (b._tilesetMissing) {
+        const banner = document.createElement("div");
+        banner.className = "scene-reload-banner";
+        const msg = document.createElement("p");
+        msg.className = "reload-tileset-msg";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary-btn full-width";
+        if (b.directoryHandleId) {
+          msg.textContent = t("right.grant.message", { folder: b._directoryFolderName || "unknown" });
+          btn.textContent = t("right.grant.button");
+        } else {
+          msg.textContent = t("right.reload.message");
+          btn.textContent = t("right.reload.button");
+        }
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          selectedBuildingIndex = bi;
+          handleReloadTilesetClick();
+        });
+        banner.appendChild(msg);
+        banner.appendChild(btn);
+        li.appendChild(banner);
+      }
 
-    levelListEl.appendChild(buildingLi);
-  });
+      bUl.appendChild(li);
+    });
 
-  if (unassignedLayers.length > 0) {
-    levelListEl.appendChild(buildUnassignedNode());
+    bSection.appendChild(bUl);
+    levelListEl.appendChild(bSection);
   }
 }
+
 
 // Build the pseudo-building node for the unassigned-layers bucket. Mirrors the
 // building tree's chevron + name + child list structure but with no level rows
@@ -2140,6 +2571,7 @@ function buildUnassignedNode() {
   nameSpan.textContent = t("gdb.unassigned.groupName");
   nameSpan.title = t("gdb.unassigned.groupName");
   header.appendChild(nameSpan);
+  attachDropTarget(header, { kind: "unassigned" });
   li.appendChild(header);
 
   if (_unassignedTreeExpanded && unassignedLayers.length > 0) {
@@ -2170,11 +2602,28 @@ function buildUnassignedNode() {
       row.appendChild(swatch);
       row.appendChild(layerName);
       row.appendChild(removeBtn);
+      row.__layerRef = layer;
+      if (_selectedLayers.has(layer)) row.classList.add("selected");
+      row.addEventListener("click", (e) => {
+        if (e.shiftKey) {
+          selectLayerRange(layer);
+          e.preventDefault();
+        } else if (e.ctrlKey || e.metaKey) {
+          toggleLayerSelection(layer);
+          _lastClickedLayer = layer;
+          e.preventDefault();
+        } else {
+          setSingleLayerSelection(layer);
+          _lastClickedLayer = layer;
+        }
+        renderLevelList();
+      });
       row.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
         showMoveUnassignedToBuildingMenu(e, layer);
       });
+      attachDragSource(row, layer, "unassigned");
       ul.appendChild(row);
     }
     li.appendChild(ul);
@@ -2240,6 +2689,103 @@ function appendLevelChevron(li, expanded, onToggle) {
   li.appendChild(chev);
 }
 
+// Collect every shapefile (across all buildings) whose host-building level
+// resolves to the given floor number. Used by the global Model Levels panel.
+function shapefilesForModelLevel(floorNumber) {
+  const out = [];
+  for (let bi = 0; bi < buildings.length; bi++) {
+    const b = buildings[bi];
+    if (!b.shapefileLayers) continue;
+    for (const layer of b.shapefileLayers) {
+      if (layer.levelKey == null) continue;
+      const lvl = b.levels.find(l => (l.key ?? "") === layer.levelKey);
+      const fn = lvl ? levelNameToNumber(lvl.name) : null;
+      if (fn === floorNumber) out.push({ building: b, buildingIndex: bi, layer });
+    }
+  }
+  return out;
+}
+
+// All "unassigned" shapefiles in one flat list: building-attached layers whose
+// levelKey is null + the global unassignedLayers staging bucket.
+function unassignedShapefilesAll() {
+  const out = [];
+  for (let bi = 0; bi < buildings.length; bi++) {
+    const b = buildings[bi];
+    if (!b.shapefileLayers) continue;
+    for (const layer of b.shapefileLayers) {
+      if (layer.levelKey == null) out.push({ building: b, buildingIndex: bi, layer });
+    }
+  }
+  for (const layer of unassignedLayers) {
+    out.push({ building: null, buildingIndex: "unassigned", layer });
+  }
+  return out;
+}
+
+// Variant of buildShapefileChildren that handles entries from anywhere
+// (model-level aggregation, or unassigned bucket). Each entry is
+// { building, buildingIndex, layer } where building/buildingIndex may be
+// null/"unassigned" for staged layers.
+function buildShapefileChildrenFlat(entries) {
+  const ul = document.createElement("ul");
+  ul.className = "shp-children";
+  for (const entry of entries) {
+    const { building, buildingIndex, layer } = entry;
+    const li = document.createElement("li");
+    li.className = "shp-tree-item";
+
+    const swatch = document.createElement("span");
+    swatch.className = "color-swatch";
+    swatch.style.background = layer.color;
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "shp-tree-name";
+    nameSpan.textContent = layer.name;
+    nameSpan.title = layer.name;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "shp-tree-remove-btn";
+    removeBtn.textContent = t("generic.removeX");
+    removeBtn.title = t("shp.removeTitle");
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (building) removeShapefileLayer(building, layer);
+      else removeUnassignedLayer(layer);
+    });
+
+    li.appendChild(swatch);
+    li.appendChild(nameSpan);
+    li.appendChild(removeBtn);
+    li.__layerRef = layer;
+    if (_selectedLayers.has(layer)) li.classList.add("selected");
+    li.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        selectLayerRange(layer);
+        e.preventDefault();
+      } else if (e.ctrlKey || e.metaKey) {
+        toggleLayerSelection(layer);
+        _lastClickedLayer = layer;
+        e.preventDefault();
+      } else {
+        setSingleLayerSelection(layer);
+        _lastClickedLayer = layer;
+        if (typeof buildingIndex === "number" && buildingIndex >= 0) selectBuilding(buildingIndex);
+      }
+      renderLevelList();
+    });
+    li.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (building) showMoveToFloorMenu(e, building, layer);
+      else showMoveUnassignedToBuildingMenu(e, layer);
+    });
+    attachDragSource(li, layer, building ? buildingIndex : "unassigned");
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
 function buildShapefileChildren(building, buildingIndex, layers) {
   const ul = document.createElement("ul");
   ul.className = "shp-children";
@@ -2268,15 +2814,158 @@ function buildShapefileChildren(building, buildingIndex, layers) {
     li.appendChild(swatch);
     li.appendChild(nameSpan);
     li.appendChild(removeBtn);
-    li.addEventListener("click", () => selectBuilding(buildingIndex));
+    li.__layerRef = layer;
+    if (_selectedLayers.has(layer)) li.classList.add("selected");
+    li.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        selectLayerRange(layer);
+        e.preventDefault();
+      } else if (e.ctrlKey || e.metaKey) {
+        toggleLayerSelection(layer);
+        _lastClickedLayer = layer;
+        e.preventDefault();
+      } else {
+        setSingleLayerSelection(layer);
+        _lastClickedLayer = layer;
+        selectBuilding(buildingIndex);
+      }
+      renderLevelList();
+    });
     li.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
       showMoveToFloorMenu(e, building, layer);
     });
+    attachDragSource(li, layer, buildingIndex);
     ul.appendChild(li);
   }
   return ul;
+}
+
+// -- Scene tree drag-and-drop --
+// Drag a shapefile/GDB layer row onto a building header (drops as "all
+// floors"), a level row (drops onto that floor), or the Unassigned bucket
+// header (returns the layer to unassigned). All routes funnel through the
+// existing move helpers — no new state, no schema change.
+
+function attachDragSource(rowEl, layer, fromBi) {
+  rowEl.setAttribute("draggable", "true");
+  rowEl.addEventListener("dragstart", (e) => {
+    // If the dragged layer is part of a multi-selection (size > 1), drag the
+    // whole set. Otherwise just this one row.
+    const entries = _selectedLayers.has(layer) && _selectedLayers.size > 1
+      ? buildDragEntriesFromSelection()
+      : [{ layer, fromBi }];
+    _dragLayerCtx = { entries };
+    rowEl.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try {
+      e.dataTransfer.setData(
+        "text/plain",
+        entries.length > 1 ? `${entries.length} layers` : (layer.name ?? "layer"),
+      );
+    } catch (_) {}
+  });
+  rowEl.addEventListener("dragend", () => {
+    rowEl.classList.remove("dragging");
+    _dragLayerCtx = null;
+    document.querySelectorAll(".drop-target-active").forEach((el) => {
+      el.classList.remove("drop-target-active");
+    });
+  });
+}
+
+// True when every dragged entry already lives at the proposed target — drop
+// would be a no-op, so we don't preventDefault on dragover and the cursor
+// shows the "not allowed" icon.
+function dropWouldBeNoop(target) {
+  if (!_dragLayerCtx) return true;
+  const entries = _dragLayerCtx.entries;
+  if (target.kind === "unassigned") {
+    return entries.every((e) => e.fromBi === "unassigned");
+  }
+  if (target.kind === "modelLevel") {
+    return entries.every((e) => {
+      if (e.fromBi === "unassigned") return false;
+      const b = buildings[e.fromBi];
+      if (!b) return false;
+      const lvl = b.levels.find(l => (l.key ?? "") === (e.layer.levelKey ?? ""));
+      const currentFn = lvl ? levelNameToNumber(lvl.name) : null;
+      return currentFn === target.floorNumber;
+    });
+  }
+  return entries.every((e) => {
+    if (e.fromBi !== target.bi) return false;
+    const currentKey = e.layer.levelKey ?? null;
+    const targetKey = target.levelKey ?? null;
+    return currentKey === targetKey;
+  });
+}
+
+function attachDropTarget(el, target) {
+  el.addEventListener("dragover", (e) => {
+    if (!_dragLayerCtx) return;
+    if (dropWouldBeNoop(target)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    el.classList.add("drop-target-active");
+  });
+  el.addEventListener("dragleave", () => {
+    el.classList.remove("drop-target-active");
+  });
+  el.addEventListener("drop", async (e) => {
+    el.classList.remove("drop-target-active");
+    if (!_dragLayerCtx) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const entries = _dragLayerCtx.entries;
+    _dragLayerCtx = null;
+
+    const touchedBuildings = new Set();
+
+    for (const { layer, fromBi } of entries) {
+      if (target.kind === "unassigned") {
+        if (fromBi === "unassigned") continue;
+        transferToUnassigned(layer, fromBi);
+        continue;
+      }
+      if (target.kind === "modelLevel") {
+        // Drop on a global model-level row: for the source building, find a
+        // level whose floor number matches the target and move the layer there.
+        if (fromBi === "unassigned") continue; // staged → use right-click instead
+        const srcBuilding = buildings[fromBi];
+        if (!srcBuilding) continue;
+        const targetFn = target.floorNumber;
+        const lvl = srcBuilding.levels.find(l => levelNameToNumber(l.name) === targetFn);
+        if (!lvl) continue; // this building has no equivalent floor
+        moveShapefileToLevel(srcBuilding, layer, lvl.key ?? "");
+        touchedBuildings.add(fromBi);
+        continue;
+      }
+      const { bi: toBi, levelKey } = target;
+      if (fromBi === "unassigned") {
+        // Drag-from-staging is the natural import point. Split by feature
+        // `floor` column when present so multi-floor layers fan out to their
+        // matching levels instead of all piling onto one.
+        _selectedLayers.delete(layer);
+        const createdLayers = await dropStagedLayerOnBuilding(layer, toBi, levelKey);
+        for (const created of createdLayers) _selectedLayers.add(created);
+        touchedBuildings.add(toBi);
+        continue;
+      }
+      if (fromBi === toBi) {
+        moveShapefileToLevel(buildings[toBi], layer, levelKey);
+        touchedBuildings.add(toBi);
+        continue;
+      }
+      transferBetweenBuildings(layer, fromBi, toBi, levelKey);
+      touchedBuildings.add(toBi);
+    }
+    for (const bi of touchedBuildings) applyShapefileLayerHeights(buildings[bi]);
+    // Selection survives drag-from-buildings cases (layer objects are the same).
+    // For from-unassigned cases we already re-targeted above.
+    renderLevelList();
+  });
 }
 
 // -- Shapefile Layers --
@@ -2300,9 +2989,63 @@ async function handleGdbDirSelect(e) {
   await runGdbLoad(files);
 }
 
-// Parse a .gdb input, then hand the parsed FeatureCollections to the review
-// dialog. The dialog returns one assignment per layer; we then dispatch each
-// to either a building, the unassigned bucket, or skip.
+// Drop a staged layer onto a building. If the source features carry a `floor`
+// property with multiple distinct values, split into one child layer per
+// floor — each matched to a building level via matchLevelByText, falling back
+// to the drop target's levelKey when the floor string doesn't resolve.
+//
+// Returns the array of newly-created layer objects in the target building so
+// the caller can update the multi-select set.
+async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
+  const target = buildings[toBi];
+  if (!target) return [];
+
+  const groups = groupFeaturesByFloor(stagedLayer.features ?? []);
+  // No features, or every feature lacks a floor column / shares one floor →
+  // honor the user's drop target as a single layer.
+  if (groups.length <= 1) {
+    const moved = moveUnassignedLayerToBuilding(stagedLayer, toBi, targetLevelKey);
+    return moved ? [moved] : [];
+  }
+
+  // Multiple distinct floor values → split. Remove the staged source first
+  // so we don't leak its dataSource (we'll build a new dataSource per group).
+  const baseName = (stagedLayer.name ?? "layer").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
+  removeUnassignedLayer(stagedLayer);
+
+  const created = [];
+  for (const g of groups) {
+    const matched = g.floorValue
+      ? matchLevelByText(g.floorValue, target.levels)
+      : null;
+    const suffix = g.floorValue || t("level.allFloors");
+    const nameOverride = `${baseName} (${suffix})`;
+    if (matched) {
+      const layer = await addFeatureCollectionLayer(
+        target,
+        { fileName: baseName, features: g.features },
+        {
+          levelKeyOverride: matched.key ?? "",
+          origin: stagedLayer._origin ?? "gdb",
+          nameOverride,
+        },
+      );
+      if (layer) created.push(layer);
+    } else {
+      // No level resolved for this floor value — push back to staging as a
+      // per-floor sub-row so the user can drag it manually. Hidden by default.
+      await addUnassignedLayer(
+        { fileName: nameOverride, features: g.features },
+        { nameOverride },
+      );
+    }
+  }
+  applyLevelToShapefilesForBuilding(target);
+  return created;
+}
+
+// Parse a .gdb input, then hand it to the review dialog. Selected rows import
+// immediately; unselected renderable rows return as staged GDB work.
 async function runGdbLoad(input) {
   if (_gdbBusy) return;
   _gdbBusy = true;
@@ -2317,68 +3060,69 @@ async function runGdbLoad(input) {
     _gdbBusy = false;
     return;
   }
-  hideLoadingOverlay();
-  _gdbBusy = false;
 
   const { featureCollections, warnings } = parsed;
   if (warnings?.length) console.warn("[.gdb] warnings:", warnings);
-  if (!featureCollections?.length) return;
-
-  openGdbImportDialog({
-    featureCollections,
-    buildings,
-    onImport: async (decisions) => {
-      await applyGdbDecisions(decisions);
-    },
-  });
+  if (featureCollections?.length) {
+    openGdbImportDialog({
+      featureCollections,
+      buildings,
+      onImport: applyGdbDecisions,
+    });
+  }
+  hideLoadingOverlay();
+  _gdbBusy = false;
 }
 
 async function applyGdbDecisions(decisions) {
   const touchedBuildings = new Set();
-  for (const { fc, target, nameOverride } of decisions) {
+  let duplicateSkipped = 0;
+
+  for (const { fc, target, nameOverride } of decisions ?? []) {
     if (target.kind === "skip") continue;
+
     if (target.kind === "unassigned") {
-      await addUnassignedLayer(fc, { nameOverride });
+      const layer = await addUnassignedLayer(fc, { nameOverride });
+      if (!layer) duplicateSkipped++;
       continue;
     }
+
     if (target.kind === "building") {
-      const b = buildings[target.buildingIndex];
-      if (!b) continue;
-      await addFeatureCollectionLayer(b, fc, {
+      const building = buildings[target.buildingIndex];
+      if (!building) continue;
+      const layer = await addFeatureCollectionLayer(building, fc, {
         levelKeyOverride: target.levelKey,
         origin: "gdb",
         nameOverride,
       });
-      touchedBuildings.add(target.buildingIndex);
+      if (layer) {
+        touchedBuildings.add(target.buildingIndex);
+      } else {
+        duplicateSkipped++;
+      }
     }
   }
+
   for (const bi of touchedBuildings) {
-    applyLevelToShapefilesForBuilding(buildings[bi]);
+    const building = buildings[bi];
+    applyLevelToShapefilesForBuilding(building);
+    applyShapefileLayerHeights(building);
   }
-  // If no building was selected before this import, pick the first touched
-  // one so the Floor Levels panel actually shows the new layers.
-  if (selectedBuildingIndex === -1 && touchedBuildings.size > 0) {
-    const firstTouched = [...touchedBuildings][0];
-    selectBuilding(firstTouched);
-  } else {
-    renderLevelList();
-  }
+  if (unassignedLayers.length > 0) _unassignedTreeExpanded = true;
+  renderLevelList();
+  reportGdbDuplicateSkips(duplicateSkipped);
 }
 
-// -- GDB reassign-existing-layers --
-// Gathers every GDB-origin layer (whether attached to a building or sitting in
-// the Unassigned bucket) and opens the import dialog in 'reassign' mode so the
-// user can bulk-move them.
 function openGdbReassignDialog() {
   const entries = collectGdbLayersForReassign();
   if (entries.length === 0) {
     alert(t("gdb.reassign.empty"));
     return;
   }
-  const featureCollections = entries.map((e) => ({
-    fileName: e.layer.name,
-    features: e.layer.features,
-    _existingEntry: e,
+  const featureCollections = entries.map((entry) => ({
+    fileName: entry.layer.name,
+    features: entry.layer.features,
+    _existingEntry: entry,
   }));
   openGdbImportDialog({
     featureCollections,
@@ -2392,77 +3136,139 @@ function collectGdbLayersForReassign() {
   const out = [];
   for (let bi = 0; bi < buildings.length; bi++) {
     for (const layer of buildings[bi].shapefileLayers) {
-      if (layer._origin !== "gdb") continue;
+      if (!isGdbLayer(layer)) continue;
       out.push({ layer, parent: { kind: "building", buildingIndex: bi } });
     }
   }
   for (const layer of unassignedLayers) {
-    if (layer._origin !== "gdb") continue;
+    if (!isGdbLayer(layer)) continue;
     out.push({ layer, parent: { kind: "unassigned" } });
   }
   return out;
 }
 
 async function applyReassignDecisions(decisions) {
-  const touched = new Set();
-  for (const { fc, target } of decisions) {
-    const entry = fc._existingEntry;
-    if (!entry) continue;
-    const layer = entry.layer;
-    const currentBi = entry.parent.kind === "building" ? entry.parent.buildingIndex : -1;
-    const currentLevelKey = layer.levelKey ?? null;
+  const touchedBuildings = new Set();
+  let duplicateSkipped = 0;
+
+  for (const { fc, target } of decisions ?? []) {
+    const entry = fc?._existingEntry;
+    if (!entry?.layer) continue;
+    const { layer, parent } = entry;
 
     if (target.kind === "skip") {
-      removeAnyLayer(layer);
+      removeExistingGdbLayer(entry);
+      if (parent.kind === "building") touchedBuildings.add(parent.buildingIndex);
       continue;
     }
+
     if (target.kind === "unassigned") {
-      if (currentBi === -1) continue; // already there
-      transferToUnassigned(layer, currentBi);
+      if (parent.kind === "building") {
+        if (transferToUnassigned(layer, parent.buildingIndex)) touchedBuildings.add(parent.buildingIndex);
+        else duplicateSkipped++;
+      }
       continue;
     }
-    if (target.kind === "building") {
-      const newBi = target.buildingIndex;
-      const newLevel = target.levelKey ?? null;
-      if (newBi === currentBi && newLevel === currentLevelKey) continue;
-      if (currentBi === -1) {
-        moveUnassignedLayerToBuilding(layer, newBi, newLevel);
-      } else if (newBi !== currentBi) {
-        transferBetweenBuildings(layer, currentBi, newBi, newLevel);
+
+    if (target.kind !== "building") continue;
+    const toBi = target.buildingIndex;
+    if (parent.kind === "unassigned") {
+      const moved = moveUnassignedLayerToBuilding(layer, toBi, target.levelKey);
+      if (moved) touchedBuildings.add(toBi);
+      else duplicateSkipped++;
+    } else if (parent.buildingIndex === toBi) {
+      if (moveShapefileToLevel(buildings[toBi], layer, target.levelKey)) touchedBuildings.add(toBi);
+      else duplicateSkipped++;
+    } else {
+      if (transferBetweenBuildings(layer, parent.buildingIndex, toBi, target.levelKey)) {
+        touchedBuildings.add(parent.buildingIndex);
+        touchedBuildings.add(toBi);
       } else {
-        moveShapefileToLevel(buildings[currentBi], layer, newLevel ?? null);
+        duplicateSkipped++;
       }
-      touched.add(newBi);
     }
   }
-  for (const bi of touched) applyLevelToShapefilesForBuilding(buildings[bi]);
+
+  for (const bi of touchedBuildings) {
+    const building = buildings[bi];
+    if (!building) continue;
+    applyLevelToShapefilesForBuilding(building);
+    applyShapefileLayerHeights(building);
+  }
   renderLevelList();
+  reportGdbDuplicateSkips(duplicateSkipped);
 }
 
-// Remove a layer from wherever it currently lives (a building's
-// shapefileLayers or the unassigned bucket). Used by reassign's "skip" action.
-function removeAnyLayer(layer) {
-  if (unassignedLayers.indexOf(layer) !== -1) {
+function reportGdbDuplicateSkips(count) {
+  if (count > 0) alert(t("gdb.import.duplicatesSkipped", { count }));
+}
+
+function isGdbLayer(layer) {
+  return (layer?._origin ?? "gdb") === "gdb";
+}
+
+function normalizeGdbLayerName(name) {
+  return String(name ?? "")
+    .replace(/\.(shp|dbf|prj|geojson|json)$/i, "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[._/\\()[\]{}<>:;,'"`~!?@#$%^&*=+|]+/g, " ")
+    .replace(/[‐‒–—－ー-]+/g, " ")
+    .replace(/[・、，。]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sameGdbLayerIdentity(layer, name, levelKey) {
+  return (
+    isGdbLayer(layer) &&
+    normalizeGdbLayerName(layer.name) === normalizeGdbLayerName(name) &&
+    (layer.levelKey ?? null) === (levelKey ?? null)
+  );
+}
+
+function hasEquivalentGdbLayer(building, name, levelKey, excludeLayer = null) {
+  return (building?.shapefileLayers ?? []).some(
+    (layer) => layer !== excludeLayer && sameGdbLayerIdentity(layer, name, levelKey),
+  );
+}
+
+function hasEquivalentUnassignedLayer(name, excludeLayer = null) {
+  const normalized = normalizeGdbLayerName(name);
+  return unassignedLayers.some(
+    (layer) => layer !== excludeLayer && isGdbLayer(layer) && normalizeGdbLayerName(layer.name) === normalized,
+  );
+}
+
+function removeExistingGdbLayer(entry) {
+  const layer = entry?.layer;
+  if (!layer) return false;
+  if (entry.parent?.kind === "unassigned") {
     removeUnassignedLayer(layer);
-    return;
+    return true;
   }
-  for (const b of buildings) {
-    if (b.shapefileLayers.indexOf(layer) !== -1) {
-      removeShapefileLayer(b, layer);
-      return;
-    }
+  if (entry.parent?.kind === "building") {
+    const building = buildings[entry.parent.buildingIndex];
+    if (!building) return false;
+    removeShapefileLayer(building, layer);
+    return true;
   }
+  return false;
 }
 
 // Move a layer from its current building to the unassigned bucket. Reuses the
-// existing Cesium dataSource — only re-parents and drops the levelKey.
+// existing Cesium dataSource — only re-parents, drops the levelKey, and hides
+// the layer (the staging bucket is invisible by design).
 function transferToUnassigned(layer, currentBi) {
   const b = buildings[currentBi];
   const i = b.shapefileLayers.indexOf(layer);
-  if (i === -1) return;
+  if (i === -1) return false;
+  if (isGdbLayer(layer) && hasEquivalentUnassignedLayer(layer.name, layer)) return false;
   b.shapefileLayers.splice(i, 1);
   delete layer.levelKey;
+  if (layer.dataSource) layer.dataSource.show = false;
   unassignedLayers.push(layer);
+  return true;
 }
 
 // Move a layer between two buildings, applying the new building's height
@@ -2470,11 +3276,15 @@ function transferToUnassigned(layer, currentBi) {
 function transferBetweenBuildings(layer, fromBi, toBi, newLevelKey) {
   const from = buildings[fromBi];
   const i = from.shapefileLayers.indexOf(layer);
-  if (i === -1) return;
+  if (i === -1) return false;
+  if (isGdbLayer(layer) && hasEquivalentGdbLayer(buildings[toBi], layer.name, newLevelKey, layer)) {
+    return false;
+  }
   from.shapefileLayers.splice(i, 1);
   layer.levelKey = newLevelKey;
   buildings[toBi].shapefileLayers.push(layer);
   applyShapefileLayerHeight(buildings[toBi], layer);
+  return true;
 }
 
 async function handleShpSelect(e) {
@@ -2522,6 +3332,10 @@ async function addFeatureCollectionLayer(building, fc, opts = {}) {
     const matched = detectLevelByFilename(fc.fileName ?? name, levelsForMatch);
     levelKey = matched ? (matched.key ?? "") : null;
   }
+  const origin = opts.origin ?? "shp";
+  if (origin === "gdb" && hasEquivalentGdbLayer(building, name, levelKey)) {
+    return null;
+  }
   const color = SHP_COLORS[_shpColorIdx++ % SHP_COLORS.length];
   const cesiumColor = Color.fromCssColorString(color);
   const dataSource = await GeoJsonDataSource.load(
@@ -2530,17 +3344,21 @@ async function addFeatureCollectionLayer(building, fc, opts = {}) {
   );
   applyEntityStyling(dataSource, name);
   viewer.dataSources.add(dataSource);
-  const layer = { name, dataSource, color, levelKey, source, features, _origin: opts.origin ?? "shp" };
+  const layer = { name, dataSource, color, levelKey, source, features, heightOffset: 0, _origin: origin };
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
   return layer;
 }
 
-// Add a FeatureCollection to the global unassigned bucket. The layer is added
-// to the viewer at its raw z-values (no building height offset is applied)
-// because there is no associated building elevation.
+// Add a FeatureCollection to the global unassigned bucket. The dataSource is
+// loaded into the viewer but its `show` property is set to false — the layer
+// stays invisible until the user drags it onto a building, at which point the
+// transfer flips `show` back on.
 async function addUnassignedLayer(fc, opts = {}) {
   const name = opts.nameOverride ?? (fc.fileName ?? "layer").replace(/\.(shp|dbf|prj)$/i, "");
+  if (hasEquivalentUnassignedLayer(name)) {
+    return null;
+  }
   const features = fc.features ?? [];
   const source = detectShapefileSource(features);
   const color = SHP_COLORS[_shpColorIdx++ % SHP_COLORS.length];
@@ -2550,10 +3368,9 @@ async function addUnassignedLayer(fc, opts = {}) {
     { fill: cesiumColor.withAlpha(1.0), stroke: cesiumColor, strokeWidth: 2, clampToGround: false }
   );
   applyEntityStyling(dataSource, name);
+  dataSource.show = false;
   viewer.dataSources.add(dataSource);
-  // Anything reaching the unassigned bucket came from the GDB import dialog —
-  // the shapefile path always targets a specific building.
-  const layer = { name, dataSource, color, features, source, _origin: "gdb" };
+  const layer = { name, dataSource, color, features, source, heightOffset: 0, _origin: "gdb" };
   unassignedLayers.push(layer);
   return layer;
 }
@@ -2562,9 +3379,13 @@ async function addUnassignedLayer(fc, opts = {}) {
 // chosen level. The Cesium dataSource is reused; only ownership changes.
 function moveUnassignedLayerToBuilding(layer, buildingIndex, levelKey) {
   const building = buildings[buildingIndex];
-  if (!building) return;
+  if (!building) return null;
   const idx = unassignedLayers.indexOf(layer);
-  if (idx === -1) return;
+  if (idx === -1) return null;
+  if (isGdbLayer(layer) && hasEquivalentGdbLayer(building, layer.name, levelKey, layer)) {
+    removeUnassignedLayer(layer);
+    return null;
+  }
   unassignedLayers.splice(idx, 1);
   const moved = {
     name: layer.name,
@@ -2573,11 +3394,15 @@ function moveUnassignedLayerToBuilding(layer, buildingIndex, levelKey) {
     levelKey: levelKey ?? null,
     source: layer.source,
     features: layer.features,
+    heightOffset: layer.heightOffset ?? 0,
+    _origin: layer._origin ?? "gdb",
   };
   building.shapefileLayers.push(moved);
+  moved.dataSource.show = true;
   applyShapefileLayerHeight(building, moved);
   applyLevelToShapefilesForBuilding(building);
   renderLevelList();
+  return moved;
 }
 
 function removeUnassignedLayer(layer) {
@@ -2718,17 +3543,35 @@ function removeShapefileLayer(building, layer) {
 }
 
 function moveShapefileToLevel(building, layer, newLevelKey) {
+  if (isGdbLayer(layer) && hasEquivalentGdbLayer(building, layer.name, newLevelKey, layer)) {
+    return false;
+  }
   layer.levelKey = newLevelKey;
   applyShapefileLayerHeight(building, layer);
   applyLevelToShapefilesForBuilding(building);
   renderLevelList();
+  return true;
 }
 
 // -- Floating context menu --
 function showMoveToFloorMenu(event, building, layer) {
   floatingMenu.innerHTML = "";
   const ul = document.createElement("ul");
-  const buildItem = (label, levelKey, disabled) => {
+
+  // Resolve the layer's current floor number (if any) so we can mark the
+  // matching model-level entry as the disabled "current" choice.
+  const currentLvl = layer.levelKey != null
+    ? building.levels.find(l => (l.key ?? "") === layer.levelKey)
+    : null;
+  const currentFn = currentLvl ? levelNameToNumber(currentLvl.name) : null;
+
+  // "Move to floor" submenu — driven by the global model-levels list.
+  const moveParent = document.createElement("li");
+  moveParent.className = "submenu-parent";
+  moveParent.textContent = t("gdb.unassigned.moveTitle");
+  const moveSub = document.createElement("ul");
+  moveSub.className = "submenu";
+  const buildMoveItem = (label, action, disabled) => {
     const li = document.createElement("li");
     li.textContent = label;
     if (disabled) {
@@ -2737,16 +3580,80 @@ function showMoveToFloorMenu(event, building, layer) {
       li.addEventListener("click", (e) => {
         e.stopPropagation();
         hideFloatingMenu();
-        moveShapefileToLevel(building, layer, levelKey);
+        action();
       });
     }
-    ul.appendChild(li);
+    moveSub.appendChild(li);
   };
-  buildItem(t("level.allFloors"), null, layer.levelKey == null);
-  for (const lvl of building.levels) {
-    buildItem(lvl.name, lvl.key ?? "", (layer.levelKey ?? "") === (lvl.key ?? ""));
+  buildMoveItem(
+    t("level.allFloors"),
+    () => moveShapefileToLevel(building, layer, null),
+    layer.levelKey == null
+  );
+  // Top floor first to match the panel order.
+  for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
+    const ml = modelLevels[mli];
+    const matchLvl = building.levels.find(l => levelNameToNumber(l.name) === ml.floorNumber);
+    const disabled = !matchLvl || currentFn === ml.floorNumber;
+    buildMoveItem(
+      ml.name,
+      () => { if (matchLvl) moveShapefileToLevel(building, layer, matchLvl.key ?? ""); },
+      disabled,
+    );
   }
+  moveParent.appendChild(moveSub);
+  ul.appendChild(moveParent);
+
+  // Adjust height (opens slider popover)
+  const adjustLi = document.createElement("li");
+  adjustLi.textContent = t("ctx.layer.adjustHeight");
+  adjustLi.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideFloatingMenu();
+    openSliderPopover({
+      anchor: event,
+      label: t("popover.layerHeight"),
+      min: -50, max: 50, step: 0.1,
+      value: layer.heightOffset ?? 0,
+      onChange: (v) => {
+        layer.heightOffset = v;
+        applyShapefileLayerHeight(building, layer);
+      },
+    });
+  });
+  ul.appendChild(adjustLi);
+
+  // Reset height offset
+  const resetLi = document.createElement("li");
+  resetLi.textContent = t("ctx.layer.resetHeight");
+  if ((layer.heightOffset ?? 0) === 0) {
+    resetLi.classList.add("disabled");
+  } else {
+    resetLi.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideFloatingMenu();
+      layer.heightOffset = 0;
+      applyShapefileLayerHeight(building, layer);
+      renderLevelList();
+    });
+  }
+  ul.appendChild(resetLi);
+
+  // Remove
+  const removeLi = document.createElement("li");
+  removeLi.textContent = t("ctx.layer.remove");
+  removeLi.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideFloatingMenu();
+    removeShapefileLayer(building, layer);
+  });
+  ul.appendChild(removeLi);
+
   floatingMenu.appendChild(ul);
+  positionFloatingMenu(event);
+}
+
+function positionFloatingMenu(event) {
   floatingMenu.style.left = `${event.pageX}px`;
   floatingMenu.style.top = `${event.pageY}px`;
   floatingMenu.style.display = "";
@@ -2755,6 +3662,352 @@ function showMoveToFloorMenu(event, building, layer) {
 function hideFloatingMenu() {
   floatingMenu.style.display = "none";
   floatingMenu.innerHTML = "";
+}
+
+// Single open popover at a time (clicking elsewhere closes it).
+let _openPopoverCleanup = null;
+function closeContextPopover() {
+  if (_openPopoverCleanup) {
+    _openPopoverCleanup();
+    _openPopoverCleanup = null;
+  }
+}
+
+function mountContextPopover(event, contentEl) {
+  closeContextPopover();
+  const popover = document.createElement("div");
+  popover.className = "left-popover";
+  // Hold position-related styles inline since the popover is absolutely positioned
+  // near the cursor click. Default top-left until measured.
+  popover.style.position = "fixed";
+  popover.style.left = `${event.pageX}px`;
+  popover.style.top = `${event.pageY}px`;
+  popover.appendChild(contentEl);
+  document.body.appendChild(popover);
+  // Re-position so the popover stays inside the viewport.
+  const rect = popover.getBoundingClientRect();
+  const margin = 8;
+  if (rect.right > window.innerWidth - margin) {
+    popover.style.left = `${Math.max(margin, window.innerWidth - rect.width - margin)}px`;
+  }
+  if (rect.bottom > window.innerHeight - margin) {
+    popover.style.top = `${Math.max(margin, window.innerHeight - rect.height - margin)}px`;
+  }
+
+  const onDocClick = (e) => {
+    if (!popover.contains(e.target)) closeContextPopover();
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") closeContextPopover();
+  };
+  // Defer to next tick so the click that opened the popover doesn't immediately close it.
+  setTimeout(() => {
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKey);
+  }, 0);
+
+  _openPopoverCleanup = () => {
+    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onKey);
+    if (popover.parentNode) popover.parentNode.removeChild(popover);
+  };
+  return popover;
+}
+
+// Open a small popover with one or two labelled inputs and OK / Cancel.
+// fields: [{ key, label, type: "text"|"number", value, step }]
+function openInputPopover({ anchor, fields, onOk }) {
+  const content = document.createElement("div");
+  const inputs = {};
+
+  for (const f of fields) {
+    const label = document.createElement("label");
+    label.className = "field-label";
+    label.textContent = f.label;
+    content.appendChild(label);
+
+    const input = document.createElement("input");
+    input.type = f.type || "text";
+    if (f.type === "number" && f.step != null) input.step = String(f.step);
+    input.value = f.value ?? "";
+    content.appendChild(input);
+    inputs[f.key] = input;
+  }
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.gap = "6px";
+  actions.style.marginTop = "10px";
+  actions.style.justifyContent = "flex-end";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "secondary-btn compact";
+  cancelBtn.textContent = t("popover.cancel");
+  cancelBtn.addEventListener("click", closeContextPopover);
+
+  const okBtn = document.createElement("button");
+  okBtn.type = "button";
+  okBtn.className = "primary-btn compact";
+  okBtn.textContent = t("popover.ok");
+  okBtn.style.width = "auto";
+  okBtn.style.flex = "0 0 auto";
+  const submit = () => {
+    const values = {};
+    for (const key in inputs) values[key] = inputs[key].value;
+    onOk(values);
+    closeContextPopover();
+  };
+  okBtn.addEventListener("click", submit);
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(okBtn);
+  content.appendChild(actions);
+
+  mountContextPopover(anchor, content);
+
+  // Focus first input, submit on Enter.
+  const firstInput = fields.length > 0 ? inputs[fields[0].key] : null;
+  if (firstInput) {
+    firstInput.focus();
+    firstInput.select();
+  }
+  for (const key in inputs) {
+    inputs[key].addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+  }
+}
+
+// Slider + number popover for live-updating numeric values (e.g. tileset shift).
+function openSliderPopover({ anchor, label, min, max, step, value, onChange }) {
+  const content = document.createElement("div");
+
+  const labelEl = document.createElement("label");
+  labelEl.className = "field-label";
+  labelEl.textContent = label;
+  content.appendChild(labelEl);
+
+  const row = document.createElement("div");
+  row.className = "slider-row";
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = String(min);
+  slider.max = String(max);
+  slider.step = String(step);
+  slider.value = String(value);
+
+  const num = document.createElement("input");
+  num.type = "number";
+  num.step = String(step);
+  num.value = String(value);
+  num.className = "w-number";
+
+  const apply = (v) => {
+    const parsed = parseFloat(v);
+    if (!Number.isFinite(parsed)) return;
+    slider.value = String(parsed);
+    num.value = String(parsed);
+    onChange(parsed);
+  };
+  slider.addEventListener("input", () => apply(slider.value));
+  num.addEventListener("change", () => apply(num.value));
+
+  row.appendChild(slider);
+  row.appendChild(num);
+  content.appendChild(row);
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.gap = "6px";
+  actions.style.marginTop = "10px";
+  actions.style.justifyContent = "flex-end";
+
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.className = "primary-btn compact";
+  doneBtn.style.width = "auto";
+  doneBtn.style.flex = "0 0 auto";
+  doneBtn.textContent = t("popover.ok");
+  doneBtn.addEventListener("click", closeContextPopover);
+  actions.appendChild(doneBtn);
+  content.appendChild(actions);
+
+  mountContextPopover(anchor, content);
+}
+
+// Building row context menu: zoom, add shapefiles, add level, set base
+// elevation, shift tileset, remove model. Each popover-style action uses
+// openInputPopover to collect the value before mutating state.
+function showBuildingContextMenu(event, building, bi) {
+  floatingMenu.innerHTML = "";
+  const ul = document.createElement("ul");
+  const mk = (label, handler, disabled = false) => {
+    const li = document.createElement("li");
+    li.textContent = label;
+    if (disabled) {
+      li.classList.add("disabled");
+    } else {
+      li.addEventListener("click", (e) => {
+        e.stopPropagation();
+        hideFloatingMenu();
+        handler();
+      });
+    }
+    ul.appendChild(li);
+  };
+  mk(t("building.zoomTitle"), () => zoomToBuilding(bi), !building.tileset);
+  mk(t("building.addShapefilesTitle"), () => handleAddShapefilesToBuilding(bi));
+  mk(t("ctx.building.setBaseElev"), () => {
+    openInputPopover({
+      anchor: event,
+      fields: [
+        { key: "base", label: t("popover.baseElevation"), type: "number", value: building.levelBaseElevation, step: 0.1 },
+      ],
+      onOk: ({ base }) => {
+        building.levelBaseElevation = parseFloat(base) || 0;
+        applyShapefileLayerHeights(building);
+        if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
+        renderLevelList();
+      },
+    });
+  });
+  mk(t("ctx.building.shiftTileset"), () => {
+    openSliderPopover({
+      anchor: event,
+      label: t("popover.tilesetShift"),
+      min: -100, max: 100, step: 0.5,
+      value: building.heightOffset ?? 0,
+      onChange: (v) => setBuildingHeightOffset(building, v),
+    });
+  }, !building.tileset);
+
+  // separator
+  const sep = document.createElement("li");
+  sep.className = "menu-sep";
+  ul.appendChild(sep);
+
+  mk(t("building.removeTitle"), () => handleRemoveBuilding(bi));
+
+  floatingMenu.appendChild(ul);
+  positionFloatingMenu(event);
+}
+
+function showModelLevelContextMenu(event, mli) {
+  const ml = modelLevels[mli];
+  if (!ml) return;
+  floatingMenu.innerHTML = "";
+  const ul = document.createElement("ul");
+  const mk = (label, handler) => {
+    const li = document.createElement("li");
+    li.textContent = label;
+    li.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideFloatingMenu();
+      handler();
+    });
+    ul.appendChild(li);
+  };
+  mk(t("ctx.level.editName"), () => {
+    openInputPopover({
+      anchor: event,
+      fields: [{ key: "name", label: t("popover.levelName"), type: "text", value: ml.name }],
+      onOk: ({ name }) => {
+        const trimmed = (name ?? "").trim();
+        if (!trimmed) return;
+        ml.name = trimmed;
+        renderLevelList();
+      },
+    });
+  });
+  mk(t("ctx.level.editElev"), () => {
+    openInputPopover({
+      anchor: event,
+      fields: [{ key: "elev", label: t("popover.elevation"), type: "number", value: ml.elevation, step: 0.1 }],
+      onOk: ({ elev }) => {
+        const v = parseFloat(elev);
+        if (!Number.isFinite(v)) return;
+        const delta = v - ml.elevation;
+        ml.elevation = v;
+        // Propagate the delta to every building's matching level so shapefile
+        // heights and 3D Tiles cuts stay aligned.
+        for (const b of buildings) {
+          const lvl = b.levels.find(l => levelNameToNumber(l.name) === ml.floorNumber);
+          if (lvl) {
+            lvl.floor += delta;
+            applyShapefileLayerHeights(b);
+          }
+        }
+        renderLevelList();
+      },
+    });
+  });
+  floatingMenu.appendChild(ul);
+  positionFloatingMenu(event);
+}
+
+function showLevelContextMenu(event, building, bi, levelIndex) {
+  floatingMenu.innerHTML = "";
+  const level = building.levels[levelIndex];
+  if (!level) return;
+  const ul = document.createElement("ul");
+  const mk = (label, handler) => {
+    const li = document.createElement("li");
+    li.textContent = label;
+    li.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideFloatingMenu();
+      handler();
+    });
+    ul.appendChild(li);
+  };
+  mk(t("ctx.level.editName"), () => {
+    openInputPopover({
+      anchor: event,
+      fields: [{ key: "name", label: t("popover.levelName"), type: "text", value: level.name }],
+      onOk: ({ name }) => {
+        const trimmed = (name ?? "").trim();
+        if (!trimmed) return;
+        level.name = trimmed;
+        rebuildModelLevels();
+        renderLevelList();
+      },
+    });
+  });
+  mk(t("ctx.level.editElev"), () => {
+    openInputPopover({
+      anchor: event,
+      fields: [{ key: "floor", label: t("popover.elevation"), type: "number", value: level.floor, step: 0.1 }],
+      onOk: ({ floor }) => {
+        const v = parseFloat(floor);
+        if (!Number.isFinite(v)) return;
+        level.floor = v;
+        building.levels.sort((a, b) => a.floor - b.floor);
+        applyShapefileLayerHeights(building);
+        if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
+        rebuildModelLevels();
+        renderLevelList();
+      },
+    });
+  });
+  mk(t("level.removeTitle"), () => {
+    const wasActive = building.activeLevelIndex === levelIndex;
+    building.levels.splice(levelIndex, 1);
+    if (wasActive || building.activeLevelIndex >= building.levels.length) {
+      building.activeLevelIndex = -1;
+      applyActiveLevelForBuilding(building);
+    } else if (building.activeLevelIndex > levelIndex) {
+      building.activeLevelIndex--;
+    }
+    applyShapefileLayerHeights(building);
+    rebuildModelLevels();
+    renderLevelList();
+    syncRemoveAllBtnAndLod();
+  });
+
+  floatingMenu.appendChild(ul);
+  positionFloatingMenu(event);
 }
 
 // -- CityGML Layers --
@@ -2843,6 +4096,12 @@ function saveSession() {
     imagery: imagerySelect.value,
     terrain: terrainSelect.value,
     plateauOverridesEnabled,
+    modelLevels: modelLevels.map(m => ({
+      floorNumber: m.floorNumber,
+      name: m.name,
+      elevation: m.elevation,
+    })),
+    activeModelLevelIndex,
     buildings: (() => {
       // Assign a stable tilesetGroupId so siblings sharing one tileset can be
       // reunited on restore (they will load the same tileset once).
@@ -2871,6 +4130,7 @@ function saveSession() {
           levelKey: sl.levelKey ?? null,
           source: sl.source ?? null,
           features: sl.features ?? [],
+          heightOffset: sl.heightOffset ?? 0,
           _origin: sl._origin ?? null,
         })),
         directoryHandleId: b.directoryHandleId ?? null,
@@ -2884,6 +4144,14 @@ function saveSession() {
         if (isPlateauLayer(l)) saved.plateauOverrides = serializePlateauOverrides(l);
         return saved;
       }),
+    unassignedLayers: unassignedLayers.map(l => ({
+      name: l.name,
+      color: l.color,
+      source: l.source ?? null,
+      features: l.features ?? [],
+      heightOffset: l.heightOffset ?? 0,
+      _origin: l._origin ?? "gdb",
+    })),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -2961,11 +4229,37 @@ async function restoreSession(data) {
     done++;
     updateLoadingOverlay(t("loading.session.progress", { current: done, total }));
   }
+  for (const u of data.unassignedLayers ?? []) {
+    try {
+      await restoreUnassignedLayer(u);
+    } catch (e) {
+      console.warn("Could not restore unassigned layer:", u?.name, e);
+    }
+  }
   selectedBuildingIndex = buildings.length > 0 ? 0 : -1;
-  renderBuildingList();
-  renderBuildingDetail();
+  rebuildModelLevels();
+  // Restore saved model-level overrides (user-edited name/elevation) and
+  // active selection.
+  if (Array.isArray(data.modelLevels) && data.modelLevels.length > 0) {
+    const byFn = new Map(data.modelLevels.map(m => [m.floorNumber, m]));
+    for (const ml of modelLevels) {
+      const saved = byFn.get(ml.floorNumber);
+      if (saved) {
+        if (saved.name) ml.name = saved.name;
+        if (Number.isFinite(saved.elevation)) ml.elevation = saved.elevation;
+      }
+    }
+  }
+  if (Number.isFinite(data.activeModelLevelIndex)
+      && data.activeModelLevelIndex >= -1
+      && data.activeModelLevelIndex < modelLevels.length) {
+    selectModelLevel(data.activeModelLevelIndex);
+  }
+  renderLevelList(); syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
   renderImportedLayersList();
   refreshAllPlateauOverrideStyles();
+  applyUndergroundMode();
 }
 
 async function restoreBuilding(bData) {
@@ -3100,6 +4394,7 @@ async function restoreShapefileLayer(building, slData) {
     levelKey: slData.levelKey ?? null,
     source: slData.source ?? detectShapefileSource(slData.features) ?? null,
     features: slData.features,
+    heightOffset: slData.heightOffset ?? 0,
     // Saved sessions pre-date the _origin tag — assume GDB (most layers in
     // practice came from the GDB importer) so they show up in the reassign
     // dialog. Newer sessions persist the real origin.
@@ -3108,6 +4403,33 @@ async function restoreShapefileLayer(building, slData) {
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
   applyLevelToShapefilesForBuilding(building);
+}
+
+// Restore a saved unassigned/staging layer. Same shape as restoreShapefileLayer
+// but skips building plumbing and keeps dataSource.show = false until the user
+// drags it onto a building.
+async function restoreUnassignedLayer(u) {
+  if (!u?.features?.length) return;
+  const geojson = { type: "FeatureCollection", features: u.features };
+  const cesiumColor = Color.fromCssColorString(u.color ?? "#4fc3f7");
+  const dataSource = await GeoJsonDataSource.load(geojson, {
+    fill: cesiumColor.withAlpha(1.0),
+    stroke: cesiumColor,
+    strokeWidth: 2,
+    clampToGround: false,
+  });
+  applyEntityStyling(dataSource, u.name ?? "");
+  dataSource.show = false;
+  viewer.dataSources.add(dataSource);
+  unassignedLayers.push({
+    name: u.name ?? "layer",
+    dataSource,
+    color: u.color ?? "#4fc3f7",
+    source: u.source ?? detectShapefileSource(u.features) ?? null,
+    features: u.features,
+    heightOffset: u.heightOffset ?? 0,
+    _origin: u._origin ?? "gdb",
+  });
 }
 
 async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, dirId = null, dirName = null) {
@@ -3121,7 +4443,6 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
     : [target];
 
   setButtonLoading(loadFileBtn, true, t("models.browse.attaching"));
-  setButtonLoading(reloadTilesetBtn, true, t("models.browse.attaching"));
   try {
     let tileset;
     if (dirHandle) {
@@ -3148,28 +4469,22 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
     if (siblings[0].heightOffset !== 0) applyHeightOffset(tileset, siblings[0].heightOffset);
     for (const b of siblings) applyShapefileLayerHeights(b);
     applyFiltersForTileset(tileset);
-    renderBuildingList();
-    renderBuildingDetail();
+    renderLevelList(); syncRemoveAllBtnAndLod();
+    renderPlateauFloatingCard();
   } catch (e) {
     fileStatus.textContent = "";
     alert(t("alert.failedLoad", { message: e.message }));
   } finally {
     setButtonLoading(loadFileBtn, false);
-    setButtonLoading(reloadTilesetBtn, false);
   }
 }
 
-// -- Height offset --
-function handleHeightChange(e) {
-  const value = parseFloat(e.target.value) || 0;
-  heightSlider.value = value;
-  heightOffsetInput.value = value;
-  const b = buildings[selectedBuildingIndex];
-  if (!b) return;
-  // Height offset is applied via tileset.modelMatrix, so siblings share it.
-  const siblings = b.tileset?._buildings || [b];
+// -- Height offset (called from the building context menu's "Shift tileset…" popover) --
+function setBuildingHeightOffset(building, value) {
+  if (!building) return;
+  const siblings = building.tileset?._buildings || [building];
   for (const sibling of siblings) sibling.heightOffset = value;
-  applyHeightOffset(b.tileset, value);
+  applyHeightOffset(building.tileset, value);
   for (const sibling of siblings) applyShapefileLayerHeights(sibling);
 }
 
@@ -3181,6 +4496,332 @@ function applyHeightOffset(tileset, offsetMeters) {
   const offset = Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, offsetMeters);
   const translation = Cartesian3.subtract(offset, surface, new Cartesian3());
   tileset.modelMatrix = Matrix4.fromTranslation(translation);
+}
+
+// -- Header search --
+function initSearch() {
+  searchInput.addEventListener("input", handleSearchInput);
+  searchInput.addEventListener("keydown", handleSearchKeydown);
+  document.addEventListener("click", handleSearchOutsideClick);
+}
+
+function getSearchableEntities() {
+  const out = [];
+  const time = viewer?.clock?.currentTime ?? JulianDate.now();
+
+  for (let bi = 0; bi < buildings.length; bi++) {
+    const b = buildings[bi];
+    for (const layer of b.shapefileLayers) {
+      for (const entity of layer.dataSource.entities.values) {
+        if (!hasPointGeometry(entity)) continue;
+        const props = entity.properties?.getValue(time);
+        const symbolId = props?.symbol_id ?? null;
+        const name = props?.name ?? null;
+        if (symbolId == null && name == null) continue;
+        out.push({
+          entity,
+          symbolId: String(symbolId ?? ""),
+          name: String(name ?? ""),
+          buildingIndex: bi,
+          building: b,
+          layer,
+        });
+      }
+    }
+  }
+
+  for (const layer of unassignedLayers) {
+    for (const entity of layer.dataSource.entities.values) {
+      if (!hasPointGeometry(entity)) continue;
+      const props = entity.properties?.getValue(time);
+      const symbolId = props?.symbol_id ?? null;
+      const name = props?.name ?? null;
+      if (symbolId == null && name == null) continue;
+      out.push({
+        entity,
+        symbolId: String(symbolId ?? ""),
+        name: String(name ?? ""),
+        buildingIndex: -1,
+        building: null,
+        layer,
+      });
+    }
+  }
+
+  return out;
+}
+
+function hasPointGeometry(entity) {
+  return entity.position != null || entity.point != null || entity.billboard != null;
+}
+
+function handleSearchInput() {
+  const raw = searchInput.value.trim();
+  searchQuery = raw;
+  if (!raw) {
+    closeSearchDropdown();
+    return;
+  }
+  const q = raw.toLowerCase();
+  const all = getSearchableEntities();
+  searchResults = all
+    .filter((item) => item.symbolId.toLowerCase().includes(q) || item.name.toLowerCase().includes(q))
+    .slice(0, 25);
+  searchSelectedIndex = searchResults.length > 0 ? 0 : -1;
+  searchOpen = true;
+  renderSearchDropdown();
+}
+
+function handleSearchKeydown(e) {
+  if (!searchOpen) {
+    if (e.key === "ArrowDown" && searchResults.length > 0) {
+      e.preventDefault();
+      searchOpen = true;
+      renderSearchDropdown();
+    }
+    return;
+  }
+  switch (e.key) {
+    case "ArrowDown":
+      e.preventDefault();
+      if (searchResults.length > 0) {
+        searchSelectedIndex = (searchSelectedIndex + 1) % searchResults.length;
+        renderSearchDropdown();
+      }
+      break;
+    case "ArrowUp":
+      e.preventDefault();
+      if (searchResults.length > 0) {
+        searchSelectedIndex = (searchSelectedIndex - 1 + searchResults.length) % searchResults.length;
+        renderSearchDropdown();
+      }
+      break;
+    case "Enter":
+      e.preventDefault();
+      if (searchSelectedIndex >= 0 && searchSelectedIndex < searchResults.length) {
+        selectSearchResult(searchResults[searchSelectedIndex]);
+      } else if (searchResults.length > 0) {
+        selectSearchResult(searchResults[0]);
+      }
+      break;
+    case "Escape":
+      e.preventDefault();
+      closeSearchDropdown();
+      searchInput.blur();
+      break;
+  }
+}
+
+function renderSearchDropdown() {
+  if (!searchOpen) {
+    searchDropdown.style.display = "none";
+    return;
+  }
+  if (searchResults.length === 0) {
+    searchDropdown.innerHTML = "";
+    const noMatch = document.createElement("div");
+    noMatch.className = "search-dropdown-empty";
+    noMatch.textContent = t("search.noMatches");
+    searchDropdown.appendChild(noMatch);
+    searchDropdown.style.display = "";
+    return;
+  }
+
+  searchDropdown.innerHTML = "";
+  for (let i = 0; i < searchResults.length; i++) {
+    const item = searchResults[i];
+    const row = document.createElement("div");
+    row.className = "search-dropdown-row" + (i === searchSelectedIndex ? " selected" : "");
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectSearchResult(item);
+    });
+    row.addEventListener("mouseenter", () => {
+      searchSelectedIndex = i;
+      searchDropdown.querySelectorAll(".search-dropdown-row").forEach((r, idx) => {
+        r.classList.toggle("selected", idx === i);
+      });
+      row.scrollIntoView({ block: "nearest", behavior: "instant" });
+    });
+
+    const title = document.createElement("div");
+    title.className = "search-dropdown-title";
+    title.textContent = item.symbolId || item.name || t("search.untitledPoint");
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "search-dropdown-subtitle";
+    subtitle.textContent = buildSearchSubtitle(item);
+
+    row.appendChild(title);
+    row.appendChild(subtitle);
+    searchDropdown.appendChild(row);
+  }
+  searchDropdown.style.display = "";
+
+  if (searchSelectedIndex >= 0) {
+    const selectedRow = searchDropdown.querySelector(".search-dropdown-row.selected");
+    if (selectedRow) {
+      selectedRow.scrollIntoView({ block: "nearest", behavior: "instant" });
+    }
+  }
+}
+
+function buildSearchSubtitle(item) {
+  if (item.buildingIndex === -1) {
+    return t("search.subtitleUnassigned", { layer: item.layer.name });
+  }
+  const b = item.building;
+  const floorName = item.layer.levelKey == null
+    ? t("level.allFloors")
+    : (b.levels.find(l => (l.key ?? "") === item.layer.levelKey)?.name ?? item.layer.levelKey ?? "");
+  return `${b.name} · ${item.layer.name} · ${floorName}`;
+}
+
+function closeSearchDropdown() {
+  searchOpen = false;
+  searchDropdown.style.display = "none";
+}
+
+function selectSearchResult(item) {
+  closeSearchDropdown();
+  searchInput.value = "";
+  searchQuery = "";
+  searchResults = [];
+  searchSelectedIndex = -1;
+
+  if (item.buildingIndex !== -1) {
+    let targetLevelIndex = -1;
+    if (item.layer.levelKey != null) {
+      targetLevelIndex = item.building.levels.findIndex(
+        (l) => (l.key ?? "") === item.layer.levelKey
+      );
+      if (targetLevelIndex === -1) targetLevelIndex = -1;
+    }
+    selectLevel(item.buildingIndex, targetLevelIndex);
+  }
+
+  const entity = item.entity;
+  if (!entity) return;
+
+  viewer.selectedEntity = entity;
+
+  const offset = new HeadingPitchRange(0, CesiumMath.toRadians(-45), 80);
+  viewer.flyTo(entity, { offset }).catch(() => {});
+}
+
+function handleSearchOutsideClick(e) {
+  if (!searchOpen) return;
+  if (!searchInput.contains(e.target) && !searchDropdown.contains(e.target)) {
+    closeSearchDropdown();
+  }
+}
+
+// -- Cesium InfoBox iframe theme injection --
+function styleInfoBoxIframe() {
+  const iframe = document.querySelector(".cesium-infoBox-iframe");
+  if (!iframe) return;
+
+  let attempts = 0;
+  const maxAttempts = 20; // 20 x 50ms = 1s
+
+  const inject = () => {
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!doc || !doc.body) {
+        if (++attempts < maxAttempts) {
+          setTimeout(inject, 50);
+        }
+        return;
+      }
+
+      const isLight = document.documentElement.getAttribute("data-theme") === "light";
+      const bg = isLight ? "#fcfcff" : "#121218";
+      const bgAlt = isLight ? "#f4f4f7" : "#0f0f14";
+      const text = isLight ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.87)";
+      const muted = isLight ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.3)";
+      const border = isLight ? "rgba(0,0,0,0.09)" : "rgba(255,255,255,0.07)";
+      const accent = "#0696D7";
+
+      const styleId = "app-theme-info-box";
+      let style = doc.getElementById(styleId);
+      if (!style) {
+        style = doc.createElement("style");
+        style.id = styleId;
+        doc.head.appendChild(style);
+      }
+
+      style.textContent = `
+        html, body, body > div, body > div > div, .cesium-infoBox-description {
+          background: ${bg} !important;
+          color: ${text} !important;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif !important;
+          font-size: 12px !important;
+        }
+        table, tbody, thead, tr, td, th {
+          background: transparent !important;
+          color: ${text} !important;
+          border-color: ${border} !important;
+        }
+        tr {
+          background: ${bg} !important;
+        }
+        tr:nth-child(even) {
+          background: ${bgAlt} !important;
+        }
+        tr:nth-child(odd) {
+          background: ${bg} !important;
+        }
+        td, th {
+          padding: 4px 6px !important;
+          border-bottom: 1px solid ${border} !important;
+          font-size: 12px !important;
+        }
+        td:first-child {
+          color: ${muted} !important;
+          width: 40% !important;
+          font-weight: 500 !important;
+        }
+        td:last-child {
+          color: ${text} !important;
+          word-break: break-all !important;
+        }
+        a {
+          color: ${accent} !important;
+        }
+      `;
+    } catch {
+      // Cross-origin iframe — silently skip
+    }
+  };
+
+  inject();
+}
+
+// Watch for the info box becoming visible or its iframe being recreated.
+function initInfoBoxStyling() {
+  const infoBox = document.querySelector(".cesium-infoBox");
+  if (!infoBox) return;
+
+  // Trigger when the info box becomes visible.
+  const classObserver = new MutationObserver(() => {
+    if (infoBox.classList.contains("cesium-infoBox-visible")) {
+      styleInfoBoxIframe();
+    }
+  });
+  classObserver.observe(infoBox, { attributes: true, attributeFilter: ["class"] });
+
+  // Trigger when the iframe element is replaced (Cesium recreates it).
+  const childObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType === 1 && node.classList && node.classList.contains("cesium-infoBox-iframe")) {
+          styleInfoBoxIframe();
+          break;
+        }
+      }
+    }
+  });
+  childObserver.observe(infoBox, { childList: true, subtree: true });
 }
 
 init();
