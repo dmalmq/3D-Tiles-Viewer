@@ -2,10 +2,12 @@
   "name": "cesium-3dtiles-viewer",
   "private": true,
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test"
   },
   "devDependencies": {
     "cesium": "^1.140.0",

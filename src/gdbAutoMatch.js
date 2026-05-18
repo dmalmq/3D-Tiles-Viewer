@@ -61,6 +61,7 @@ const BILINGUAL_NAME_ALIASES = [
 const BILINGUAL_ALIAS_GROUPS = BILINGUAL_NAME_ALIASES.map((group) =>
   group.map((value) => compactNameText(value)).filter(Boolean)
 );
+const PLACEHOLDER_SOURCE_VALUES = new Set(["unknown", "unk", "none", "null", "na", "n/a"]);
 
 export function matchLayerToTarget({ filename, features, buildings }) {
   const fileText = stripExt(filename ?? "");
@@ -201,6 +202,7 @@ function detectSource(features) {
   for (const f of features) {
     const raw = readProp(f?.properties ?? {}, ["source", "Source", "SOURCE"]);
     if (raw == null || raw === "") continue;
+    if (isPlaceholderSource(raw)) continue;
     const key = String(raw);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
@@ -214,6 +216,11 @@ function detectSource(features) {
     }
   }
   return best;
+}
+
+function isPlaceholderSource(value) {
+  const normalized = normalizeNameText(value);
+  return PLACEHOLDER_SOURCE_VALUES.has(normalized) || PLACEHOLDER_SOURCE_VALUES.has(compactNameText(value));
 }
 
 function readProp(row, names) {

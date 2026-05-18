@@ -63,7 +63,7 @@ import { parseCityGml } from "./cityGmlLoader.js";
 import { loadGdb } from "./gdbLoader.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
-import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber } from "./floorSplit.js";
+import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber, shortLevelName } from "./floorSplit.js";
 
 // -- State --
 let viewer;
@@ -208,9 +208,11 @@ const searchInput = document.getElementById("searchInput");
 const searchDropdown = document.getElementById("searchDropdown");
 
 let worldTerrainProvider = null;
-const PLATEAU_TERRAIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
+const DEFAULT_PLATEAU_TERRAIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
+const PLATEAU_TERRAIN_TOKEN = import.meta.env.VITE_PLATEAU_TERRAIN_TOKEN || DEFAULT_PLATEAU_TERRAIN_TOKEN;
 let plateauTerrainProvider = null;
 const lodFilter = new LodFilter();
+let _lodRefreshTimer = null;
 
 let searchQuery = "";
 let searchResults = [];
@@ -463,19 +465,20 @@ function initSceneFilter() {
   if (!sceneFilterInput) return;
   sceneFilterInput.addEventListener("input", () => {
     renderLevelList();
+    renderImportedLayersList();
   });
 }
 
 // Persist each panel section's collapsed state in localStorage keyed by the
-// section title. Sections with .section-header-static (e.g. the Scene tree)
+// section title. Headers without the .collapsible class (e.g. the Scene tree)
 // are skipped — those are always expanded. Defaults to expanded unless a
 // previous value was stored.
 function initSectionCollapse() {
   document.querySelectorAll(".panel-section").forEach((section) => {
-    const header = section.querySelector(".section-header");
-    if (!header || header.classList.contains("section-header-static")) return;
-    const titleEl = header.querySelector(".section-title");
-    const key = titleEl ? `section:${titleEl.textContent.trim()}:collapsed` : null;
+    const header = section.querySelector(".panel-section-header.collapsible");
+    if (!header) return;
+    const labelEl = header.querySelector("span:not(.panel-section-chevron):not(.panel-section-count)");
+    const key = labelEl ? `section:${labelEl.textContent.trim()}:collapsed` : null;
     if (key && localStorage.getItem(key) === "1") {
       section.classList.add("collapsed");
     }
@@ -1199,8 +1202,29 @@ function renderPlateauFloatingCard() {
 
 // -- LOD filter --
 function handleLodFilterToggle() {
+  if (!lodFilterToggle.checked && _lodRefreshTimer) {
+    clearTimeout(_lodRefreshTimer);
+    _lodRefreshTimer = null;
+  }
   lodFilter.toggle(lodFilterToggle.checked);
   updateLodFilterStatus();
+}
+
+function refreshLodFilterIfEnabled() {
+  if (!lodFilterToggle.checked) {
+    updateLodFilterStatus();
+    return;
+  }
+  lodFilter.apply();
+  updateLodFilterStatus();
+}
+
+function scheduleLodFilterRefresh() {
+  if (!lodFilterToggle.checked || _lodRefreshTimer) return;
+  _lodRefreshTimer = setTimeout(() => {
+    _lodRefreshTimer = null;
+    refreshLodFilterIfEnabled();
+  }, 250);
 }
 
 function updateLodFilterStatus() {
@@ -1213,18 +1237,28 @@ function updateLodFilterStatus() {
 }
 
 // -- Load from URL --
+function cleanupUntrackedTileset(tileset) {
+  if (!tileset) return;
+  const isTracked =
+    buildings.some((b) => b.tileset === tileset) ||
+    importedLayers.some((layer) => layer.type === "tileset" && layer.data === tileset);
+  if (isTracked) return;
+  lodFilter.removeTileset(tileset);
+  removeCurrentTileset(viewer, tileset);
+}
+
 async function handleLoadUrl() {
   const url = urlInput.value.trim();
   if (!url) return;
   setButtonLoading(loadUrlBtn, true, t("models.loadUrl.loading"));
+  let tileset = null;
   try {
-    const [levelsData, tileset] = await Promise.all([
-      detectLevelsFromUrl(url),
-      loadTilesetFromUrl(viewer, url),
-    ]);
+    const levelsData = await detectLevelsFromUrl(url);
+    tileset = await loadTilesetFromUrl(viewer, url);
     const name = url.split("/").filter(Boolean).pop() || url;
     await addBuilding(tileset, name, levelsData, url);
   } catch (e) {
+    cleanupUntrackedTileset(tileset);
     alert(t("alert.failedLoad", { message: e.message }));
   } finally {
     setButtonLoading(loadUrlBtn, false);
@@ -1239,15 +1273,15 @@ async function handleDirectoryPick() {
     await saveDirectoryHandle(dirId, dirHandle);
 
     setButtonLoading(loadFileBtn, true, t("models.browse.loading"));
+    let tileset = null;
     try {
       const files = await getFilesFromDirectoryHandle(dirHandle);
-      const [levelsData, tileset] = await Promise.all([
-        detectLevelsFromFiles(files),
-        loadTilesetFromFiles(viewer, files, fileStatus),
-      ]);
+      const levelsData = await detectLevelsFromFiles(files);
+      tileset = await loadTilesetFromFiles(viewer, files, fileStatus);
       const name = dirHandle.name || "Local tileset";
       await addBuilding(tileset, name, levelsData, null, dirId, dirHandle.name);
     } catch (e) {
+      cleanupUntrackedTileset(tileset);
       fileStatus.textContent = "";
       alert(t("alert.failedLoad", { message: e.message }));
     } finally {
@@ -1313,14 +1347,15 @@ async function handleFileSelect(e) {
   }
 
   setButtonLoading(loadFileBtn, true, t("models.browse.loading"));
+  let tileset = null;
   try {
-    const [levelsData, tileset] = await Promise.all([
-      detectLevelsFromFiles(files),
-      loadTilesetFromFiles(viewer, files, fileStatus),
-    ]);
-    const name = files[0].webkitRelativePath.split("/")[0] || "Local tileset";
+    const levelsData = await detectLevelsFromFiles(files);
+    tileset = await loadTilesetFromFiles(viewer, files, fileStatus);
+    const firstPath = files[0].webkitRelativePath || files[0].relativePath || files[0].name;
+    const name = firstPath.split("/")[0] || "Local tileset";
     await addBuilding(tileset, name, levelsData, null);
   } catch (e) {
+    cleanupUntrackedTileset(tileset);
     fileStatus.textContent = "";
     alert(t("alert.failedLoad", { message: e.message }));
   } finally {
@@ -1451,6 +1486,7 @@ function bindTilesetTileLoad(tileset) {
   tileset._linkAwareTileLoadBound = true;
   tileset.tileLoad.addEventListener(tile => {
     applyFiltersToContent(tileset, tile.content);
+    scheduleLodFilterRefresh();
   });
 }
 
@@ -1520,6 +1556,7 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
 
   bindTilesetTileLoad(tileset);
   applyFiltersForTileset(tileset);
+  refreshLodFilterIfEnabled();
 
   selectedBuildingIndex = buildings.indexOf(createdBuildings[0]);
   renderLevelList(); syncRemoveAllBtnAndLod();
@@ -1693,6 +1730,7 @@ function handleRemoveAll() {
     }
   }
   buildings.length = 0;
+  clearUnassignedLayers(false);
   selectedBuildingIndex = -1;
   activeModelLevelIndex = -1;
   rebuildModelLevels();
@@ -1708,9 +1746,14 @@ function syncRemoveAllBtnAndLod() {
 
 function renderImportedLayersList() {
   importedLayersListEl.innerHTML = "";
-  noImportedLayersMsg.style.display = importedLayers.length === 0 ? "block" : "none";
+  const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
+  const visibleLayers = filterRaw
+    ? importedLayers.filter(l => (l.label ?? l.name ?? "").toLowerCase().includes(filterRaw))
+    : importedLayers;
+  noImportedLayersMsg.style.display = visibleLayers.length === 0 ? "block" : "none";
 
-  importedLayers.forEach((layer, i) => {
+  visibleLayers.forEach((layer) => {
+    const i = importedLayers.indexOf(layer);
     const li = document.createElement("li");
     li.className = "imported-layer-item";
 
@@ -1778,6 +1821,15 @@ function clearImportedLayers(rerender = true) {
   }
 }
 
+function clearUnassignedLayers(rerender = true) {
+  for (const layer of unassignedLayers.splice(0)) {
+    if (layer.dataSource) viewer.dataSources.remove(layer.dataSource, true);
+  }
+  _unassignedTreeExpanded = false;
+  clearLayerSelection();
+  if (rerender) renderLevelList();
+}
+
 // -- Levels --
 function populateLevelsForBuilding(building, data) {
   building.levels = [];
@@ -1837,7 +1889,7 @@ function rebuildModelLevels() {
       if (fn == null) continue;
       if (!seen.has(fn)) {
         seen.set(fn, {
-          name: lvl.name,
+          name: shortLevelName(lvl.name),
           elevation: (b.levelBaseElevation ?? 0) + (lvl.floor ?? 0),
         });
       }
@@ -2027,11 +2079,13 @@ function applyFiltersToContent(tileset, content) {
       feature.show = true;
     } else {
       const lvl = feature.getProperty("levelName");
-      if (lvl === "Unassigned" && feature.getProperty("category") === "Mass") {
+      const cat = feature.getProperty("category");
+      if (lvl === "Unassigned" && cat === "Mass") {
         feature.show = false;
       } else {
         const fn = getFeatureFloorNumber(owning.building, lvl);
         if (fn == null) feature.show = false; // unmappable → hidden when filtering
+        else if (fn <= activeFn && cat === "Ceilings") feature.show = false;
         else feature.show = fn <= activeFn;
       }
     }
@@ -2043,6 +2097,10 @@ function applyLevelToShapefilesForBuilding(building) {
     ? null
     : modelLevels[activeModelLevelIndex]?.floorNumber ?? null;
   for (const layer of building.shapefileLayers) {
+    if (layer._hidden) {
+      layer.dataSource.show = false;
+      continue;
+    }
     if (activeFn === null) {
       layer.dataSource.show = true;
       continue;
@@ -2055,6 +2113,18 @@ function applyLevelToShapefilesForBuilding(building) {
     const lvl = building.levels.find(l => (l.key ?? "") === layer.levelKey);
     const fn = lvl ? levelNameToNumber(lvl.name) : null;
     layer.dataSource.show = fn === activeFn;
+  }
+}
+
+// Apply the user-controlled hide flag for a single layer. For
+// building-attached layers, run the full per-building filter so the level
+// rule still combines correctly. For global unassigned-bucket layers, just
+// toggle dataSource.show directly.
+function applyLayerVisibility(building, layer) {
+  if (building) {
+    applyLevelToShapefilesForBuilding(building);
+  } else if (layer.dataSource) {
+    layer.dataSource.show = !layer._hidden;
   }
 }
 
@@ -2327,13 +2397,10 @@ function renderLevelList() {
   if (buildings.length === 0 && unassignedLayers.length === 0) return;
 
   // ===== Model Levels section =====
+  // The parent Scene section already serves as the visual heading; the level
+  // list sits directly under it without a redundant subheader.
   const mlSection = document.createElement("li");
   mlSection.className = "panel-section model-levels-section";
-
-  const mlHeader = document.createElement("div");
-  mlHeader.className = "panel-section-header";
-  mlHeader.textContent = t("panel.modelLevels");
-  mlSection.appendChild(mlHeader);
 
   const mlUl = document.createElement("ul");
   mlUl.className = "ml-list";
@@ -2341,21 +2408,21 @@ function renderLevelList() {
   // "All floors" row
   {
     const li = document.createElement("li");
-    li.className = "level-item ml-row all-floors";
+    li.className = "level-item ml-row all-floors"
+      + (activeModelLevelIndex === -1 ? " selected" : "");
     appendLevelChevron(li, null, () => {});
-    const label = document.createElement("label");
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "modelLevelRadio";
     radio.checked = activeModelLevelIndex === -1;
-    radio.addEventListener("change", () => selectModelLevel(-1));
-    label.appendChild(radio);
+    radio.tabIndex = -1;
+    li.appendChild(radio);
     const text = document.createElement("span");
     text.className = "level-name-text";
     text.textContent = t("level.allFloors");
     text.title = t("level.allFloors");
-    label.appendChild(text);
-    li.appendChild(label);
+    li.appendChild(text);
+    li.addEventListener("click", () => selectModelLevel(-1));
     mlUl.appendChild(li);
   }
 
@@ -2363,35 +2430,37 @@ function renderLevelList() {
   for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
     const ml = modelLevels[mli];
     const li = document.createElement("li");
-    li.className = "level-item ml-row";
+    li.className = "level-item ml-row"
+      + (activeModelLevelIndex === mli ? " selected" : "");
 
-    const shapefiles = shapefilesForModelLevel(ml.floorNumber);
-    const expanded = ml._expanded === true;
+    const shapefiles = shapefilesForModelLevel(ml.floorNumber, filterRaw);
+    // While filtering, hide rows with no matches and auto-expand the rest.
+    if (filterRaw && shapefiles.length === 0) continue;
+    const expanded = filterRaw ? true : (ml._expanded === true);
     appendLevelChevron(
       li,
       shapefiles.length > 0 ? expanded : null,
       () => { ml._expanded = !expanded; renderLevelList(); }
     );
 
-    const label = document.createElement("label");
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "modelLevelRadio";
     radio.checked = activeModelLevelIndex === mli;
-    radio.addEventListener("change", () => selectModelLevel(mli));
-    label.appendChild(radio);
+    radio.tabIndex = -1;
+    li.appendChild(radio);
     const text = document.createElement("span");
     text.className = "level-name-text";
     text.textContent = ml.name;
     text.title = ml.name;
-    label.appendChild(text);
-    li.appendChild(label);
+    li.appendChild(text);
 
     const elevSpan = document.createElement("span");
     elevSpan.className = "level-ceiling";
     elevSpan.textContent = `${ml.elevation.toFixed(1)} m`;
     li.appendChild(elevSpan);
 
+    li.addEventListener("click", () => selectModelLevel(mli));
     li.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -2406,11 +2475,11 @@ function renderLevelList() {
   }
 
   // Unassigned shapefiles row
-  const unassignedAll = unassignedShapefilesAll();
+  const unassignedAll = unassignedShapefilesAll(filterRaw);
   if (unassignedAll.length > 0) {
     const li = document.createElement("li");
     li.className = "level-item ml-row unassigned-row";
-    const expanded = _unassignedTreeExpanded;
+    const expanded = filterRaw ? true : _unassignedTreeExpanded;
     appendLevelChevron(
       li,
       expanded,
@@ -2421,6 +2490,10 @@ function renderLevelList() {
     text.textContent = t("gdb.unassigned.groupName");
     text.title = t("gdb.unassigned.groupName");
     li.appendChild(text);
+    li.addEventListener("click", () => {
+      _unassignedTreeExpanded = !_unassignedTreeExpanded;
+      renderLevelList();
+    });
     attachDropTarget(li, { kind: "unassigned" });
     mlUl.appendChild(li);
     if (expanded) {
@@ -2434,14 +2507,14 @@ function renderLevelList() {
   // ===== Buildings section =====
   if (visibleBuildings.length > 0) {
     const bSection = document.createElement("li");
-    bSection.className = "panel-section buildings-section";
+    bSection.className = "panel-section buildings-section"
+      + (_buildingsSectionExpanded ? "" : " collapsed");
 
     const bHeader = document.createElement("div");
-    bHeader.className = "panel-section-header collapsible"
-      + (_buildingsSectionExpanded ? " expanded" : "");
+    bHeader.className = "panel-section-header collapsible";
     const bChev = document.createElement("span");
     bChev.className = "panel-section-chevron";
-    bChev.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polyline points="3,2 7,5 3,8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    bChev.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     bHeader.appendChild(bChev);
     const bLabel = document.createElement("span");
     bLabel.textContent = t("panel.buildings");
@@ -2691,7 +2764,7 @@ function appendLevelChevron(li, expanded, onToggle) {
 
 // Collect every shapefile (across all buildings) whose host-building level
 // resolves to the given floor number. Used by the global Model Levels panel.
-function shapefilesForModelLevel(floorNumber) {
+function shapefilesForModelLevel(floorNumber, filterRaw = "") {
   const out = [];
   for (let bi = 0; bi < buildings.length; bi++) {
     const b = buildings[bi];
@@ -2700,24 +2773,30 @@ function shapefilesForModelLevel(floorNumber) {
       if (layer.levelKey == null) continue;
       const lvl = b.levels.find(l => (l.key ?? "") === layer.levelKey);
       const fn = lvl ? levelNameToNumber(lvl.name) : null;
-      if (fn === floorNumber) out.push({ building: b, buildingIndex: bi, layer });
+      if (fn !== floorNumber) continue;
+      if (filterRaw && !(layer.name ?? "").toLowerCase().includes(filterRaw)) continue;
+      out.push({ building: b, buildingIndex: bi, layer });
     }
   }
   return out;
 }
 
 // All "unassigned" shapefiles in one flat list: building-attached layers whose
-// levelKey is null + the global unassignedLayers staging bucket.
-function unassignedShapefilesAll() {
+// levelKey is null + the global unassignedLayers staging bucket. When
+// `filterRaw` is non-empty, narrow to layers whose name matches.
+function unassignedShapefilesAll(filterRaw = "") {
   const out = [];
   for (let bi = 0; bi < buildings.length; bi++) {
     const b = buildings[bi];
     if (!b.shapefileLayers) continue;
     for (const layer of b.shapefileLayers) {
-      if (layer.levelKey == null) out.push({ building: b, buildingIndex: bi, layer });
+      if (layer.levelKey != null) continue;
+      if (filterRaw && !(layer.name ?? "").toLowerCase().includes(filterRaw)) continue;
+      out.push({ building: b, buildingIndex: bi, layer });
     }
   }
   for (const layer of unassignedLayers) {
+    if (filterRaw && !(layer.name ?? "").toLowerCase().includes(filterRaw)) continue;
     out.push({ building: null, buildingIndex: "unassigned", layer });
   }
   return out;
@@ -2734,6 +2813,19 @@ function buildShapefileChildrenFlat(entries) {
     const { building, buildingIndex, layer } = entry;
     const li = document.createElement("li");
     li.className = "shp-tree-item";
+
+    const eyeBtn = document.createElement("button");
+    eyeBtn.className = "shp-visibility-btn" + (layer._hidden ? " hidden" : "");
+    eyeBtn.title = t(layer._hidden ? "shp.show" : "shp.hide");
+    eyeBtn.innerHTML = layer._hidden
+      ? '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/><path d="M3 13L13 3" stroke-linecap="round"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/></svg>';
+    eyeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      layer._hidden = !layer._hidden;
+      applyLayerVisibility(building, layer);
+      renderLevelList();
+    });
 
     const swatch = document.createElement("span");
     swatch.className = "color-swatch";
@@ -2754,6 +2846,7 @@ function buildShapefileChildrenFlat(entries) {
       else removeUnassignedLayer(layer);
     });
 
+    li.appendChild(eyeBtn);
     li.appendChild(swatch);
     li.appendChild(nameSpan);
     li.appendChild(removeBtn);
@@ -3383,7 +3476,6 @@ function moveUnassignedLayerToBuilding(layer, buildingIndex, levelKey) {
   const idx = unassignedLayers.indexOf(layer);
   if (idx === -1) return null;
   if (isGdbLayer(layer) && hasEquivalentGdbLayer(building, layer.name, levelKey, layer)) {
-    removeUnassignedLayer(layer);
     return null;
   }
   unassignedLayers.splice(idx, 1);
@@ -3554,12 +3646,36 @@ function moveShapefileToLevel(building, layer, newLevelKey) {
 }
 
 // -- Floating context menu --
+// Move a layer to the model-level with the given floor number. If the source
+// building has a matching level, swap in place; otherwise transfer the layer
+// to the first building that does host this floor.
+function moveLayerToModelLevel(srcBuilding, fromBi, layer, floorNumber) {
+  const inPlace = srcBuilding.levels.find(l => levelNameToNumber(l.name) === floorNumber);
+  if (inPlace) {
+    moveShapefileToLevel(srcBuilding, layer, inPlace.key ?? "");
+    return;
+  }
+  for (let bi = 0; bi < buildings.length; bi++) {
+    if (bi === fromBi) continue;
+    const target = buildings[bi];
+    const targetLvl = target.levels.find(l => levelNameToNumber(l.name) === floorNumber);
+    if (!targetLvl) continue;
+    if (transferBetweenBuildings(layer, fromBi, bi, targetLvl.key ?? "")) {
+      applyLevelToShapefilesForBuilding(target);
+      applyLevelToShapefilesForBuilding(srcBuilding);
+      renderLevelList();
+    }
+    return;
+  }
+}
+
 function showMoveToFloorMenu(event, building, layer) {
   floatingMenu.innerHTML = "";
   const ul = document.createElement("ul");
 
   // Resolve the layer's current floor number (if any) so we can mark the
   // matching model-level entry as the disabled "current" choice.
+  const fromBi = buildings.indexOf(building);
   const currentLvl = layer.levelKey != null
     ? building.levels.find(l => (l.key ?? "") === layer.levelKey)
     : null;
@@ -3568,7 +3684,7 @@ function showMoveToFloorMenu(event, building, layer) {
   // "Move to floor" submenu — driven by the global model-levels list.
   const moveParent = document.createElement("li");
   moveParent.className = "submenu-parent";
-  moveParent.textContent = t("gdb.unassigned.moveTitle");
+  moveParent.textContent = t("ctx.layer.moveToFloor");
   const moveSub = document.createElement("ul");
   moveSub.className = "submenu";
   const buildMoveItem = (label, action, disabled) => {
@@ -3590,14 +3706,15 @@ function showMoveToFloorMenu(event, building, layer) {
     () => moveShapefileToLevel(building, layer, null),
     layer.levelKey == null
   );
-  // Top floor first to match the panel order.
+  // Top floor first to match the panel order. Every model-level is enabled
+  // unless it's the layer's current floor — when the source building has no
+  // matching level, the action transfers across buildings.
   for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
     const ml = modelLevels[mli];
-    const matchLvl = building.levels.find(l => levelNameToNumber(l.name) === ml.floorNumber);
-    const disabled = !matchLvl || currentFn === ml.floorNumber;
+    const disabled = currentFn === ml.floorNumber;
     buildMoveItem(
       ml.name,
-      () => { if (matchLvl) moveShapefileToLevel(building, layer, matchLvl.key ?? ""); },
+      () => moveLayerToModelLevel(building, fromBi, layer, ml.floorNumber),
       disabled,
     );
   }
@@ -4087,7 +4204,7 @@ function renderCityGmlList() {
 
 // -- Session save / restore --
 function saveSession() {
-  if (buildings.length === 0 && importedLayers.length === 0) {
+  if (buildings.length === 0 && importedLayers.length === 0 && unassignedLayers.length === 0) {
     alert(t("alert.nothingToSave"));
     return;
   }
@@ -4132,6 +4249,7 @@ function saveSession() {
           features: sl.features ?? [],
           heightOffset: sl.heightOffset ?? 0,
           _origin: sl._origin ?? null,
+          _hidden: !!sl._hidden,
         })),
         directoryHandleId: b.directoryHandleId ?? null,
         _directoryFolderName: b._directoryFolderName ?? null,
@@ -4151,6 +4269,7 @@ function saveSession() {
       features: l.features ?? [],
       heightOffset: l.heightOffset ?? 0,
       _origin: l._origin ?? "gdb",
+      _hidden: !!l._hidden,
     })),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -4306,6 +4425,7 @@ async function restoreBuilding(bData) {
     bindTilesetTileLoad(tileset);
     if (building.heightOffset !== 0) applyHeightOffset(tileset, building.heightOffset);
     applyFiltersForTileset(tileset);
+    refreshLodFilterIfEnabled();
     computePerSiblingBoundingSpheres(tileset, bData.sourceUrl ?? null);
   }
   for (const slData of bData.shapefileLayers ?? []) {
@@ -4366,6 +4486,7 @@ async function restoreSiblingGroup(group) {
     bindTilesetTileLoad(tileset);
     if (siblings[0].heightOffset !== 0) applyHeightOffset(tileset, siblings[0].heightOffset);
     applyFiltersForTileset(tileset);
+    refreshLodFilterIfEnabled();
     computePerSiblingBoundingSpheres(tileset, first.sourceUrl ?? null);
   }
   for (let i = 0; i < group.length; i++) {
@@ -4399,6 +4520,7 @@ async function restoreShapefileLayer(building, slData) {
     // practice came from the GDB importer) so they show up in the reassign
     // dialog. Newer sessions persist the real origin.
     _origin: slData._origin ?? "gdb",
+    _hidden: !!slData._hidden,
   };
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
@@ -4419,7 +4541,8 @@ async function restoreUnassignedLayer(u) {
     clampToGround: false,
   });
   applyEntityStyling(dataSource, u.name ?? "");
-  dataSource.show = false;
+  const hidden = !!u._hidden;
+  dataSource.show = !hidden;
   viewer.dataSources.add(dataSource);
   unassignedLayers.push({
     name: u.name ?? "layer",
@@ -4429,6 +4552,7 @@ async function restoreUnassignedLayer(u) {
     features: u.features,
     heightOffset: u.heightOffset ?? 0,
     _origin: u._origin ?? "gdb",
+    _hidden: hidden,
   });
 }
 
@@ -4443,8 +4567,9 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
     : [target];
 
   setButtonLoading(loadFileBtn, true, t("models.browse.attaching"));
+  let tileset = null;
+  let attached = false;
   try {
-    let tileset;
     if (dirHandle) {
       tileset = await loadTilesetFromDirectoryHandle(viewer, dirHandle, fileStatus);
     } else {
@@ -4459,6 +4584,7 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
         b._directoryFolderName = dirName;
       }
     }
+    attached = true;
     tileset._buildings = siblings;
     if (dirId) {
       tileset._directoryHandleId = dirId;
@@ -4469,9 +4595,11 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
     if (siblings[0].heightOffset !== 0) applyHeightOffset(tileset, siblings[0].heightOffset);
     for (const b of siblings) applyShapefileLayerHeights(b);
     applyFiltersForTileset(tileset);
+    refreshLodFilterIfEnabled();
     renderLevelList(); syncRemoveAllBtnAndLod();
     renderPlateauFloatingCard();
   } catch (e) {
+    if (!attached) cleanupUntrackedTileset(tileset);
     fileStatus.textContent = "";
     alert(t("alert.failedLoad", { message: e.message }));
   } finally {

@@ -83,6 +83,7 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   let plateauAreaDatalist = null;
   let plateauTypeList = null;
   let plateauStatus = null;
+  let closed = false;
 
   // -- Overlay + modal --
   const overlay = document.createElement('div');
@@ -403,6 +404,7 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   initializePlateauCatalogAndArea();
 
   setTimeout(() => {
+    if (closed || !overlay.isConnected) return;
     const cam = viewer.camera.positionCartographic;
     const lat = CesiumMath.toDegrees(cam.latitude);
     const lng = CesiumMath.toDegrees(cam.longitude);
@@ -441,10 +443,12 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   async function initializePlateauCatalogAndArea() {
     try {
       plateauCatalog = await fetchPlateauCatalog();
+      if (closed || !overlay.isConnected) return;
       const position = getPreferredPlateauPosition();
       const detectedArea = position
         ? await detectPlateauAreaFromPosition(position, plateauCatalog)
         : null;
+      if (closed || !overlay.isConnected) return;
       if (detectedArea && !selectedPlateauArea) {
         selectedPlateauArea = detectedArea.area;
         selectedPlateauAreaSource = detectedArea.source;
@@ -477,6 +481,7 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
 
   // -- Close --
   function closeModal() {
+    closed = true;
     if (leafletMap) {
       leafletMap.remove();
       leafletMap = null;

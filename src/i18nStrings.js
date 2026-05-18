@@ -138,6 +138,8 @@ const en = {
 
   // Shapefile Layers
   "shp.removeTitle": "Remove shapefile",
+  "shp.hide": "Hide",
+  "shp.show": "Show",
 
   // Geodatabase (.gdb) Layers
   "gdb.pickZip": "Geodatabase (.gdb.zip or .zip)…",
@@ -185,6 +187,7 @@ const en = {
   "gdb.dialog.parentRowHint": "set defaults, then select floors below",
   "gdb.unassigned.groupName": "Imported (drag to assign)",
   "gdb.unassigned.moveTitle": "Move to building",
+  "ctx.layer.moveToFloor": "Move to floor",
 
   // Placement
   "placement.heightOffset": "Height Offset (m)",
@@ -467,6 +470,8 @@ const ja = {
 
   // Shapefile Layers
   "shp.removeTitle": "Shapefile を削除",
+  "shp.hide": "非表示",
+  "shp.show": "表示",
 
   // Geodatabase (.gdb) Layers
   "gdb.pickZip": "ジオデータベース (.gdb.zip または .zip)…",
@@ -514,6 +519,7 @@ const ja = {
   "gdb.dialog.parentRowHint": "既定値を設定し、下のフロアを選択",
   "gdb.unassigned.groupName": "インポート済み（ドラッグして割当）",
   "gdb.unassigned.moveTitle": "建物へ移動",
+  "ctx.layer.moveToFloor": "フロアへ移動",
 
   // Placement
   "placement.heightOffset": "高さオフセット (m)",

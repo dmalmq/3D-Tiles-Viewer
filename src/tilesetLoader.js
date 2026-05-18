@@ -11,10 +11,16 @@ import { getFilesFromDirectoryHandle } from "./fileSystemAccess.js";
  * e.g. http://localhost:5173/tiles/my-model/tileset.json
  */
 export async function loadTilesetFromUrl(viewer, url) {
-  const tileset = await Cesium3DTileset.fromUrl(url);
-  viewer.scene.primitives.add(tileset);
-  await viewer.zoomTo(tileset);
-  return tileset;
+  let tileset = null;
+  try {
+    tileset = await Cesium3DTileset.fromUrl(url);
+    viewer.scene.primitives.add(tileset);
+    await viewer.zoomTo(tileset);
+    return tileset;
+  } catch (e) {
+    if (tileset) viewer.scene.primitives.remove(tileset);
+    throw e;
+  }
 }
 
 /**
@@ -31,7 +37,7 @@ export async function loadTilesetFromFiles(viewer, fileList, statusEl) {
   // Index files by path relative to the tileset.json directory
   const filesByName = new Map();
   for (const file of fileList) {
-    const relPath = file.webkitRelativePath || file.relativePath;
+    const relPath = file.webkitRelativePath || file.relativePath || file.name;
     if (file.name === "tileset.json" && !tilesetJsonPath) {
       tilesetJsonFile = file;
       tilesetJsonPath = relPath;
@@ -43,49 +49,57 @@ export async function loadTilesetFromFiles(viewer, fileList, statusEl) {
     throw new Error(t("tileset.noJson"));
   }
 
-  statusEl.textContent = t("tileset.foundN", { count: fileList.length });
+  if (statusEl) statusEl.textContent = t("tileset.foundN", { count: fileList.length });
 
   const baseDir = tilesetJsonPath.substring(
     0,
     tilesetJsonPath.lastIndexOf("/") + 1
   );
 
-  // Build blob URL map keyed by path relative to tileset.json
   const blobUrls = new Map();
-  for (const [relPath, file] of filesByName) {
-    const pathFromBase = relPath.startsWith(baseDir)
-      ? relPath.substring(baseDir.length)
-      : relPath;
-    if (pathFromBase !== "tileset.json") {
-      blobUrls.set(pathFromBase, URL.createObjectURL(file));
-    }
-  }
-
-  // Parse tileset.json and rewrite all content URIs to blob URLs
-  const jsonText = await tilesetJsonFile.text();
-  const tilesetJson = JSON.parse(jsonText);
-  rewriteContentUris(tilesetJson.root, blobUrls);
-
-  // Create a blob URL from the rewritten JSON
-  const rewrittenBlob = new Blob([JSON.stringify(tilesetJson)], {
-    type: "application/json",
-  });
-  const tilesetBlobUrl = URL.createObjectURL(rewrittenBlob);
+  let tilesetBlobUrl = null;
+  let tileset = null;
 
   try {
-    const tileset = await Cesium3DTileset.fromUrl(tilesetBlobUrl);
+    // Build blob URL map keyed by path relative to tileset.json
+    for (const [relPath, file] of filesByName) {
+      const pathFromBase = relPath.startsWith(baseDir)
+        ? relPath.substring(baseDir.length)
+        : relPath;
+      if (pathFromBase !== "tileset.json") {
+        blobUrls.set(pathFromBase, URL.createObjectURL(file));
+      }
+    }
+
+    // Parse tileset.json and rewrite all content URIs to blob URLs
+    const jsonText = await tilesetJsonFile.text();
+    const tilesetJson = JSON.parse(jsonText);
+    rewriteContentUris(tilesetJson.root, blobUrls);
+
+    // Create a blob URL from the rewritten JSON
+    const rewrittenBlob = new Blob([JSON.stringify(tilesetJson)], {
+      type: "application/json",
+    });
+    tilesetBlobUrl = URL.createObjectURL(rewrittenBlob);
+
+    tileset = await Cesium3DTileset.fromUrl(tilesetBlobUrl);
     viewer.scene.primitives.add(tileset);
-    statusEl.textContent = t("tileset.loaded", { path: tilesetJsonPath });
+    if (statusEl) statusEl.textContent = t("tileset.loaded", { path: tilesetJsonPath });
     await viewer.zoomTo(tileset);
 
     tileset._blobCleanup = { blobUrls, tilesetBlobUrl };
     return tileset;
   } catch (e) {
-    URL.revokeObjectURL(tilesetBlobUrl);
-    for (const url of blobUrls.values()) {
-      URL.revokeObjectURL(url);
-    }
+    if (tileset) viewer.scene.primitives.remove(tileset);
+    revokeBlobCleanup(blobUrls, tilesetBlobUrl);
     throw e;
+  }
+}
+
+function revokeBlobCleanup(blobUrls, tilesetBlobUrl) {
+  if (tilesetBlobUrl) URL.revokeObjectURL(tilesetBlobUrl);
+  for (const url of blobUrls.values()) {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -156,9 +170,7 @@ export function removeCurrentTileset(viewer, tileset) {
 
   if (tileset._blobCleanup) {
     const { blobUrls, tilesetBlobUrl } = tileset._blobCleanup;
-    URL.revokeObjectURL(tilesetBlobUrl);
-    for (const url of blobUrls.values()) {
-      URL.revokeObjectURL(url);
-    }
+    revokeBlobCleanup(blobUrls, tilesetBlobUrl);
+    tileset._blobCleanup = null;
   }
 }

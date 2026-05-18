@@ -48,6 +48,18 @@ export function extractFloorNumber(text) {
   return null;
 }
 
+// Return the leading token of a level name, split on `_`, whitespace, and
+// (half- or full-width) opening parens. Useful as a clean display name when a
+// dataset embeds extra metadata in the level string:
+//   "B1FL_long_name(TP+36)" → "B1FL"
+//   "B2FL(1FL)"             → "B2FL"
+//   "1F"                    → "1F"
+export function shortLevelName(name) {
+  if (!name) return name;
+  const first = String(name).split(/[_\s（(　]+/, 1)[0];
+  return first || String(name);
+}
+
 export function levelNameToNumber(name) {
   if (!name) return null;
   // Use only the leading token (before any underscore, whitespace, or paren).
@@ -55,8 +67,7 @@ export function levelNameToNumber(name) {
   // would otherwise be picked up by the bare-digit synonym (e.g.
   // "B2FL(1FL)_…(TP-5.11)" → tokenization grabs the "5" and returns 5).
   // The first token is where the real floor designation lives.
-  const firstToken = String(name).split(/[_\s（(　]+/, 1)[0];
-  return extractFloorNumber(firstToken);
+  return extractFloorNumber(shortLevelName(name));
 }
 
 // Match a floor display value (e.g. "1F", "B2") to one level inside a

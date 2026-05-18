@@ -75,9 +75,9 @@
 
       <!-- Scene tree (always-expanded) -->
       <div class="panel-section panel-section-scene">
-        <div class="section-header section-header-static">
-          <span class="section-title" data-i18n="section.scene">Scene</span>
-          <span id="sceneItemCount" class="section-count"></span>
+        <div class="panel-section-header">
+          <span data-i18n="section.scene">Scene</span>
+          <span id="sceneItemCount" class="panel-section-count"></span>
         </div>
         <div class="section-body" id="sceneSectionBody">
           <ul id="levelList"></ul>
@@ -89,9 +89,9 @@
 
       <!-- Imported Layers (PLATEAU catalog) -->
       <div class="panel-section" id="importedLayersSection">
-        <button class="section-header" type="button">
-          <span class="section-title" data-i18n="section.importedLayers">Imported Layers</span>
-          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button class="panel-section-header collapsible" type="button">
+          <span class="panel-section-chevron"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span data-i18n="section.importedLayers">Imported Layers</span>
         </button>
         <div class="section-body">
           <ul id="importedLayersList"></ul>
@@ -101,9 +101,9 @@
 
       <!-- CityGML Layers -->
       <div class="panel-section" id="cityGmlSection">
-        <button class="section-header" type="button">
-          <span class="section-title" data-i18n="section.cityGml">CityGML Layers</span>
-          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button class="panel-section-header collapsible" type="button">
+          <span class="panel-section-chevron"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span data-i18n="section.cityGml">CityGML Layers</span>
         </button>
         <div class="section-body">
           <ul id="cityGmlList"></ul>
@@ -113,9 +113,9 @@
 
       <!-- Environment (imagery + terrain) -->
       <div class="panel-section" id="environmentSection">
-        <button class="section-header" type="button">
-          <span class="section-title" data-i18n="section.environment">Environment</span>
-          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button class="panel-section-header collapsible" type="button">
+          <span class="panel-section-chevron"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span data-i18n="section.environment">Environment</span>
         </button>
         <div class="section-body">
           <label class="field-label" for="imagerySelect" data-i18n="basemap.imageryLabel">Imagery</label>

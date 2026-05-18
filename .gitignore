@@ -6,6 +6,13 @@ public/tiles/*
 debug.log
 vite-*.log
 ui-*.png
+/after-*.png
+/norights-*.png
+/gdb-*.png
+/split-*.png
+/multiselect.png
+/resized-*.png
+/snapshot-*.md
 
 .claude/
 .playwright-mcp/

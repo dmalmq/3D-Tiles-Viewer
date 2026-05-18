@@ -265,22 +265,6 @@ html[data-theme="light"] #importModal button {
   overflow-y: auto;
 }
 
-.section-header-static {
-  cursor: default;
-}
-
-.section-header-static:hover {
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.section-count {
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--text-muted);
-  letter-spacing: 0.02em;
-  text-transform: none;
-}
 
 .left-popover {
   position: absolute;
@@ -336,47 +320,12 @@ html[data-theme="light"] .left-popover {
   border-bottom: 1px solid var(--border);
 }
 
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 10px 14px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  color: var(--text-secondary);
-  transition: background 0.12s, color 0.12s;
-}
-
-.section-header:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.section-title {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.chevron {
-  flex-shrink: 0;
-  transition: transform 0.18s ease;
-}
-
-.panel-section.collapsed .chevron {
-  transform: rotate(-90deg);
+.panel-section.collapsed .section-body {
+  display: none;
 }
 
 .section-body {
   padding: 4px 14px 14px;
-}
-
-.panel-section.collapsed .section-body {
-  display: none;
 }
 
 /* ── Form elements ────────────────────────────────────────── */
@@ -618,80 +567,6 @@ select option {
   padding: 0;
 }
 
-/* ── Building list ────────────────────────────────────────── */
-#buildingList {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-
-.building-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: background 0.12s, border-color 0.12s;
-  margin-bottom: 2px;
-}
-
-.building-item:hover { background: var(--bg-hover); }
-
-.building-item.selected {
-  background: var(--bg-active);
-  border-color: rgba(6, 150, 215, 0.35);
-}
-
-.building-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  font-size: 12px;
-}
-
-.building-level-badge {
-  flex-shrink: 0;
-  font-size: 10px;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border-radius: 3px;
-  padding: 1px 5px;
-  font-weight: 600;
-}
-
-.building-remove-btn {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  line-height: 1;
-  background: transparent;
-  color: var(--text-muted);
-  border: none;
-  cursor: pointer;
-  border-radius: 3px;
-  padding: 0;
-  margin: 0;
-  transition: background 0.12s, color 0.12s;
-}
-
-.building-remove-btn:hover {
-  background: rgba(220, 53, 69, 0.2);
-  color: #ff6b6b;
-}
-
-.building-item.missing-tileset .building-level-badge {
-  background: rgba(243, 156, 18, 0.15);
-  color: var(--warning);
-}
-
 /* ── Inline reload banner (under building rows in scene tree) ── */
 .scene-reload-banner {
   margin: 4px 6px 6px 22px;
@@ -726,32 +601,82 @@ select option {
 
 #levelList {
   list-style: none;
-  margin: 4px 0 0;
+  margin: 0;
   padding: 0;
 }
 
-.level-item {
+/* ── Unified sidebar row archetype ─────────────────────────
+   Applies to every interactive list row in the left panel:
+   level/ml rows, building rows, shapefile-tree items, imported-layer items.
+   Selection state is conveyed by .selected (tint + left accent bar). */
+.level-item,
+.ml-row,
+.bldg-row,
+.shp-tree-item,
+.imported-layer-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
   font-size: 12px;
   min-width: 0;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  transition: background 0.12s, color 0.12s;
 }
 
-.level-item:hover { background: var(--bg-hover); }
+.level-item:hover,
+.ml-row:hover,
+.bldg-row:hover,
+.shp-tree-item:hover,
+.imported-layer-item:hover {
+  background: var(--bg-hover);
+}
 
-.level-item label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  margin: 0;
-  cursor: pointer;
+.level-item.selected,
+.ml-row.selected,
+.bldg-row.selected,
+.shp-tree-item.selected,
+.imported-layer-item.selected {
+  background: var(--bg-active);
   color: var(--text-primary);
-  font-size: 12px;
-  min-width: 0;
+}
+
+.level-item.selected::before,
+.ml-row.selected::before,
+.bldg-row.selected::before,
+.shp-tree-item.selected::before,
+.imported-layer-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.level-item:focus-within,
+.ml-row:focus-within {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Visually-hidden radio behind level rows — preserves keyboard nav. */
+.level-item input[type="radio"],
+.ml-row input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .level-name-text {
@@ -762,7 +687,18 @@ select option {
   white-space: nowrap;
 }
 
+.row-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Back-compat alias: existing rows use .level-ceiling as the meta span. */
 .level-ceiling {
+  flex: 0 0 auto;
+  margin-left: auto;
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -819,6 +755,20 @@ select option {
   font-size: 12px !important;
 }
 
+/* ── Per-shapefile visibility toggle (eye icon) ─────────────── */
+.shp-visibility-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.shp-visibility-btn:hover { color: var(--text); }
+.shp-visibility-btn.hidden { opacity: 0.55; }
+
 /* ── Shared color swatch (used by tree shapefile rows) ────── */
 .color-swatch {
   flex-shrink: 0;
@@ -866,18 +816,6 @@ select option {
   margin: 2px 0 4px 22px;
   padding: 0;
 }
-
-.shp-tree-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 11.5px;
-  cursor: default;
-}
-
-.shp-tree-item:hover { background: var(--bg-hover); }
 
 .shp-tree-name {
   flex: 1;
@@ -951,17 +889,6 @@ select option {
   margin: 8px 0 0;
   padding: 0;
 }
-
-.imported-layer-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 4px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-}
-
-.imported-layer-item:hover { background: var(--bg-hover); }
 
 .imported-layer-name {
   flex: 1;
@@ -1414,14 +1341,13 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
 /* ── Revit link split chip + dialog ─────────────────────────── */
 .building-link-chip {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
   background: var(--bg-hover);
   border-radius: 3px;
-  padding: 1px 4px;
-  margin-right: 4px;
+  padding: 1px 5px;
   font-weight: 600;
 }
 
@@ -1497,17 +1423,20 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
 }
 
 .panel-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  text-align: left;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  padding: 6px 6px 4px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
 }
 
 .panel-section-header.collapsible {
@@ -1516,25 +1445,31 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
 }
 
 .panel-section-header.collapsible:hover {
-  color: var(--text);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .panel-section-chevron {
   display: inline-flex;
-  width: 10px;
-  height: 10px;
-  transition: transform 120ms ease;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
   color: var(--text-muted);
+  transition: transform 120ms ease;
 }
 
-.panel-section-header.expanded .panel-section-chevron {
-  transform: rotate(90deg);
+.panel-section.collapsed .panel-section-chevron {
+  transform: rotate(-90deg);
 }
 
 .panel-section-count {
   margin-left: auto;
   font-weight: 500;
-  opacity: 0.7;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .ml-list, .bldg-list {
@@ -1543,34 +1478,10 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
   padding: 0;
 }
 
-.ml-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.ml-row:hover { background: var(--bg-hover); }
-
 .ml-row.unassigned-row .level-name-text {
   font-style: italic;
   opacity: 0.85;
 }
-
-.bldg-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  user-select: none;
-}
-
-.bldg-row:hover { background: var(--bg-hover); }
-
-.bldg-row.selected { background: var(--accent-dim); }
 
 .bldg-name {
   flex: 1 1 auto;
@@ -1601,11 +1512,11 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   color: var(--text-muted);
   flex-shrink: 0;
-  transition: transform 0.12s;
+  transition: transform 120ms ease;
 }
 
 .level-tree-chevron.expanded {
@@ -1646,7 +1557,7 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
 
 .level-tree-zoom-btn:hover {
   background: var(--bg-hover);
-  color: var(--accent);
+  color: var(--text-primary);
 }
 
 /* ── Loading: spinners, progress bar, overlay ─────────────── */
@@ -2447,12 +2358,7 @@ body.left-collapsed #leftPanelResizer {
   display: none;
 }
 
-/* ── Multi-selected layer rows ────────────────────────────── */
-.shp-tree-item.selected {
-  background: var(--accent-dim);
-  outline: 1px solid rgba(6, 150, 215, 0.45);
-  outline-offset: -1px;
-}
+/* Multi-selected shapefile rows use the unified .selected archetype above. */
 
 /* ── Floating card (PLATEAU tools etc.) ────────────────────── */
 .floating-card {

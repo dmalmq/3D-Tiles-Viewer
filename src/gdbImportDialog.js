@@ -23,6 +23,7 @@ const FLOOR_ALL = "__all__";
 export function openGdbImportDialog({ featureCollections, buildings, onImport, mode = "import" }) {
   const levelsByPrefix = buildLevelsByPrefix(featureCollections);
   let filterText = "";
+  let submitting = false;
 
   const assignments = (featureCollections ?? []).map((fc) => {
     if (mode === "reassign" && fc._existingEntry) {
@@ -520,7 +521,8 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
     });
   }
 
-  function handleImport() {
+  async function handleImport() {
+    if (submitting) return;
     const decisions = [];
     for (const a of assignments) {
       if (a.metadataOnly) continue;
@@ -540,17 +542,30 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
       }
       decisions.push(...decisionsForRow(a.fc, a, undefined));
     }
-    closeDialog();
-    Promise.resolve().then(() => onImport(decisions));
+    submitting = true;
+    importBtn.disabled = true;
+    cancelBtn.disabled = true;
+    closeBtn.disabled = true;
+    try {
+      await onImport(decisions);
+      removeDialog();
+    } catch (e) {
+      console.error(e);
+      alert(t("alert.failedGdb", { message: e?.message ?? String(e) }));
+      submitting = false;
+      importBtn.disabled = false;
+      cancelBtn.disabled = false;
+      closeBtn.disabled = false;
+    }
   }
 
   function decisionsForRow(fc, row, nameOverride) {
+    if (row.buildingValue === TARGET_SKIP) {
+      return [{ fc, target: { kind: "skip" }, nameOverride, selected: !!row.selected }];
+    }
     if (mode === "reassign" && !row.selected) return [];
     if (mode === "import" && !row.selected) {
       return [{ fc, target: { kind: "unassigned" }, nameOverride, selected: false }];
-    }
-    if (row.buildingValue === TARGET_SKIP) {
-      return [{ fc, target: { kind: "skip" }, nameOverride, selected: true }];
     }
     if (row.buildingValue === TARGET_UNASSIGNED) {
       return [{ fc, target: { kind: "unassigned" }, nameOverride, selected: true }];
@@ -639,6 +654,11 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
   }
 
   function closeDialog() {
+    if (submitting) return;
+    removeDialog();
+  }
+
+  function removeDialog() {
     if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
   }
 }
