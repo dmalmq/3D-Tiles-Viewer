@@ -323,6 +323,15 @@ export function matchLevelRefToBuildingLevel(ref, building) {
   return null;
 }
 
+export function resolveLayerLevelForBuilding({ fileName, levelRef, building }) {
+  if (!building?.levels?.length) return null;
+
+  const byFilename = matchLevelByText(stripFcExt(fileName ?? ""), building.levels);
+  if (byFilename) return byFilename;
+
+  return matchLevelRefToBuildingLevel(levelRef, building);
+}
+
 export function summarizeGeometry(features) {
   if (!features?.length) return "UNKNOWN";
   let poly = 0;

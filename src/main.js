@@ -26,6 +26,8 @@ import {
   JulianDate,
   ArcType,
   Color,
+  ClippingPlane,
+  ClippingPlaneCollection,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Cesium3DTileFeature,
@@ -62,8 +64,25 @@ import { openImportDataModal, restoreImportedLayer } from "./importDataModal.js"
 import { parseCityGml } from "./cityGmlLoader.js";
 import { loadGdb } from "./gdbLoader.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
+import { openColorConfigDialog } from "./colorConfigDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
 import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber, shortLevelName } from "./floorSplit.js";
+import { resolveTilesetTopClipLocalZ } from "./levelClipping.js";
+import {
+  normalizeLevelRecords,
+  recordsToLevelsData,
+  sourceLevelGroupsFromInspection,
+  levelsDataFromSourceLevelGroups,
+  serializeSourceLevelGroups,
+  deserializeSourceLevelGroups,
+} from "./levelMetadata.js";
+import {
+  chooseDefaultColorColumn,
+  getLayerType,
+  HEX_COLOR_RE,
+  isColorConfigurableLayer,
+  isSpaceLayerName,
+} from "./layerColorConfig.js";
 
 // -- State --
 let viewer;
@@ -96,6 +115,8 @@ let activeModelLevelIndex = -1; // -1 = "All floors"
 let selectedPlateauFeature = null;
 let plateauOverridesEnabled = true;
 
+const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
+
 const SHP_COLORS = ["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#16a085"];
 
 // Per-feature color lookup for _Space layers (from GDB color2 column).
@@ -117,6 +138,7 @@ const COLOR2_LOOKUP = {
 const COLOR2_DEFAULT = "#808080";
 const SPACE_STROKE_COLOR = "#333333";
 const OPENING_FILL_COLOR = "#FF0000";
+const COLOR_CONFIG_SWATCHES = [...new Set([...SHP_COLORS, ...Object.values(COLOR2_LOOKUP)])];
 
 // Per-feature point icons: fixed pixel footprint plus a gentle distance taper
 // so icons stay readable close-up and shrink slightly when viewed from afar.
@@ -188,6 +210,7 @@ const gdbInput = document.getElementById("gdbInput");
 const gdbDirInput = document.getElementById("gdbDirInput");
 const loadGdbZipBtn = document.getElementById("loadGdbZipBtn");
 const loadGdbFolderBtn = document.getElementById("loadGdbFolderBtn");
+const loadShpBtn = document.getElementById("loadShpBtn");
 const floatingMenu = document.getElementById("floatingMenu");
 const importDataBtn = document.getElementById("importDataBtn");
 const importedLayersListEl = document.getElementById("importedLayersList");
@@ -279,6 +302,18 @@ async function init() {
   loadGdbFolderBtn.addEventListener("click", () => {
     if (_gdbBusy) return;
     gdbDirInput.click();
+  });
+  loadShpBtn.addEventListener("click", () => {
+    // If a building is currently selected, mirror the right-click "Add
+    // shapefiles" behavior and drop layers straight into it. Otherwise leave
+    // the target unset — handleShpSelect will route to the unassigned bucket
+    // so the user can drag layers onto whichever building they want.
+    if (selectedBuildingIndex >= 0 && buildings[selectedBuildingIndex]) {
+      _shpPendingTarget = { buildingIndex: selectedBuildingIndex };
+    } else {
+      _shpPendingTarget = { buildingIndex: -1 };
+    }
+    shpInput.click();
   });
   loadCityGmlBtn.addEventListener("click", () => cityGmlInput.click());
   cityGmlInput.addEventListener("change", handleCityGmlSelect);
@@ -411,6 +446,9 @@ function initLeftActionBar() {
           break;
         case "add-gdb-folder":
           loadGdbFolderBtn.click();
+          break;
+        case "add-shp":
+          loadShpBtn.click();
           break;
         case "review-gdb":
           openGdbReassignDialog();
@@ -1418,63 +1456,8 @@ function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, link
     directoryHandleId,
     _directoryFolderName: directoryFolderName,
     aliases,
+    _expanded: true,
   };
-}
-
-function normalizeLevelRecords(levels = []) {
-  return (levels ?? [])
-    .filter(l => (l.levelKey ?? l.key) !== "unassigned")
-    .map(l => ({
-      name: l.levelName ?? l.name,
-      key: l.levelKey ?? l.key ?? null,
-      floor: Number(l.levelElevationMeters ?? l.floor ?? 0),
-      minZMeters: Number.isFinite(Number(l.minZMeters)) ? Number(l.minZMeters) : null,
-      maxZMeters: Number.isFinite(Number(l.maxZMeters)) ? Number(l.maxZMeters) : null,
-      elementCount: Number.isFinite(Number(l.elementCount)) ? Number(l.elementCount) : null,
-    }))
-    .filter(l => l.name && Number.isFinite(l.floor))
-    .sort((a, b) => a.floor - b.floor);
-}
-
-function recordsToLevelsData(levels) {
-  return {
-    levels: normalizeLevelRecords(levels).map(l => ({
-      levelName: l.name,
-      levelKey: l.key,
-      levelElevationMeters: l.floor,
-      minZMeters: l.minZMeters,
-      maxZMeters: l.maxZMeters,
-      elementCount: l.elementCount,
-    })),
-  };
-}
-
-function sourceLevelGroupsFromInspection(inspection) {
-  const groups = new Map();
-  if (!inspection?.groups) return groups;
-  for (const [source, info] of inspection.groups) {
-    const levels = normalizeLevelRecords(info.levels ?? []);
-    if (levels.length > 0) groups.set(String(source), levels);
-  }
-  return groups;
-}
-
-function serializeSourceLevelGroups(groups) {
-  if (!groups || groups.size === 0) return [];
-  return [...groups.entries()].map(([source, levels]) => ({
-    source,
-    levels: normalizeLevelRecords(levels),
-  }));
-}
-
-function deserializeSourceLevelGroups(data) {
-  const groups = new Map();
-  for (const entry of data ?? []) {
-    const source = entry?.source == null ? "" : String(entry.source);
-    const levels = normalizeLevelRecords(entry?.levels ?? []);
-    if (levels.length > 0) groups.set(source, levels);
-  }
-  return groups;
 }
 
 /**
@@ -1492,7 +1475,10 @@ function bindTilesetTileLoad(tileset) {
 
 async function addBuilding(tileset, name, levelsData, sourceUrl = null, directoryHandleId = null, directoryFolderName = null) {
   lodFilter.addTileset(tileset);
-  const levelBaseElevation = computeLevelBaseElevation(tileset, levelsData);
+  const explicitLevelsData = normalizeLevelRecords(levelsData?.levels ?? []).length
+    ? levelsData
+    : null;
+  let levelBaseElevation = computeLevelBaseElevation(tileset, explicitLevelsData);
   tileset._directoryHandleId = directoryHandleId;
   tileset._directoryFolderName = directoryFolderName;
 
@@ -1500,9 +1486,14 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
   let inspection = null;
   let split = null;
   let sourceLevelGroups = new Map();
+  let inspectedLevelsData = null;
   try {
     inspection = await inspectLinks(tileset);
     sourceLevelGroups = sourceLevelGroupsFromInspection(inspection);
+    inspectedLevelsData = levelsDataFromSourceLevelGroups(sourceLevelGroups);
+    if (!explicitLevelsData && inspectedLevelsData) {
+      levelBaseElevation = computeLevelBaseElevation(tileset, inspectedLevelsData);
+    }
     tileset._sourceLevelGroups = sourceLevelGroups;
     split = decideAutoSplit(inspection);
     if (split) {
@@ -1520,8 +1511,8 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
     for (const entry of groupEntries) {
       const sourceLevels = normalizeLevelRecords(entry.levels ?? []);
       // Filter levels.json to only those with elements in this link group.
-      const filteredLevelsData = levelsData
-        ? { ...levelsData, levels: levelsData.levels.filter(l => entry.levelNames.has(l.levelName)) }
+      const filteredLevelsData = explicitLevelsData
+        ? { ...explicitLevelsData, levels: explicitLevelsData.levels.filter(l => entry.levelNames.has(l.levelName)) }
         : null;
       const sourceLevelsData = sourceLevels.length ? recordsToLevelsData(sourceLevels) : null;
       const levelsForBase = sourceLevelsData ?? filteredLevelsData;
@@ -1548,7 +1539,8 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
     createdBuildings = siblings;
   } else {
     const b = makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, sourceLevelGroups, directoryHandleId, directoryFolderName });
-    if (levelsData) populateLevelsForBuilding(b, levelsData);
+    const wholeTilesetLevelsData = explicitLevelsData ?? inspectedLevelsData;
+    if (wholeTilesetLevelsData) populateLevelsForBuilding(b, wholeTilesetLevelsData);
     buildings.push(b);
     tileset._buildings = [b];
     createdBuildings = [b];
@@ -1709,6 +1701,7 @@ function handleRemoveBuilding(index) {
   }
   fileStatus.textContent = "";
   rebuildModelLevels();
+  applyLevelClippingForAllTilesets();
   renderLevelList(); syncRemoveAllBtnAndLod();
   renderPlateauFloatingCard();
   applyUndergroundMode();
@@ -1833,12 +1826,11 @@ function clearUnassignedLayers(rerender = true) {
 // -- Levels --
 function populateLevelsForBuilding(building, data) {
   building.levels = [];
-  for (const l of data.levels) {
-    if (l.levelKey === "unassigned") continue;
+  for (const l of normalizeLevelRecords(data?.levels ?? [])) {
     building.levels.push({
-      name: l.levelName,
-      key: l.levelKey,
-      floor: l.levelElevationMeters,
+      name: l.name,
+      key: l.key,
+      floor: l.floor,
     });
   }
   // levels.json is ordered bottom→top; sort defensively by floor elevation
@@ -1873,6 +1865,7 @@ function handleAddLevel(building, name, floor) {
   building.levels.push({ name, key: null, floor });
   building.levels.sort((a, b) => a.floor - b.floor);
   rebuildModelLevels();
+  applyLevelClippingForAllTilesets();
   renderLevelList();
 }
 
@@ -1932,6 +1925,7 @@ function selectModelLevel(modelLevelIndex) {
       }
     }
   }
+  applyLevelClippingForAllTilesets();
   applyUndergroundMode();
   renderLevelList();
   syncRemoveAllBtnAndLod();
@@ -1976,6 +1970,57 @@ function applyActiveLevelForBuilding(building) {
   applyUndergroundMode();
 }
 
+function activeModelFloorNumber() {
+  return activeModelLevelIndex < 0
+    ? null
+    : modelLevels[activeModelLevelIndex]?.floorNumber ?? null;
+}
+
+function applyLevelTopClipForTileset(tileset) {
+  if (!tileset) return;
+  const clipZ = resolveTilesetTopClipLocalZ(
+    tileset._buildings || [],
+    activeModelFloorNumber(),
+  );
+  const existing = tileset._levelTopClippingPlanes;
+
+  if (clipZ == null) {
+    if (existing) existing.enabled = false;
+    return;
+  }
+
+  if (!existing) {
+    const plane = new ClippingPlane(new Cartesian3(0, 0, -1), clipZ);
+    const clippingPlanes = new ClippingPlaneCollection({
+      planes: [plane],
+      edgeWidth: 0,
+    });
+    tileset._levelTopClipPlane = plane;
+    tileset._levelTopClippingPlanes = clippingPlanes;
+    tileset.clippingPlanes = clippingPlanes;
+    return;
+  }
+
+  if (tileset.clippingPlanes !== existing) {
+    tileset.clippingPlanes = existing;
+  }
+  existing.enabled = true;
+  const plane = tileset._levelTopClipPlane || existing.get(0);
+  plane.normal = new Cartesian3(0, 0, -1);
+  plane.distance = clipZ;
+  tileset._levelTopClipPlane = plane;
+}
+
+function applyLevelClippingForAllTilesets() {
+  const seen = new Set();
+  for (const building of buildings) {
+    const tileset = building.tileset;
+    if (!tileset || seen.has(tileset)) continue;
+    seen.add(tileset);
+    applyLevelTopClipForTileset(tileset);
+  }
+}
+
 const UNDERGROUND_BASE_COLOR = Color.fromCssColorString("#1a1a1a");
 let savedGlobeBaseColor = null;
 
@@ -2010,7 +2055,9 @@ function applyUndergroundMode() {
 }
 
 function applyFiltersForTileset(tileset) {
-  if (!tileset || !tileset.root) return;
+  if (!tileset) return;
+  applyLevelTopClipForTileset(tileset);
+  if (!tileset.root) return;
   const stack = [tileset.root];
   while (stack.length) {
     const tile = stack.pop();
@@ -2101,6 +2148,11 @@ function applyLevelToShapefilesForBuilding(building) {
       layer.dataSource.show = false;
       continue;
     }
+    const lType = getLayerType(layer.name);
+    if (lType && !layerTypeFilters[lType]) {
+      layer.dataSource.show = false;
+      continue;
+    }
     if (activeFn === null) {
       layer.dataSource.show = true;
       continue;
@@ -2124,8 +2176,56 @@ function applyLayerVisibility(building, layer) {
   if (building) {
     applyLevelToShapefilesForBuilding(building);
   } else if (layer.dataSource) {
-    layer.dataSource.show = !layer._hidden;
+    const lType = getLayerType(layer.name);
+    const typeHidden = lType && !layerTypeFilters[lType];
+    layer.dataSource.show = !layer._hidden && !typeHidden;
   }
+}
+
+function refreshAllLayerTypeVisibility() {
+  for (const b of buildings) {
+    applyLevelToShapefilesForBuilding(b);
+  }
+  for (const l of unassignedLayers) {
+    const lType = getLayerType(l.name);
+    const typeHidden = lType && !layerTypeFilters[lType];
+    if (l.dataSource) l.dataSource.show = !l._hidden && !typeHidden;
+  }
+}
+
+function renderLayerTypeFilters() {
+  const container = document.getElementById("layerTypeFilters");
+  if (!container) return;
+
+  const existing = new Set();
+  for (const b of buildings) {
+    for (const l of b.shapefileLayers) {
+      const t = getLayerType(l.name);
+      if (t) existing.add(t);
+    }
+  }
+  for (const l of unassignedLayers) {
+    const t = getLayerType(l.name);
+    if (t) existing.add(t);
+  }
+
+  container.innerHTML = "";
+  for (const type of ["space", "unit", "opening", "detail", "level"]) {
+    if (!existing.has(type)) continue;
+    const btn = document.createElement("button");
+    btn.className = "layer-type-filter" + (layerTypeFilters[type] ? " active" : "");
+    btn.textContent = "_" + type;
+    btn.dataset.type = type;
+    btn.addEventListener("click", () => {
+      layerTypeFilters[type] = !layerTypeFilters[type];
+      btn.classList.toggle("active", layerTypeFilters[type]);
+      refreshAllLayerTypeVisibility();
+      renderLevelList();
+    });
+    container.appendChild(btn);
+  }
+
+  container.style.display = existing.size > 0 ? "" : "none";
 }
 
 function findShapefileLevel(building, layer) {
@@ -2540,6 +2640,13 @@ function renderLevelList() {
     visibleBuildings.forEach(({ b, i: bi }) => {
       const li = document.createElement("li");
       li.className = "bldg-row" + (bi === selectedBuildingIndex ? " selected" : "");
+      const hasLevelChildren = (b.levels?.length ?? 0) > 0;
+      const expanded = hasLevelChildren && b._expanded !== false;
+      appendLevelChevron(
+        li,
+        hasLevelChildren ? expanded : null,
+        () => { b._expanded = !expanded; renderLevelList(); }
+      );
 
       const nameSpan = document.createElement("span");
       nameSpan.className = "bldg-name";
@@ -2585,6 +2692,7 @@ function renderLevelList() {
         e.stopPropagation();
         showBuildingContextMenu(e, b, bi);
       });
+      attachDropTarget(li, { bi, levelKey: null });
 
       if (b._tilesetMissing) {
         const banner = document.createElement("div");
@@ -2612,11 +2720,53 @@ function renderLevelList() {
       }
 
       bUl.appendChild(li);
+
+      if (expanded) {
+        const levelUl = document.createElement("ul");
+        levelUl.className = "level-tree-children";
+        for (let levelIndex = b.levels.length - 1; levelIndex >= 0; levelIndex--) {
+          const lvl = b.levels[levelIndex];
+          const levelLi = document.createElement("li");
+          levelLi.className = "level-item bldg-level-row"
+            + (bi === selectedBuildingIndex && b.activeLevelIndex === levelIndex ? " selected" : "");
+          appendLevelChevron(levelLi, null, () => {});
+
+          const text = document.createElement("span");
+          text.className = "level-name-text";
+          text.textContent = lvl.name;
+          text.title = lvl.name;
+          levelLi.appendChild(text);
+
+          const elevSpan = document.createElement("span");
+          elevSpan.className = "level-ceiling";
+          elevSpan.textContent = `${Number(lvl.floor ?? 0).toFixed(1)} m`;
+          levelLi.appendChild(elevSpan);
+
+          levelLi.addEventListener("click", () => selectLevel(bi, levelIndex));
+          levelLi.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showLevelContextMenu(e, b, bi, levelIndex);
+          });
+          attachDropTarget(levelLi, { bi, levelKey: lvl.key ?? "" });
+          levelUl.appendChild(levelLi);
+
+          const levelLayers = b.shapefileLayers.filter(
+            layer => (layer.levelKey ?? "") === (lvl.key ?? "")
+          );
+          if (levelLayers.length > 0) {
+            levelUl.appendChild(buildShapefileChildren(b, bi, levelLayers));
+          }
+        }
+        bUl.appendChild(levelUl);
+      }
     });
 
     bSection.appendChild(bUl);
     levelListEl.appendChild(bSection);
   }
+
+  renderLayerTypeFilters();
 }
 
 
@@ -2709,6 +2859,7 @@ function buildUnassignedNode() {
 function showMoveUnassignedToBuildingMenu(event, layer) {
   floatingMenu.innerHTML = "";
   const ul = document.createElement("ul");
+  appendConfigureColorsMenuItem(ul, layer);
   if (buildings.length === 0) {
     const li = document.createElement("li");
     li.textContent = t("gdb.unassigned.moveTitle");
@@ -3390,15 +3541,22 @@ async function handleShpSelect(e) {
   const { buildingIndex } = _shpPendingTarget;
   _shpPendingTarget = null;
   const b = buildings[buildingIndex];
-  if (!b) return;
   try {
     const { default: shp } = await import("shpjs");
     const raw = await shp(await file.arrayBuffer());
     const fcs = Array.isArray(raw) ? raw : [raw];
-    for (const fc of fcs) await addFeatureCollectionLayer(b, fc);
-    applyLevelToShapefilesForBuilding(b);
-    if (selectedBuildingIndex !== buildingIndex) selectBuilding(buildingIndex);
-    else renderLevelList();
+    if (b) {
+      for (const fc of fcs) await addFeatureCollectionLayer(b, fc);
+      applyLevelToShapefilesForBuilding(b);
+      if (selectedBuildingIndex !== buildingIndex) selectBuilding(buildingIndex);
+      else renderLevelList();
+    } else {
+      // No building target — land in the unassigned bucket so the user can
+      // drag the layer(s) onto whichever building they want.
+      for (const fc of fcs) await addUnassignedLayer(fc, { origin: "shp" });
+      _unassignedTreeExpanded = true;
+      renderLevelList();
+    }
   } catch (err) {
     alert(t("alert.failedShp", { message: err.message }));
   }
@@ -3435,9 +3593,9 @@ async function addFeatureCollectionLayer(building, fc, opts = {}) {
     { type: "FeatureCollection", features },
     { fill: cesiumColor.withAlpha(1.0), stroke: cesiumColor, strokeWidth: 2, clampToGround: false }
   );
-  applyEntityStyling(dataSource, name);
+  const layer = { name, dataSource, color, levelKey, source, features, heightOffset: 0, _origin: origin, colorColumn: null, colorMappings: null };
+  applyEntityStyling(dataSource, name, layer);
   viewer.dataSources.add(dataSource);
-  const layer = { name, dataSource, color, levelKey, source, features, heightOffset: 0, _origin: origin };
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
   return layer;
@@ -3460,10 +3618,11 @@ async function addUnassignedLayer(fc, opts = {}) {
     { type: "FeatureCollection", features },
     { fill: cesiumColor.withAlpha(1.0), stroke: cesiumColor, strokeWidth: 2, clampToGround: false }
   );
-  applyEntityStyling(dataSource, name);
+  const origin = opts.origin ?? "gdb";
+  const layer = { name, dataSource, color, features, source, heightOffset: 0, _origin: origin, colorColumn: null, colorMappings: null };
+  applyEntityStyling(dataSource, name, layer);
   dataSource.show = false;
   viewer.dataSources.add(dataSource);
-  const layer = { name, dataSource, color, features, source, heightOffset: 0, _origin: "gdb" };
   unassignedLayers.push(layer);
   return layer;
 }
@@ -3488,6 +3647,8 @@ function moveUnassignedLayerToBuilding(layer, buildingIndex, levelKey) {
     features: layer.features,
     heightOffset: layer.heightOffset ?? 0,
     _origin: layer._origin ?? "gdb",
+    colorColumn: layer.colorColumn ?? null,
+    colorMappings: layer.colorMappings ?? null,
   };
   building.shapefileLayers.push(moved);
   moved.dataSource.show = true;
@@ -3520,19 +3681,20 @@ function resolveMarkerImageUrl(raw) {
   return '/icons/marker/' + s.replace(/^\.?\//, '');
 }
 
-function resolveColor2(rawValue) {
-  const key = String(rawValue ?? "").trim();
-  const hex = COLOR2_LOOKUP[key] || COLOR2_DEFAULT;
+function safeColorFromHex(hex, fallbackHex = COLOR2_DEFAULT) {
   try {
     return Color.fromCssColorString(hex);
   } catch {
-    return Color.fromCssColorString(COLOR2_DEFAULT);
+    return Color.fromCssColorString(fallbackHex);
   }
 }
 
-function applyEntityStyling(dataSource, layerName = "") {
-  const isSpaceLayer = /_space/i.test(layerName);
+function applyEntityStyling(dataSource, layerName = "", layer = null) {
+  const isSpaceLayer = isSpaceLayerName(layer?.name ?? layerName);
   const isOpeningLayer = /_opening/i.test(layerName);
+  const colorColumn = layer?.colorColumn || (isSpaceLayer ? "color2" : null);
+  const colorMappings = layer?.colorMappings || (isSpaceLayer ? COLOR2_LOOKUP : {});
+  const shouldApplyConfiguredColors = !!colorColumn && (isSpaceLayer || isColorConfigurableLayer(layer));
 
   for (const entity of dataSource.entities.values) {
     // Per-feature icon override for point markers. Independent of the
@@ -3590,9 +3752,15 @@ function applyEntityStyling(dataSource, layerName = "") {
       };
     }
 
-    if (isSpaceLayer) {
-      const color2Raw = entity.properties?.color2?.getValue?.();
-      const c = resolveColor2(color2Raw);
+    if (shouldApplyConfiguredColors) {
+      const raw = entity.properties?.[colorColumn]?.getValue?.();
+      const key = String(raw ?? "").trim();
+      // Explicit user mapping wins; otherwise, if the column value is itself a
+      // hex literal, use it directly; otherwise fall back to neutral gray.
+      let hex = colorMappings[key];
+      if (!hex && HEX_COLOR_RE.test(key)) hex = key;
+      if (!hex) hex = COLOR2_DEFAULT;
+      const c = safeColorFromHex(hex, COLOR2_DEFAULT);
       if (entity.polygon) {
         entity.polygon.material = c.withAlpha(1.0);
         entity.polygon.outlineColor = Color.fromCssColorString(SPACE_STROKE_COLOR);
@@ -3667,6 +3835,56 @@ function moveLayerToModelLevel(srcBuilding, fromBi, layer, floorNumber) {
     }
     return;
   }
+}
+
+function syncColorConfigToAllOfType(layerType, column, mappings, sourceLayer) {
+  for (const b of buildings) {
+    for (const l of b.shapefileLayers) {
+      if (getLayerType(l.name) === layerType) {
+        l.color = sourceLayer.color;
+        l.colorColumn = column;
+        l.colorMappings = mappings;
+        applyEntityStyling(l.dataSource, l.name, l);
+      }
+    }
+  }
+  for (const l of unassignedLayers) {
+    if (getLayerType(l.name) === layerType) {
+      l.color = sourceLayer.color;
+      l.colorColumn = column;
+      l.colorMappings = mappings;
+      applyEntityStyling(l.dataSource, l.name, l);
+    }
+  }
+}
+
+function appendConfigureColorsMenuItem(ul, layer) {
+  if (!isColorConfigurableLayer(layer)) return;
+  const colorsLi = document.createElement("li");
+  colorsLi.textContent = t("ctx.layer.configureColors");
+  colorsLi.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideFloatingMenu();
+    const useSpaceDefaults = isSpaceLayerName(layer.name);
+    const defaultColumn = useSpaceDefaults ? "color2" : chooseDefaultColorColumn(layer);
+    openColorConfigDialog({
+      layer,
+      defaultColumn,
+      defaultMappings: useSpaceDefaults ? COLOR2_LOOKUP : {},
+      defaultSwatches: COLOR_CONFIG_SWATCHES,
+      onApply: ({ column, mappings }) => {
+        const lType = getLayerType(layer.name);
+        if (lType === "space" || lType === "unit") {
+          syncColorConfigToAllOfType(lType, column, mappings, layer);
+        } else {
+          layer.colorColumn = column;
+          layer.colorMappings = mappings;
+          applyEntityStyling(layer.dataSource, layer.name, layer);
+        }
+      },
+    });
+  });
+  ul.appendChild(colorsLi);
 }
 
 function showMoveToFloorMenu(event, building, layer) {
@@ -3755,6 +3973,8 @@ function showMoveToFloorMenu(event, building, layer) {
     });
   }
   ul.appendChild(resetLi);
+
+  appendConfigureColorsMenuItem(ul, layer);
 
   // Remove
   const removeLi = document.createElement("li");
@@ -3976,6 +4196,25 @@ function showBuildingContextMenu(event, building, bi) {
   };
   mk(t("building.zoomTitle"), () => zoomToBuilding(bi), !building.tileset);
   mk(t("building.addShapefilesTitle"), () => handleAddShapefilesToBuilding(bi));
+  mk(t("ctx.building.addLevel"), () => {
+    const top = building.levels?.length
+      ? building.levels[building.levels.length - 1].floor
+      : 0;
+    openInputPopover({
+      anchor: event,
+      fields: [
+        { key: "name", label: t("popover.levelName"), type: "text", value: "" },
+        { key: "floor", label: t("popover.elevation"), type: "number", value: top, step: 0.1 },
+      ],
+      onOk: ({ name, floor }) => {
+        const trimmed = (name ?? "").trim();
+        const v = parseFloat(floor);
+        if (!trimmed || !Number.isFinite(v)) return;
+        building._expanded = true;
+        handleAddLevel(building, trimmed, v);
+      },
+    });
+  });
   mk(t("ctx.building.setBaseElev"), () => {
     openInputPopover({
       anchor: event,
@@ -4056,6 +4295,7 @@ function showModelLevelContextMenu(event, mli) {
             applyShapefileLayerHeights(b);
           }
         }
+        applyLevelClippingForAllTilesets();
         renderLevelList();
       },
     });
@@ -4088,6 +4328,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         if (!trimmed) return;
         level.name = trimmed;
         rebuildModelLevels();
+        applyLevelClippingForAllTilesets();
         renderLevelList();
       },
     });
@@ -4104,6 +4345,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         applyShapefileLayerHeights(building);
         if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
         rebuildModelLevels();
+        applyLevelClippingForAllTilesets();
         renderLevelList();
       },
     });
@@ -4119,6 +4361,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
     }
     applyShapefileLayerHeights(building);
     rebuildModelLevels();
+    applyLevelClippingForAllTilesets();
     renderLevelList();
     syncRemoveAllBtnAndLod();
   });
@@ -4250,6 +4493,8 @@ function saveSession() {
           heightOffset: sl.heightOffset ?? 0,
           _origin: sl._origin ?? null,
           _hidden: !!sl._hidden,
+          colorColumn: sl.colorColumn ?? null,
+          colorMappings: sl.colorMappings ?? null,
         })),
         directoryHandleId: b.directoryHandleId ?? null,
         _directoryFolderName: b._directoryFolderName ?? null,
@@ -4270,6 +4515,8 @@ function saveSession() {
       heightOffset: l.heightOffset ?? 0,
       _origin: l._origin ?? "gdb",
       _hidden: !!l._hidden,
+      colorColumn: l.colorColumn ?? null,
+      colorMappings: l.colorMappings ?? null,
     })),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -4506,8 +4753,6 @@ async function restoreShapefileLayer(building, slData) {
     strokeWidth: 2,
     clampToGround: false,
   });
-  applyEntityStyling(dataSource, slData.name ?? "");
-  viewer.dataSources.add(dataSource);
   const layer = {
     name: slData.name ?? "layer",
     dataSource,
@@ -4521,7 +4766,11 @@ async function restoreShapefileLayer(building, slData) {
     // dialog. Newer sessions persist the real origin.
     _origin: slData._origin ?? "gdb",
     _hidden: !!slData._hidden,
+    colorColumn: slData.colorColumn ?? null,
+    colorMappings: slData.colorMappings ?? null,
   };
+  applyEntityStyling(dataSource, slData.name ?? "", layer);
+  viewer.dataSources.add(dataSource);
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
   applyLevelToShapefilesForBuilding(building);
@@ -4540,11 +4789,8 @@ async function restoreUnassignedLayer(u) {
     strokeWidth: 2,
     clampToGround: false,
   });
-  applyEntityStyling(dataSource, u.name ?? "");
   const hidden = !!u._hidden;
-  dataSource.show = !hidden;
-  viewer.dataSources.add(dataSource);
-  unassignedLayers.push({
+  const layer = {
     name: u.name ?? "layer",
     dataSource,
     color: u.color ?? "#4fc3f7",
@@ -4553,7 +4799,13 @@ async function restoreUnassignedLayer(u) {
     heightOffset: u.heightOffset ?? 0,
     _origin: u._origin ?? "gdb",
     _hidden: hidden,
-  });
+    colorColumn: u.colorColumn ?? null,
+    colorMappings: u.colorMappings ?? null,
+  };
+  applyEntityStyling(dataSource, u.name ?? "", layer);
+  dataSource.show = !hidden;
+  viewer.dataSources.add(dataSource);
+  unassignedLayers.push(layer);
 }
 
 async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, dirId = null, dirName = null) {

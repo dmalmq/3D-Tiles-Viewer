@@ -72,6 +72,7 @@
       <div id="sceneFilterRow">
         <input type="search" id="sceneFilter" data-i18n-placeholder="scene.filterPlaceholder" placeholder="Filter scene…" autocomplete="off" />
       </div>
+      <div id="layerTypeFilters"></div>
 
       <!-- Scene tree (always-expanded) -->
       <div class="panel-section panel-section-scene">
@@ -153,6 +154,7 @@
         <li data-action="add-citygml" data-i18n="addData.cityGml">CityGML (.gml)…</li>
         <li data-action="add-gdb-zip" data-i18n="addData.gdbZip">Geodatabase (.gdb.zip)…</li>
         <li data-action="add-gdb-folder" data-i18n="addData.gdbFolder">Geodatabase folder…</li>
+        <li data-action="add-shp" data-i18n="addData.shp">Shapefile (.zip)…</li>
         <li data-action="review-gdb" data-i18n="addData.gdbReassign">Reassign GDB layers…</li>
         <li class="menu-sep"></li>
         <li data-action="add-catalog" data-i18n="addData.catalog">PLATEAU catalog…</li>
@@ -193,6 +195,7 @@
     <button id="loadCityGmlBtn" type="button" style="display:none" aria-hidden="true" data-i18n="cityGml.button"></button>
     <button id="loadGdbZipBtn" type="button" style="display:none" aria-hidden="true"></button>
     <button id="loadGdbFolderBtn" type="button" style="display:none" aria-hidden="true"></button>
+    <button id="loadShpBtn" type="button" style="display:none" aria-hidden="true"></button>
 
     <!-- PLATEAU tools floating card (shown when a PLATEAU feature is picked or overrides exist) -->
     <div id="plateauFloatingCard" class="floating-card" hidden></div>
@@ -218,6 +221,9 @@
         </div>
       </form>
     </dialog>
+
+    <!-- Per-layer color config modal. Body is built by colorConfigDialog.js. -->
+    <dialog id="colorConfigDialog" class="color-config-dialog"></dialog>
 
     <div id="floatingMenu" class="floating-menu" style="display:none"></div>
 

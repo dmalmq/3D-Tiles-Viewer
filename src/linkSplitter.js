@@ -40,8 +40,13 @@ export function inspectLinks(tileset, options = {}) {
         const feature = content.getFeature(i);
         featuresInspected++;
         const groupVal = feature.getProperty(groupBy);
-        if (groupVal != null) {
-          const key = String(groupVal);
+        const levelKey = feature.getProperty("levelKey");
+        const levelName = feature.getProperty("levelName");
+        const hasLevelMetadata =
+          (levelKey != null && levelKey !== "") ||
+          (levelName != null && levelName !== "");
+        if (groupVal != null || hasLevelMetadata) {
+          const key = groupVal != null ? String(groupVal) : "";
           let entry = groups.get(key);
           if (!entry) {
             const label = labelBy ? feature.getProperty(labelBy) : null;
@@ -54,8 +59,7 @@ export function inspectLinks(tileset, options = {}) {
             groups.set(key, entry);
           }
           entry.count++;
-          const lvl = feature.getProperty("levelName");
-          if (lvl != null && lvl !== "") entry.levelNames.add(String(lvl));
+          if (levelName != null && levelName !== "") entry.levelNames.add(String(levelName));
           collectLevelMetadata(entry, feature);
         }
         if (collectAllProperties) {

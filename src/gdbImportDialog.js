@@ -11,7 +11,7 @@ import {
   buildLevelsByPrefix,
   isLevelFeatureClass,
   detectLayerLevelRef,
-  matchLevelRefToBuildingLevel,
+  resolveLayerLevelForBuilding,
   matchLevelByText,
   groupFeaturesByFloor,
 } from "./gdbAutoMatch.js";
@@ -471,18 +471,13 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
     const bi = buildingIndexFromValue(row.buildingValue);
     if (bi == null) return;
     const building = buildings[bi];
-    if (row.levelRef) {
-      const matched = matchLevelRefToBuildingLevel(row.levelRef, building);
-      if (matched) {
-        row.levelValue = matched.key ?? "";
-        row.floorResolved = true;
-        row.confidence = "high";
-        return;
-      }
-    }
-    const byFilename = matchLevelByText(stripExt(row.fc?.fileName ?? ""), building.levels);
-    if (byFilename) {
-      row.levelValue = byFilename.key ?? "";
+    const matched = resolveLayerLevelForBuilding({
+      fileName: row.fc?.fileName,
+      levelRef: row.levelRef,
+      building,
+    });
+    if (matched) {
+      row.levelValue = matched.key ?? "";
       row.floorResolved = true;
       row.confidence = "high";
     }

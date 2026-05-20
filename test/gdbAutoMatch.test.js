@@ -7,6 +7,7 @@ import {
   isLevelFeatureClass,
   matchLayerToTarget,
   matchLevelRefToBuildingLevel,
+  resolveLayerLevelForBuilding,
 } from "../src/gdbAutoMatch.js";
 
 test("matchLayerToTarget uses source names, aliases, and floor text", () => {
@@ -41,6 +42,24 @@ test("matchLayerToTarget uses source names, aliases, and floor text", () => {
   assert.equal(match.buildingIndex, 1);
   assert.equal(match.levelKey, "l2");
   assert.equal(match.confidence, "high");
+});
+
+test("explicit filename floors take priority over metadata ordinal fallback", () => {
+  const building = {
+    levels: [
+      { name: "1F", key: "1f" },
+      { name: "2F", key: "2f" },
+      { name: "3F", key: "3f" },
+    ],
+  };
+
+  const level = resolveLayerLevelForBuilding({
+    fileName: "SHINJUKU_LUMINE_EST_2_detail.shp",
+    levelRef: { ordinal: 2, name: null, floor: null },
+    building,
+  });
+
+  assert.equal(level.key, "2f");
 });
 
 test("matchLayerToTarget falls back to unassigned when no useful name matches", () => {

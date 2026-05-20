@@ -11,6 +11,7 @@ import {
 test("extractFloorNumber recognizes above-ground and basement floor tokens", () => {
   assert.equal(extractFloorNumber("1F"), 1);
   assert.equal(extractFloorNumber("floor_12"), 12);
+  assert.equal(extractFloorNumber("B2"), -2);
   assert.equal(extractFloorNumber("B2F"), -2);
   assert.equal(extractFloorNumber("地下3階"), -3);
 });
