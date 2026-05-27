@@ -40,6 +40,10 @@ export function isPlateauLayer(layer) {
   );
 }
 
+export function listPlateauLayers(layers) {
+  return (layers ?? []).filter(isPlateauLayer);
+}
+
 // Walks the various places Cesium stows a tileset reference depending on how
 // a feature was picked.
 export function getFeatureTileset(feature) {
@@ -49,6 +53,12 @@ export function getFeatureTileset(feature) {
   if (feature.primitive?.content?.tileset) return feature.primitive.content.tileset;
   if (feature.primitive?._content?.tileset) return feature.primitive._content.tileset;
   return feature.primitive?.root ? feature.primitive : null;
+}
+
+export function findPlateauLayerForFeature(layers, feature) {
+  const tileset = getFeatureTileset(feature);
+  if (!tileset) return null;
+  return listPlateauLayers(layers).find((layer) => layer.data === tileset) ?? null;
 }
 
 export function getFeatureProperty(feature, propertyName) {
@@ -94,6 +104,25 @@ export function getPlateauOverride(layer, feature) {
   return featureKey ? layer.plateauOverrides?.get(featureKey) : null;
 }
 
+export function getPlateauOverrideMode(layer, featureKey) {
+  if (!featureKey) return null;
+  initializePlateauLayer(layer);
+  return layer?.plateauOverrides?.get(featureKey)?.mode ?? null;
+}
+
+export function createPlateauFeatureSelection(layer, feature) {
+  if (!isPlateauLayer(layer)) return null;
+  initializePlateauLayer(layer);
+  const featureKey = getPlateauFeatureKey(feature);
+  if (!featureKey) return null;
+  return {
+    layerId: layer.id,
+    layer,
+    featureKey,
+    label: getPlateauFeatureLabel(feature, featureKey),
+  };
+}
+
 // Convert the on-disk array form into the in-memory Map used at runtime.
 export function deserializePlateauOverrides(saved = []) {
   const map = new Map();
@@ -108,6 +137,12 @@ export function deserializePlateauOverrides(saved = []) {
   return map;
 }
 
+export function restoreSerializedPlateauOverrides(layer, saved = []) {
+  if (!isPlateauLayer(layer)) return;
+  layer.plateauOverrides = deserializePlateauOverrides(saved);
+  initializePlateauLayer(layer);
+}
+
 // Convert the in-memory Map back to the disk array form.
 export function serializePlateauOverrides(layer) {
   initializePlateauLayer(layer);
@@ -116,6 +151,54 @@ export function serializePlateauOverrides(layer) {
     mode: entry.mode,
     label: entry.label || featureKey,
   }));
+}
+
+export function setPlateauFeatureOverride(layer, featureKey, mode, label) {
+  if (!isPlateauLayer(layer) || !featureKey) return false;
+  initializePlateauLayer(layer);
+  if (mode == null) {
+    layer.plateauOverrides.delete(featureKey);
+    return true;
+  }
+  if (!VALID_OVERRIDE_MODES.has(mode)) return false;
+  layer.plateauOverrides.set(featureKey, {
+    mode,
+    label: label || featureKey,
+  });
+  return true;
+}
+
+export function removePlateauFeatureOverride(layer, featureKey) {
+  if (!isPlateauLayer(layer) || !featureKey) return false;
+  initializePlateauLayer(layer);
+  return layer.plateauOverrides.delete(featureKey);
+}
+
+export function clearPlateauFeatureOverrides(layers) {
+  for (const layer of listPlateauLayers(layers)) {
+    initializePlateauLayer(layer);
+    layer.plateauOverrides.clear();
+  }
+}
+
+export function countPlateauOverrides(layers) {
+  let count = 0;
+  for (const layer of listPlateauLayers(layers)) {
+    initializePlateauLayer(layer);
+    count += layer.plateauOverrides.size;
+  }
+  return count;
+}
+
+export function listPlateauOverrideEntries(layers) {
+  const entries = [];
+  for (const layer of listPlateauLayers(layers)) {
+    initializePlateauLayer(layer);
+    for (const [featureKey, entry] of layer.plateauOverrides) {
+      entries.push({ layer, featureKey, entry });
+    }
+  }
+  return entries;
 }
 
 // Ensure a PLATEAU layer has the bookkeeping fields the override system

@@ -3,15 +3,25 @@ import assert from "node:assert/strict";
 
 import {
   PLATEAU_ID_PROPERTIES,
+  clearPlateauFeatureOverrides,
+  countPlateauOverrides,
+  createPlateauFeatureSelection,
   deserializePlateauOverrides,
+  findPlateauLayerForFeature,
   getFeatureProperty,
   getFeatureTileset,
   getPlateauFeatureKey,
   getPlateauFeatureLabel,
   getPlateauOverride,
+  getPlateauOverrideMode,
   isPlateauLayer,
+  listPlateauLayers,
+  listPlateauOverrideEntries,
   pickThroughGhosts,
+  removePlateauFeatureOverride,
+  restoreSerializedPlateauOverrides,
   serializePlateauOverrides,
+  setPlateauFeatureOverride,
 } from "../src/plateauOverrides.js";
 
 // --- isPlateauLayer -------------------------------------------------------
@@ -39,6 +49,20 @@ test("isPlateauLayer rejects non-PLATEAU layers", () => {
     isPlateauLayer({ type: "geojson", sourceConfig: { kind: "plateau-buildings" } }),
     false,
   );
+});
+
+test("listPlateauLayers filters to PLATEAU tileset layers", () => {
+  const plateau = makePlateauLayer({ id: "plateau" });
+  const nonPlateau = { type: "tileset", sourceConfig: { kind: "osm-buildings" } };
+  assert.deepEqual(listPlateauLayers([nonPlateau, plateau, null]), [plateau]);
+});
+
+test("findPlateauLayerForFeature resolves picked feature tilesets", () => {
+  const tileset = { style: null, makeStyleDirty() {} };
+  const layer = makePlateauLayer({ data: tileset });
+  const feature = { content: { tileset } };
+  assert.equal(findPlateauLayerForFeature([layer], feature), layer);
+  assert.equal(findPlateauLayerForFeature([layer], { content: { tileset: {} } }), null);
 });
 
 // --- (de)serialize --------------------------------------------------------
@@ -78,6 +102,20 @@ test("serialize -> deserialize round-trips a PLATEAU layer's overrides", () => {
   const restored = deserializePlateauOverrides(serialized);
   assert.equal(restored.size, 2);
   assert.equal(restored.get("a").mode, "ghost");
+});
+
+test("restoreSerializedPlateauOverrides normalizes saved overrides", () => {
+  const layer = makePlateauLayer({
+    plateauOverrides: new Map([["old", { mode: "ghost", label: "Old" }]]),
+  });
+  restoreSerializedPlateauOverrides(layer, [
+    { featureKey: "new", mode: "hidden", label: "New" },
+    { featureKey: "bad", mode: "invalid" },
+  ]);
+  assert.equal(layer.plateauOverrides instanceof Map, true);
+  assert.equal(layer.plateauOverrides.size, 1);
+  assert.equal(layer.plateauOverrides.get("new").mode, "hidden");
+  assert.equal(layer.plateauOverrides.has("old"), false);
 });
 
 // --- feature property extraction -----------------------------------------
@@ -149,6 +187,19 @@ test("getPlateauFeatureLabel prefers `name` over ID-only fields", () => {
   assert.equal(getPlateauFeatureLabel(feature, "k"), "ID-1");
 });
 
+test("createPlateauFeatureSelection returns stable selection metadata", () => {
+  const layer = makePlateauLayer({ id: "plateau-layer" });
+  const feature = { getProperty: (name) => (name === "uro:buildingID" ? "B-10" : null) };
+  assert.deepEqual(createPlateauFeatureSelection(layer, feature), {
+    layerId: "plateau-layer",
+    layer,
+    featureKey: "uro:buildingID:B-10",
+    label: "B-10",
+  });
+  assert.equal(createPlateauFeatureSelection(layer, { getProperty: () => null }), null);
+  assert.equal(createPlateauFeatureSelection({ type: "geojson" }, feature), null);
+});
+
 // --- getPlateauOverride --------------------------------------------------
 
 test("getPlateauOverride looks up by the feature's key", () => {
@@ -162,6 +213,39 @@ test("getPlateauOverride returns undefined when the feature isn't overridden", (
   const layer = { plateauOverrides: new Map() };
   const feature = { getProperty: (n) => (n === "uro:buildingID" ? "B-9" : null) };
   assert.equal(getPlateauOverride(layer, feature), undefined);
+});
+
+test("override collection helpers mutate only PLATEAU layers", () => {
+  const first = makePlateauLayer({ id: "first", label: "First" });
+  const second = makePlateauLayer({ id: "second", label: "Second" });
+  const nonPlateau = { type: "tileset", sourceConfig: { kind: "osm-buildings" } };
+
+  assert.equal(setPlateauFeatureOverride(first, "a", "ghost", "Alpha"), true);
+  assert.equal(setPlateauFeatureOverride(second, "b", "hidden", "Beta"), true);
+  assert.equal(setPlateauFeatureOverride(nonPlateau, "c", "ghost", "Gamma"), false);
+  assert.equal(setPlateauFeatureOverride(first, "invalid", "bogus", "Bad"), false);
+  assert.equal(countPlateauOverrides([first, second, nonPlateau]), 2);
+  assert.equal(getPlateauOverrideMode(first, "a"), "ghost");
+
+  assert.deepEqual(
+    listPlateauOverrideEntries([first, second]).map(({ layer, featureKey, entry }) => ({
+      layerId: layer.id,
+      featureKey,
+      mode: entry.mode,
+      label: entry.label,
+    })),
+    [
+      { layerId: "first", featureKey: "a", mode: "ghost", label: "Alpha" },
+      { layerId: "second", featureKey: "b", mode: "hidden", label: "Beta" },
+    ],
+  );
+
+  assert.equal(removePlateauFeatureOverride(first, "a"), true);
+  assert.equal(getPlateauOverrideMode(first, "a"), null);
+  assert.equal(countPlateauOverrides([first, second]), 1);
+
+  clearPlateauFeatureOverrides([first, second, nonPlateau]);
+  assert.equal(countPlateauOverrides([first, second]), 0);
 });
 
 // --- getFeatureTileset ----------------------------------------------------
@@ -216,11 +300,18 @@ test("pickThroughGhosts handles an empty drill-pick result", () => {
 
 // --- test helpers ---------------------------------------------------------
 
-function makePlateauLayer({ plateauOverrides }) {
+function makePlateauLayer({
+  id = "plateau",
+  label = "PLATEAU",
+  data = { style: null, makeStyleDirty() {} },
+  plateauOverrides = [],
+} = {}) {
   return {
+    id,
+    label,
     type: "tileset",
     sourceConfig: { kind: "plateau-buildings" },
-    data: { style: null, makeStyleDirty() {} },
+    data,
     plateauOverrides,
   };
 }

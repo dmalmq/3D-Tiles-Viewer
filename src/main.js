@@ -79,6 +79,11 @@ import {
   serializeSession,
   parseSessionJson,
   downloadSessionJson,
+  applySavedModelLevelOverrides,
+  createSessionRestorePlan,
+  isValidActiveModelLevelIndex,
+  normalizeRestoredShapefileLayerData,
+  normalizeRestoredUnassignedLayerData,
 } from "./session.js";
 import { notifyUser } from "./notifications.js";
 import {
@@ -95,12 +100,19 @@ import {
 import {
   CONTEXT_GHOST_COLOR,
   applyPlateauLayerStyle as applyPlateauLayerStyleImpl,
-  getPlateauFeatureKey,
-  getPlateauFeatureLabel,
-  initializePlateauLayer,
+  clearPlateauFeatureOverrides,
+  countPlateauOverrides,
+  createPlateauFeatureSelection,
+  findPlateauLayerForFeature,
+  getPlateauOverrideMode,
   isPlateauLayer,
+  listPlateauLayers,
+  listPlateauOverrideEntries,
   pickThroughGhosts as pickThroughGhostsImpl,
+  removePlateauFeatureOverride,
+  restoreSerializedPlateauOverrides,
   serializePlateauOverrides,
+  setPlateauFeatureOverride,
 } from "./plateauOverrides.js";
 import {
   filterVisibleBuildings,
@@ -377,7 +389,6 @@ function init() {
   importDataBtn.addEventListener("click", () =>
     openImportDataModal(viewer, loadTilesetFromUrl, (layer) => {
       importedLayers.push(layer);
-      initializePlateauLayer(layer);
       renderImportedLayersList();
       invalidateAndRerender();
     }, {
@@ -693,7 +704,7 @@ function initHighlight() {
 
     const picked = pickThroughGhosts(click.position);
 
-    const plateauLayer = findPlateauLayerForFeature(picked);
+    const plateauLayer = findPlateauLayerForFeature(importedLayers, picked);
     if (plateauLayer) {
       selectPlateauFeature(plateauLayer, picked);
     } else {
@@ -945,7 +956,7 @@ function loadImage(url) {
 // the DOM-bound floating card.
 
 function getPlateauLayers() {
-  return importedLayers.filter(isPlateauLayer);
+  return listPlateauLayers(importedLayers);
 }
 
 function hasPlateauLayers() {
@@ -956,19 +967,10 @@ function isContextGhosted() {
   return activeModelLevelIndex >= 0;
 }
 
-function findPlateauLayerForFeature(feature) {
-  if (!feature || typeof feature.getProperty !== "function") return null;
-  return getPlateauLayers().find((layer) => layer.data === feature.tileset
-    || layer.data === feature.content?.tileset
-    || layer.data === feature.primitive?.content?.tileset
-    || layer.data === feature.primitive?._content?.tileset
-    || (feature.primitive?.root && layer.data === feature.primitive)) || null;
-}
-
 function pickThroughGhosts(position) {
   return pickThroughGhostsImpl(position, {
     drillPick: (p) => viewer.scene.drillPick(p),
-    layerForFeature: findPlateauLayerForFeature,
+    layerForFeature: (feature) => findPlateauLayerForFeature(importedLayers, feature),
   });
 }
 
@@ -981,18 +983,12 @@ function applyPlateauLayerStyle(layer) {
 
 function refreshAllPlateauOverrideStyles() {
   for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
     applyPlateauLayerStyle(layer);
   }
 }
 
 function getPlateauOverrideCount() {
-  let count = 0;
-  for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
-    count += layer.plateauOverrides.size;
-  }
-  return count;
+  return countPlateauOverrides(importedLayers);
 }
 
 function shouldShowPlateauToolsPanel() {
@@ -1000,15 +996,9 @@ function shouldShowPlateauToolsPanel() {
 }
 
 function selectPlateauFeature(layer, feature) {
-  initializePlateauLayer(layer);
-  const featureKey = getPlateauFeatureKey(feature);
-  if (!featureKey) return;
-  selectedPlateauFeature = {
-    layerId: layer.id,
-    layer,
-    featureKey,
-    label: getPlateauFeatureLabel(feature, featureKey),
-  };
+  const selection = createPlateauFeatureSelection(layer, feature);
+  if (!selection) return;
+  selectedPlateauFeature = selection;
   renderPlateauFloatingCard();
 }
 
@@ -1017,27 +1007,15 @@ function setSelectedPlateauOverride(mode) {
   if (!selected) return;
   const layer = importedLayers.find((l) => l.id === selected.layerId) || selected.layer;
   if (!isPlateauLayer(layer)) return;
-  initializePlateauLayer(layer);
-
-  if (mode === null) {
-    layer.plateauOverrides.delete(selected.featureKey);
-  } else {
-    layer.plateauOverrides.set(selected.featureKey, {
-      mode,
-      label: selected.label || selected.featureKey,
-    });
-  }
+  if (!setPlateauFeatureOverride(layer, selected.featureKey, mode, selected.label)) return;
 
   applyPlateauLayerStyle(layer);
   renderPlateauFloatingCard();
 }
 
 function clearPlateauOverrides() {
-  for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
-    layer.plateauOverrides.clear();
-    applyPlateauLayerStyle(layer);
-  }
+  clearPlateauFeatureOverrides(importedLayers);
+  refreshAllPlateauOverrideStyles();
   selectedPlateauFeature = null;
   renderPlateauFloatingCard();
 }
@@ -1045,8 +1023,7 @@ function clearPlateauOverrides() {
 function restorePlateauOverride(layerId, featureKey) {
   const layer = importedLayers.find((l) => l.id === layerId);
   if (!isPlateauLayer(layer)) return;
-  initializePlateauLayer(layer);
-  layer.plateauOverrides.delete(featureKey);
+  removePlateauFeatureOverride(layer, featureKey);
   applyPlateauLayerStyle(layer);
   if (selectedPlateauFeature?.layerId === layerId && selectedPlateauFeature.featureKey === featureKey) {
     selectedPlateauFeature = null;
@@ -1101,7 +1078,7 @@ function renderPlateauFloatingCard() {
   const selected = selectedPlateauFeature;
   if (selected) {
     const layer = importedLayers.find((l) => l.id === selected.layerId) || selected.layer;
-    const mode = layer?.plateauOverrides?.get(selected.featureKey)?.mode ?? null;
+    const mode = getPlateauOverrideMode(layer, selected.featureKey);
 
     const nameDiv = document.createElement("div");
     nameDiv.className = "plateau-feature-name";
@@ -1148,32 +1125,29 @@ function renderPlateauFloatingCard() {
   const overridesList = document.createElement("ul");
   overridesList.id = "plateauOverrideList";
   let count = 0;
-  for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
-    for (const [featureKey, entry] of layer.plateauOverrides) {
-      count++;
-      const li = document.createElement("li");
-      li.className = "plateau-override-item";
+  for (const { layer, featureKey, entry } of listPlateauOverrideEntries(importedLayers)) {
+    count++;
+    const li = document.createElement("li");
+    li.className = "plateau-override-item";
 
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "plateau-override-name";
-      nameSpan.textContent = entry.label || featureKey;
-      nameSpan.title = `${layer.label}: ${featureKey}`;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "plateau-override-name";
+    nameSpan.textContent = entry.label || featureKey;
+    nameSpan.title = `${layer.label}: ${featureKey}`;
 
-      const modeSpan = document.createElement("span");
-      modeSpan.className = "plateau-override-mode";
-      modeSpan.textContent = t(entry.mode === "hidden" ? "plateau.mode.hidden" : "plateau.mode.ghost");
+    const modeSpan = document.createElement("span");
+    modeSpan.className = "plateau-override-mode";
+    modeSpan.textContent = t(entry.mode === "hidden" ? "plateau.mode.hidden" : "plateau.mode.ghost");
 
-      const restoreBtn = document.createElement("button");
-      restoreBtn.className = "plateau-override-restore-btn";
-      restoreBtn.textContent = t("plateau.visible");
-      restoreBtn.addEventListener("click", () => restorePlateauOverride(layer.id, featureKey));
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "plateau-override-restore-btn";
+    restoreBtn.textContent = t("plateau.visible");
+    restoreBtn.addEventListener("click", () => restorePlateauOverride(layer.id, featureKey));
 
-      li.appendChild(nameSpan);
-      li.appendChild(modeSpan);
-      li.appendChild(restoreBtn);
-      overridesList.appendChild(li);
-    }
+    li.appendChild(nameSpan);
+    li.appendChild(modeSpan);
+    li.appendChild(restoreBtn);
+    overridesList.appendChild(li);
   }
   plateauFloatingCard.appendChild(overridesList);
 
@@ -4082,39 +4056,27 @@ async function restoreSession(data) {
   if (data.imagery) { imagerySelect.value = data.imagery; switchImagery(); }
   if (data.terrain) { terrainSelect.value = data.terrain; switchTerrain(); }
 
-  // Group entries by tilesetGroupId so siblings sharing a tileset are reunited
-  const groups = new Map();
-  let unique = 0;
-  for (const bData of data.buildings ?? []) {
-    const key = bData.tilesetGroupId != null
-      ? `g:${bData.tilesetGroupId}`
-      : `u:${unique++}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(bData);
-  }
-  const importedList = data.importedLayers ?? [];
-  const total = groups.size + importedList.length;
+  const restorePlan = createSessionRestorePlan(data);
   let done = 0;
   showLoadingOverlay(
     t("loading.session.title"),
-    t("loading.session.progress", { current: 0, total }),
+    t("loading.session.progress", { current: 0, total: restorePlan.primaryItemCount }),
   );
-  for (const group of groups.values()) {
+  for (const group of restorePlan.buildingGroups) {
     if (group.length === 1) {
       await restoreBuilding(group[0]);
     } else {
       await restoreSiblingGroup(group);
     }
     done++;
-    updateLoadingOverlay(t("loading.session.progress", { current: done, total }));
+    updateLoadingOverlay(t("loading.session.progress", { current: done, total: restorePlan.primaryItemCount }));
   }
-  for (const lData of importedList) {
+  for (const lData of restorePlan.importedLayers) {
     try {
       const layer = await restoreImportedLayer(viewer, loadTilesetFromUrl, lData);
       if (layer) {
         if (isPlateauLayer(layer)) {
-          layer.plateauOverrides = lData.plateauOverrides ?? [];
-          initializePlateauLayer(layer);
+          restoreSerializedPlateauOverrides(layer, lData.plateauOverrides ?? []);
         }
         importedLayers.push(layer);
       }
@@ -4122,9 +4084,9 @@ async function restoreSession(data) {
       console.warn("Could not restore imported layer:", lData.label, e);
     }
     done++;
-    updateLoadingOverlay(t("loading.session.progress", { current: done, total }));
+    updateLoadingOverlay(t("loading.session.progress", { current: done, total: restorePlan.primaryItemCount }));
   }
-  for (const u of data.unassignedLayers ?? []) {
+  for (const u of restorePlan.unassignedLayers) {
     try {
       await restoreUnassignedLayer(u);
     } catch (e) {
@@ -4133,21 +4095,8 @@ async function restoreSession(data) {
   }
   selectedBuildingIndex = buildings.length > 0 ? 0 : -1;
   rebuildModelLevels();
-  // Restore saved model-level overrides (user-edited name/elevation) and
-  // active selection.
-  if (Array.isArray(data.modelLevels) && data.modelLevels.length > 0) {
-    const byFn = new Map(data.modelLevels.map(m => [m.floorNumber, m]));
-    for (const ml of modelLevels) {
-      const saved = byFn.get(ml.floorNumber);
-      if (saved) {
-        if (saved.name) ml.name = saved.name;
-        if (Number.isFinite(saved.elevation)) ml.elevation = saved.elevation;
-      }
-    }
-  }
-  if (Number.isFinite(data.activeModelLevelIndex)
-      && data.activeModelLevelIndex >= -1
-      && data.activeModelLevelIndex < modelLevels.length) {
+  applySavedModelLevelOverrides(modelLevels, data.modelLevels);
+  if (isValidActiveModelLevelIndex(data.activeModelLevelIndex, modelLevels)) {
     selectModelLevel(data.activeModelLevelIndex);
   }
   renderImportedLayersList();
@@ -4271,9 +4220,12 @@ async function restoreSiblingGroup(group) {
 }
 
 async function restoreShapefileLayer(building, slData) {
-  if (!slData.features?.length) return;
-  const geojson = { type: "FeatureCollection", features: slData.features };
-  const cesiumColor = Color.fromCssColorString(slData.color ?? "#4fc3f7");
+  const layerData = normalizeRestoredShapefileLayerData(slData, {
+    fallbackSource: detectShapefileSource(slData?.features),
+  });
+  if (!layerData) return;
+  const geojson = { type: "FeatureCollection", features: layerData.features };
+  const cesiumColor = Color.fromCssColorString(layerData.color);
   const dataSource = await GeoJsonDataSource.load(geojson, {
     fill: cesiumColor.withAlpha(1.0),
     stroke: cesiumColor,
@@ -4281,22 +4233,10 @@ async function restoreShapefileLayer(building, slData) {
     clampToGround: false,
   });
   const layer = {
-    name: slData.name ?? "layer",
+    ...layerData,
     dataSource,
-    color: slData.color ?? "#4fc3f7",
-    levelKey: slData.levelKey ?? null,
-    source: slData.source ?? detectShapefileSource(slData.features) ?? null,
-    features: slData.features,
-    heightOffset: slData.heightOffset ?? 0,
-    // Saved sessions pre-date the _origin tag — assume GDB (most layers in
-    // practice came from the GDB importer) so they show up in the reassign
-    // dialog. Newer sessions persist the real origin.
-    _origin: slData._origin ?? "gdb",
-    _hidden: !!slData._hidden,
-    colorColumn: slData.colorColumn ?? null,
-    colorMappings: slData.colorMappings ?? null,
   };
-  applyEntityStyling(dataSource, slData.name ?? "", layer);
+  applyEntityStyling(dataSource, layer.name, layer);
   viewer.dataSources.add(dataSource);
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
@@ -4307,30 +4247,24 @@ async function restoreShapefileLayer(building, slData) {
 // but skips building plumbing and keeps dataSource.show = false until the user
 // drags it onto a building.
 async function restoreUnassignedLayer(u) {
-  if (!u?.features?.length) return;
-  const geojson = { type: "FeatureCollection", features: u.features };
-  const cesiumColor = Color.fromCssColorString(u.color ?? "#4fc3f7");
+  const layerData = normalizeRestoredUnassignedLayerData(u, {
+    fallbackSource: detectShapefileSource(u?.features),
+  });
+  if (!layerData) return;
+  const geojson = { type: "FeatureCollection", features: layerData.features };
+  const cesiumColor = Color.fromCssColorString(layerData.color);
   const dataSource = await GeoJsonDataSource.load(geojson, {
     fill: cesiumColor.withAlpha(1.0),
     stroke: cesiumColor,
     strokeWidth: 2,
     clampToGround: false,
   });
-  const hidden = !!u._hidden;
   const layer = {
-    name: u.name ?? "layer",
+    ...layerData,
     dataSource,
-    color: u.color ?? "#4fc3f7",
-    source: u.source ?? detectShapefileSource(u.features) ?? null,
-    features: u.features,
-    heightOffset: u.heightOffset ?? 0,
-    _origin: u._origin ?? "gdb",
-    _hidden: hidden,
-    colorColumn: u.colorColumn ?? null,
-    colorMappings: u.colorMappings ?? null,
   };
-  applyEntityStyling(dataSource, u.name ?? "", layer);
-  dataSource.show = !hidden;
+  applyEntityStyling(dataSource, layer.name, layer);
+  dataSource.show = !layer._hidden;
   viewer.dataSources.add(dataSource);
   unassignedLayers.push(layer);
 }

@@ -126,6 +126,83 @@ export function parseSessionJson(text) {
   return data;
 }
 
+export function groupSessionBuildingsByTileset(buildings = []) {
+  const groups = new Map();
+  let unique = 0;
+  for (const bData of buildings ?? []) {
+    const key = bData?.tilesetGroupId != null
+      ? `g:${bData.tilesetGroupId}`
+      : `u:${unique++}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(bData);
+  }
+  return [...groups.values()];
+}
+
+export function createSessionRestorePlan(data) {
+  const buildingGroups = groupSessionBuildingsByTileset(data?.buildings ?? []);
+  const importedLayers = Array.isArray(data?.importedLayers) ? data.importedLayers : [];
+  const unassignedLayers = Array.isArray(data?.unassignedLayers) ? data.unassignedLayers : [];
+  return {
+    buildingGroups,
+    importedLayers,
+    unassignedLayers,
+    primaryItemCount: buildingGroups.length + importedLayers.length,
+  };
+}
+
+export function applySavedModelLevelOverrides(modelLevels, savedModelLevels) {
+  if (!Array.isArray(modelLevels) || !Array.isArray(savedModelLevels) || savedModelLevels.length === 0) {
+    return modelLevels;
+  }
+  const byFloorNumber = new Map(savedModelLevels.map((m) => [m.floorNumber, m]));
+  for (const modelLevel of modelLevels) {
+    const saved = byFloorNumber.get(modelLevel.floorNumber);
+    if (!saved) continue;
+    if (saved.name) modelLevel.name = saved.name;
+    if (Number.isFinite(saved.elevation)) modelLevel.elevation = saved.elevation;
+  }
+  return modelLevels;
+}
+
+export function isValidActiveModelLevelIndex(index, modelLevels) {
+  return Number.isFinite(index) && index >= -1 && index < (modelLevels?.length ?? 0);
+}
+
+export function normalizeRestoredShapefileLayerData(slData, options = {}) {
+  return normalizeRestoredVectorLayerData(slData, {
+    ...options,
+    includeLevelKey: true,
+  });
+}
+
+export function normalizeRestoredUnassignedLayerData(layerData, options = {}) {
+  return normalizeRestoredVectorLayerData(layerData, {
+    ...options,
+    includeLevelKey: false,
+  });
+}
+
+function normalizeRestoredVectorLayerData(layerData, { fallbackSource = null, includeLevelKey } = {}) {
+  if (!layerData?.features?.length) return null;
+  const normalized = {
+    name: layerData.name ?? "layer",
+    color: layerData.color ?? "#4fc3f7",
+    source: layerData.source ?? fallbackSource ?? null,
+    features: layerData.features,
+    heightOffset: layerData.heightOffset ?? 0,
+    // Saved sessions pre-date the _origin tag — assume GDB (most layers in
+    // practice came from the GDB importer) so they show up in the reassign
+    // dialog. Newer sessions persist the real origin.
+    _origin: layerData._origin ?? "gdb",
+    _hidden: !!layerData._hidden,
+    colorColumn: layerData.colorColumn ?? null,
+    colorMappings: layerData.colorMappings ?? null,
+  };
+  if (includeLevelKey) normalized.levelKey = layerData.levelKey ?? null;
+  return normalized;
+}
+
 // Trigger a browser download of the serialized session.
 export function downloadSessionJson(data, filename) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
