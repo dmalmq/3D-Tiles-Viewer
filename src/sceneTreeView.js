@@ -1,8 +1,6 @@
-// Pure data helpers used by the scene-tree renderer in main.js. The DOM
-// creation and event wiring still live in main.js (renderLevelList and its
-// neighbours); a full extraction needs a viewContext refactor we have not
-// taken on yet. Splitting out the filter/projection logic here is the cheap
-// half: it's pure, testable, and unblocks future cleanup of renderLevelList.
+// Pure data helpers used by the scene-tree renderer. DOM construction lives in
+// sceneTreeRenderer.js; main.js remains the owner of live application state and
+// callback wiring.
 
 import { levelNameToNumber } from "./floorSplit.js";
 

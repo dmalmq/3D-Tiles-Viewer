@@ -105,9 +105,8 @@ import {
 import {
   filterVisibleBuildings,
   findLayerParent as findLayerParentImpl,
-  shapefilesForModelLevel as shapefilesForModelLevelImpl,
-  unassignedShapefilesAll as unassignedShapefilesAllImpl,
 } from "./sceneTreeView.js";
+import { renderSceneTree } from "./sceneTreeRenderer.js";
 
 // -- State --
 let viewer;
@@ -2511,12 +2510,9 @@ function renderInvalidatedSurfaces() {
 }
 
 function renderLevelList() {
-  levelListEl.innerHTML = "";
-
   const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
   const visibleBuildings = filterVisibleBuildings(buildings, filterRaw);
 
-  // Update item count + empty placeholder.
   if (sceneItemCountEl) {
     if (buildings.length === 0 && unassignedLayers.length === 0) {
       sceneItemCountEl.textContent = "";
@@ -2534,364 +2530,163 @@ function renderLevelList() {
       buildings.length === 0 && unassignedLayers.length === 0 ? "" : "none";
   }
 
-  if (buildings.length === 0 && unassignedLayers.length === 0) return;
+  const result = renderSceneTree({
+    container: levelListEl,
+    buildings,
+    importedLayers,
+    unassignedLayers,
+    modelLevels,
+    selection: {
+      filterRaw,
+      activeModelLevelIndex,
+      selectedBuildingIndex,
+      selectedLayers: _selectedLayers,
+      unassignedTreeExpanded: _unassignedTreeExpanded,
+      buildingsSectionExpanded: _buildingsSectionExpanded,
+    },
+    callbacks: getSceneTreeCallbacks(),
+  });
 
-  // ===== Model Levels section =====
-  // The parent Scene section already serves as the visual heading; the level
-  // list sits directly under it without a redundant subheader.
-  const mlSection = document.createElement("li");
-  mlSection.className = "panel-section model-levels-section";
-
-  const mlUl = document.createElement("ul");
-  mlUl.className = "ml-list";
-
-  // "All floors" row
-  {
-    const li = document.createElement("li");
-    li.className = "level-item ml-row all-floors"
-      + (activeModelLevelIndex === -1 ? " selected" : "");
-    appendLevelChevron(li, null, () => {});
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "modelLevelRadio";
-    radio.checked = activeModelLevelIndex === -1;
-    radio.tabIndex = -1;
-    li.appendChild(radio);
-    const text = document.createElement("span");
-    text.className = "level-name-text";
-    text.textContent = t("level.allFloors");
-    text.title = t("level.allFloors");
-    li.appendChild(text);
-    li.addEventListener("click", () => selectModelLevel(-1));
-    mlUl.appendChild(li);
-  }
-
-  // Per model-level rows, top floor first
-  for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
-    const ml = modelLevels[mli];
-    const li = document.createElement("li");
-    li.className = "level-item ml-row"
-      + (activeModelLevelIndex === mli ? " selected" : "");
-
-    const shapefiles = shapefilesForModelLevel(ml.floorNumber, filterRaw);
-    // While filtering, hide rows with no matches and auto-expand the rest.
-    if (filterRaw && shapefiles.length === 0) continue;
-    const expanded = filterRaw ? true : (ml._expanded === true);
-    appendLevelChevron(
-      li,
-      shapefiles.length > 0 ? expanded : null,
-      () => { ml._expanded = !expanded; renderLevelList(); }
-    );
-
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "modelLevelRadio";
-    radio.checked = activeModelLevelIndex === mli;
-    radio.tabIndex = -1;
-    li.appendChild(radio);
-    const text = document.createElement("span");
-    text.className = "level-name-text";
-    text.textContent = ml.name;
-    text.title = ml.name;
-    li.appendChild(text);
-
-    const elevSpan = document.createElement("span");
-    elevSpan.className = "level-ceiling";
-    elevSpan.textContent = `${ml.elevation.toFixed(1)} m`;
-    li.appendChild(elevSpan);
-
-    li.addEventListener("click", () => selectModelLevel(mli));
-    li.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showModelLevelContextMenu(e, mli);
-    });
-    attachDropTarget(li, { kind: "modelLevel", floorNumber: ml.floorNumber });
-    mlUl.appendChild(li);
-
-    if (expanded && shapefiles.length > 0) {
-      mlUl.appendChild(buildShapefileChildrenFlat(shapefiles));
-    }
-  }
-
-  // Unassigned shapefiles row
-  const unassignedAll = unassignedShapefilesAll(filterRaw);
-  if (unassignedAll.length > 0) {
-    const li = document.createElement("li");
-    li.className = "level-item ml-row unassigned-row";
-    const expanded = filterRaw ? true : _unassignedTreeExpanded;
-    appendLevelChevron(
-      li,
-      expanded,
-      () => { _unassignedTreeExpanded = !expanded; renderLevelList(); }
-    );
-    const text = document.createElement("span");
-    text.className = "level-name-text";
-    text.textContent = t("gdb.unassigned.groupName");
-    text.title = t("gdb.unassigned.groupName");
-    li.appendChild(text);
-    li.addEventListener("click", () => {
-      _unassignedTreeExpanded = !_unassignedTreeExpanded;
-      renderLevelList();
-    });
-    attachDropTarget(li, { kind: "unassigned" });
-    mlUl.appendChild(li);
-    if (expanded) {
-      mlUl.appendChild(buildShapefileChildrenFlat(unassignedAll));
-    }
-  }
-
-  mlSection.appendChild(mlUl);
-  levelListEl.appendChild(mlSection);
-
-  // ===== Buildings section =====
-  if (visibleBuildings.length > 0) {
-    const bSection = document.createElement("li");
-    bSection.className = "panel-section buildings-section"
-      + (_buildingsSectionExpanded ? "" : " collapsed");
-
-    const bHeader = document.createElement("div");
-    bHeader.className = "panel-section-header collapsible";
-    const bChev = document.createElement("span");
-    bChev.className = "panel-section-chevron";
-    bChev.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    bHeader.appendChild(bChev);
-    const bLabel = document.createElement("span");
-    bLabel.textContent = t("panel.buildings");
-    bHeader.appendChild(bLabel);
-    const bCount = document.createElement("span");
-    bCount.className = "panel-section-count";
-    bCount.textContent = String(visibleBuildings.length);
-    bHeader.appendChild(bCount);
-    bHeader.addEventListener("click", () => {
-      _buildingsSectionExpanded = !_buildingsSectionExpanded;
-      renderLevelList();
-    });
-    bSection.appendChild(bHeader);
-
-    if (!_buildingsSectionExpanded) {
-      levelListEl.appendChild(bSection);
-      return;
-    }
-
-    const bUl = document.createElement("ul");
-    bUl.className = "bldg-list";
-
-    visibleBuildings.forEach(({ b, i: bi }) => {
-      const li = document.createElement("li");
-      li.className = "bldg-row" + (bi === selectedBuildingIndex ? " selected" : "");
-      const hasLevelChildren = (b.levels?.length ?? 0) > 0;
-      const expanded = hasLevelChildren && b._expanded !== false;
-      appendLevelChevron(
-        li,
-        hasLevelChildren ? expanded : null,
-        () => { b._expanded = !expanded; renderLevelList(); }
-      );
-
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "bldg-name";
-      nameSpan.textContent = b.name;
-      nameSpan.title = b.name;
-      li.appendChild(nameSpan);
-
-      if (b.linkFilter) {
-        const chip = document.createElement("span");
-        chip.className = "building-link-chip";
-        chip.textContent = b.linkFilter.value === "" ? t("building.chip.host") : t("building.chip.link");
-        chip.title = `${b.linkFilter.property}: ${b.linkFilter.value || "(host)"}`;
-        li.appendChild(chip);
-      }
-
-      const zoomBtn = document.createElement("button");
-      zoomBtn.className = "level-tree-zoom-btn";
-      zoomBtn.title = t("building.zoomTitle");
-      zoomBtn.innerHTML =
-        '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
-        '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
-        '<path d="M5 8h6M8 5v6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
-        "</svg>";
-      zoomBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        zoomToBuilding(bi);
-      });
-      li.appendChild(zoomBtn);
-
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "level-remove-btn";
-      removeBtn.textContent = t("generic.removeX");
-      removeBtn.title = t("building.removeTitle");
-      removeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        handleRemoveBuilding(bi);
-      });
-      li.appendChild(removeBtn);
-
-      li.addEventListener("click", () => selectBuilding(bi));
-      li.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showBuildingContextMenu(e, b, bi);
-      });
-      attachDropTarget(li, { bi, levelKey: null });
-
-      if (b._tilesetMissing) {
-        const banner = document.createElement("div");
-        banner.className = "scene-reload-banner";
-        const msg = document.createElement("p");
-        msg.className = "reload-tileset-msg";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "secondary-btn full-width";
-        if (b.directoryHandleId) {
-          msg.textContent = t("right.grant.message", { folder: b._directoryFolderName || "unknown" });
-          btn.textContent = t("right.grant.button");
-        } else {
-          msg.textContent = t("right.reload.message");
-          btn.textContent = t("right.reload.button");
-        }
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          selectedBuildingIndex = bi;
-          handleReloadTilesetClick();
-        });
-        banner.appendChild(msg);
-        banner.appendChild(btn);
-        li.appendChild(banner);
-      }
-
-      bUl.appendChild(li);
-
-      if (expanded) {
-        const levelUl = document.createElement("ul");
-        levelUl.className = "level-tree-children";
-        for (let levelIndex = b.levels.length - 1; levelIndex >= 0; levelIndex--) {
-          const lvl = b.levels[levelIndex];
-          const levelLi = document.createElement("li");
-          levelLi.className = "level-item bldg-level-row"
-            + (bi === selectedBuildingIndex && b.activeLevelIndex === levelIndex ? " selected" : "");
-          appendLevelChevron(levelLi, null, () => {});
-
-          const text = document.createElement("span");
-          text.className = "level-name-text";
-          text.textContent = lvl.name;
-          text.title = lvl.name;
-          levelLi.appendChild(text);
-
-          const elevSpan = document.createElement("span");
-          elevSpan.className = "level-ceiling";
-          elevSpan.textContent = `${Number(lvl.floor ?? 0).toFixed(1)} m`;
-          levelLi.appendChild(elevSpan);
-
-          levelLi.addEventListener("click", () => selectLevel(bi, levelIndex));
-          levelLi.addEventListener("contextmenu", (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            showLevelContextMenu(e, b, bi, levelIndex);
-          });
-          attachDropTarget(levelLi, { bi, levelKey: lvl.key ?? "" });
-          levelUl.appendChild(levelLi);
-
-          const levelLayers = b.shapefileLayers.filter(
-            layer => (layer.levelKey ?? "") === (lvl.key ?? "")
-          );
-          if (levelLayers.length > 0) {
-            levelUl.appendChild(buildShapefileChildren(b, bi, levelLayers));
-          }
-        }
-        bUl.appendChild(levelUl);
-      }
-    });
-
-    bSection.appendChild(bUl);
-    levelListEl.appendChild(bSection);
-  }
-
-  renderLayerTypeFilters();
+  if (result.shouldRenderLayerTypeFilters) renderLayerTypeFilters();
 }
 
+function getSceneTreeCallbacks() {
+  return {
+    t,
+    selectModelLevel,
+    toggleModelLevelExpanded,
+    toggleUnassignedExpanded,
+    toggleBuildingsSection,
+    toggleBuildingExpanded,
+    selectBuilding,
+    zoomBuilding: zoomToBuilding,
+    removeBuilding: handleRemoveBuilding,
+    reloadBuilding: handleSceneTreeReloadBuilding,
+    selectLevel,
+    showModelLevelContextMenu,
+    showBuildingContextMenu: handleSceneTreeBuildingContextMenu,
+    showLevelContextMenu: handleSceneTreeLevelContextMenu,
+    selectLayer: handleSceneTreeLayerSelect,
+    toggleLayerVisibility: handleSceneTreeLayerVisibility,
+    removeLayer: handleSceneTreeLayerRemove,
+    showLayerContextMenu: handleSceneTreeLayerContextMenu,
+    startLayerDrag: handleSceneTreeLayerDragStart,
+    endLayerDrag: handleSceneTreeLayerDragEnd,
+    dropWouldBeNoop,
+    dropLayer: handleSceneTreeLayerDrop,
+  };
+}
 
-// Build the pseudo-building node for the unassigned-layers bucket. Mirrors the
-// building tree's chevron + name + child list structure but with no level rows
-// (layers sit directly under it) and no add/remove building buttons.
-function buildUnassignedNode() {
-  const li = document.createElement("li");
-  li.className = "level-tree-building unassigned-group";
-  const header = document.createElement("div");
-  header.className = "level-tree-header";
+function toggleModelLevelExpanded(modelLevelIndex) {
+  const level = modelLevels[modelLevelIndex];
+  if (!level) return;
+  level._expanded = !level._expanded;
+  renderLevelList();
+}
 
-  const chevron = document.createElement("span");
-  chevron.className = "level-tree-chevron" + (_unassignedTreeExpanded ? " expanded" : "");
-  chevron.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polyline points="3,2 7,5 3,8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  chevron.addEventListener("click", (e) => {
-    e.stopPropagation();
-    _unassignedTreeExpanded = !_unassignedTreeExpanded;
-    renderLevelList();
-  });
-  header.appendChild(chevron);
+function toggleUnassignedExpanded() {
+  _unassignedTreeExpanded = !_unassignedTreeExpanded;
+  renderLevelList();
+}
 
-  const nameSpan = document.createElement("span");
-  nameSpan.className = "level-tree-name";
-  nameSpan.textContent = t("gdb.unassigned.groupName");
-  nameSpan.title = t("gdb.unassigned.groupName");
-  header.appendChild(nameSpan);
-  attachDropTarget(header, { kind: "unassigned" });
-  li.appendChild(header);
+function toggleBuildingsSection() {
+  _buildingsSectionExpanded = !_buildingsSectionExpanded;
+  renderLevelList();
+}
 
-  if (_unassignedTreeExpanded && unassignedLayers.length > 0) {
-    const ul = document.createElement("ul");
-    ul.className = "shp-children";
-    for (const layer of unassignedLayers) {
-      const row = document.createElement("li");
-      row.className = "shp-tree-item";
+function toggleBuildingExpanded(buildingIndex) {
+  const building = buildings[buildingIndex];
+  if (!building?.levels?.length) return;
+  building._expanded = !(building._expanded !== false);
+  renderLevelList();
+}
 
-      const swatch = document.createElement("span");
-      swatch.className = "color-swatch";
-      swatch.style.background = layer.color;
+function handleSceneTreeReloadBuilding(buildingIndex) {
+  selectedBuildingIndex = buildingIndex;
+  handleReloadTilesetClick();
+}
 
-      const layerName = document.createElement("span");
-      layerName.className = "shp-tree-name";
-      layerName.textContent = layer.name;
-      layerName.title = layer.name;
+function handleSceneTreeBuildingContextMenu(event, buildingIndex) {
+  const building = buildings[buildingIndex];
+  if (!building) return;
+  showBuildingContextMenu(event, building, buildingIndex);
+}
 
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "shp-tree-remove-btn";
-      removeBtn.textContent = t("generic.removeX");
-      removeBtn.title = t("shp.removeTitle");
-      removeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        removeUnassignedLayer(layer);
-      });
+function handleSceneTreeLevelContextMenu(event, buildingIndex, levelIndex) {
+  const building = buildings[buildingIndex];
+  if (!building) return;
+  showLevelContextMenu(event, building, buildingIndex, levelIndex);
+}
 
-      row.appendChild(swatch);
-      row.appendChild(layerName);
-      row.appendChild(removeBtn);
-      row.__layerRef = layer;
-      if (_selectedLayers.has(layer)) row.classList.add("selected");
-      row.addEventListener("click", (e) => {
-        if (e.shiftKey) {
-          selectLayerRange(layer);
-          e.preventDefault();
-        } else if (e.ctrlKey || e.metaKey) {
-          toggleLayerSelection(layer);
-          _lastClickedLayer = layer;
-          e.preventDefault();
-        } else {
-          setSingleLayerSelection(layer);
-          _lastClickedLayer = layer;
-        }
-        renderLevelList();
-      });
-      row.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showMoveUnassignedToBuildingMenu(e, layer);
-      });
-      attachDragSource(row, layer, "unassigned");
-      ul.appendChild(row);
+function handleSceneTreeLayerSelect({ layer, buildingIndex }, event) {
+  if (!layer) return;
+  if (event.shiftKey) {
+    selectLayerRange(layer);
+    event.preventDefault();
+  } else if (event.ctrlKey || event.metaKey) {
+    toggleLayerSelection(layer);
+    _lastClickedLayer = layer;
+    event.preventDefault();
+  } else {
+    setSingleLayerSelection(layer);
+    _lastClickedLayer = layer;
+    if (typeof buildingIndex === "number" && buildingIndex >= 0) {
+      selectedBuildingIndex = buildingIndex;
     }
-    li.appendChild(ul);
   }
-  return li;
+  renderLevelList();
+}
+
+function handleSceneTreeLayerVisibility({ layer, buildingIndex }) {
+  if (!layer) return;
+  const building = typeof buildingIndex === "number" ? buildings[buildingIndex] : null;
+  layer._hidden = !layer._hidden;
+  applyLayerVisibility(building, layer);
+  invalidateAndRerender();
+}
+
+function handleSceneTreeLayerRemove({ layer, buildingIndex }) {
+  if (!layer) return;
+  if (typeof buildingIndex === "number") {
+    const building = buildings[buildingIndex];
+    if (building) removeShapefileLayer(building, layer);
+  } else {
+    removeUnassignedLayer(layer);
+  }
+}
+
+function handleSceneTreeLayerContextMenu(event, { layer, buildingIndex }) {
+  if (!layer) return;
+  if (typeof buildingIndex === "number") {
+    const building = buildings[buildingIndex];
+    if (building) showMoveToFloorMenu(event, building, layer);
+  } else {
+    showMoveUnassignedToBuildingMenu(event, layer);
+  }
+}
+
+function handleSceneTreeLayerDragStart({ event, row, layer, fromBi }) {
+  if (!layer) return;
+  const entries = _selectedLayers.has(layer) && _selectedLayers.size > 1
+    ? buildDragEntriesFromSelection()
+    : [{ layer, fromBi }];
+  _dragLayerCtx = { entries };
+  row?.classList.add("dragging");
+  event.dataTransfer.effectAllowed = "move";
+  try {
+    event.dataTransfer.setData(
+      "text/plain",
+      entries.length > 1 ? `${entries.length} layers` : (layer.name ?? "layer"),
+    );
+  } catch { /* some browsers reject setData under unusual drag conditions — non-fatal */ }
+}
+
+function handleSceneTreeLayerDragEnd({ row }) {
+  row?.classList.remove("dragging");
+  _dragLayerCtx = null;
+  levelListEl.querySelectorAll(".drop-target-active").forEach((el) => {
+    el.classList.remove("drop-target-active");
+  });
 }
 
 // Floating context menu that lets the user transfer an unassigned layer to a
@@ -2935,202 +2730,11 @@ function showMoveUnassignedToBuildingMenu(event, layer) {
   floatingMenu.style.display = "";
 }
 
-// -- renderLevelList helpers --
-
-function appendLevelChevron(li, expanded, onToggle) {
-  const chev = document.createElement("span");
-  chev.className = "level-tree-chevron" + (expanded ? " expanded" : "");
-  if (expanded === null) {
-    // No children to expand — render an invisible placeholder so the row keeps its alignment.
-    chev.style.visibility = "hidden";
-  } else {
-    chev.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polyline points="3,2 7,5 3,8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    chev.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onToggle();
-    });
-  }
-  li.appendChild(chev);
-}
-
-function shapefilesForModelLevel(floorNumber, filterRaw = "") {
-  return shapefilesForModelLevelImpl(buildings, floorNumber, filterRaw);
-}
-
-function unassignedShapefilesAll(filterRaw = "") {
-  return unassignedShapefilesAllImpl(buildings, unassignedLayers, filterRaw);
-}
-
-// Variant of buildShapefileChildren that handles entries from anywhere
-// (model-level aggregation, or unassigned bucket). Each entry is
-// { building, buildingIndex, layer } where building/buildingIndex may be
-// null/"unassigned" for staged layers.
-function buildShapefileChildrenFlat(entries) {
-  const ul = document.createElement("ul");
-  ul.className = "shp-children";
-  for (const entry of entries) {
-    const { building, buildingIndex, layer } = entry;
-    const li = document.createElement("li");
-    li.className = "shp-tree-item";
-
-    const eyeBtn = document.createElement("button");
-    eyeBtn.className = "shp-visibility-btn" + (layer._hidden ? " hidden" : "");
-    eyeBtn.title = t(layer._hidden ? "shp.show" : "shp.hide");
-    eyeBtn.innerHTML = layer._hidden
-      ? '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/><path d="M3 13L13 3" stroke-linecap="round"/></svg>'
-      : '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/></svg>';
-    eyeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      layer._hidden = !layer._hidden;
-      applyLayerVisibility(building, layer);
-      invalidateAndRerender();
-    });
-
-    const swatch = document.createElement("span");
-    swatch.className = "color-swatch";
-    swatch.style.background = layer.color;
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "shp-tree-name";
-    nameSpan.textContent = layer.name;
-    nameSpan.title = layer.name;
-
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "shp-tree-remove-btn";
-    removeBtn.textContent = t("generic.removeX");
-    removeBtn.title = t("shp.removeTitle");
-    removeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (building) removeShapefileLayer(building, layer);
-      else removeUnassignedLayer(layer);
-    });
-
-    li.appendChild(eyeBtn);
-    li.appendChild(swatch);
-    li.appendChild(nameSpan);
-    li.appendChild(removeBtn);
-    li.__layerRef = layer;
-    if (_selectedLayers.has(layer)) li.classList.add("selected");
-    li.addEventListener("click", (e) => {
-      if (e.shiftKey) {
-        selectLayerRange(layer);
-        e.preventDefault();
-      } else if (e.ctrlKey || e.metaKey) {
-        toggleLayerSelection(layer);
-        _lastClickedLayer = layer;
-        e.preventDefault();
-      } else {
-        setSingleLayerSelection(layer);
-        _lastClickedLayer = layer;
-        if (typeof buildingIndex === "number" && buildingIndex >= 0) selectBuilding(buildingIndex);
-      }
-      renderLevelList();
-    });
-    li.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (building) showMoveToFloorMenu(e, building, layer);
-      else showMoveUnassignedToBuildingMenu(e, layer);
-    });
-    attachDragSource(li, layer, building ? buildingIndex : "unassigned");
-    ul.appendChild(li);
-  }
-  return ul;
-}
-
-function buildShapefileChildren(building, buildingIndex, layers) {
-  const ul = document.createElement("ul");
-  ul.className = "shp-children";
-  for (const layer of layers) {
-    const li = document.createElement("li");
-    li.className = "shp-tree-item";
-
-    const swatch = document.createElement("span");
-    swatch.className = "color-swatch";
-    swatch.style.background = layer.color;
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "shp-tree-name";
-    nameSpan.textContent = layer.name;
-    nameSpan.title = layer.name;
-
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "shp-tree-remove-btn";
-    removeBtn.textContent = t("generic.removeX");
-    removeBtn.title = t("shp.removeTitle");
-    removeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeShapefileLayer(building, layer);
-    });
-
-    li.appendChild(swatch);
-    li.appendChild(nameSpan);
-    li.appendChild(removeBtn);
-    li.__layerRef = layer;
-    if (_selectedLayers.has(layer)) li.classList.add("selected");
-    li.addEventListener("click", (e) => {
-      if (e.shiftKey) {
-        selectLayerRange(layer);
-        e.preventDefault();
-      } else if (e.ctrlKey || e.metaKey) {
-        toggleLayerSelection(layer);
-        _lastClickedLayer = layer;
-        e.preventDefault();
-      } else {
-        setSingleLayerSelection(layer);
-        _lastClickedLayer = layer;
-        selectBuilding(buildingIndex);
-      }
-      renderLevelList();
-    });
-    li.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showMoveToFloorMenu(e, building, layer);
-    });
-    attachDragSource(li, layer, buildingIndex);
-    ul.appendChild(li);
-  }
-  return ul;
-}
-
-// -- Scene tree drag-and-drop --
-// Drag a shapefile/GDB layer row onto a building header (drops as "all
-// floors"), a level row (drops onto that floor), or the Unassigned bucket
-// header (returns the layer to unassigned). All routes funnel through the
-// existing move helpers — no new state, no schema change.
-
-function attachDragSource(rowEl, layer, fromBi) {
-  rowEl.setAttribute("draggable", "true");
-  rowEl.addEventListener("dragstart", (e) => {
-    // If the dragged layer is part of a multi-selection (size > 1), drag the
-    // whole set. Otherwise just this one row.
-    const entries = _selectedLayers.has(layer) && _selectedLayers.size > 1
-      ? buildDragEntriesFromSelection()
-      : [{ layer, fromBi }];
-    _dragLayerCtx = { entries };
-    rowEl.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    try {
-      e.dataTransfer.setData(
-        "text/plain",
-        entries.length > 1 ? `${entries.length} layers` : (layer.name ?? "layer"),
-      );
-    } catch { /* some browsers reject setData under unusual drag conditions — non-fatal */ }
-  });
-  rowEl.addEventListener("dragend", () => {
-    rowEl.classList.remove("dragging");
-    _dragLayerCtx = null;
-    document.querySelectorAll(".drop-target-active").forEach((el) => {
-      el.classList.remove("drop-target-active");
-    });
-  });
-}
-
 // True when every dragged entry already lives at the proposed target — drop
 // would be a no-op, so we don't preventDefault on dragover and the cursor
 // shows the "not allowed" icon.
 function dropWouldBeNoop(target) {
+  if (!target) return true;
   if (!_dragLayerCtx) return true;
   const entries = _dragLayerCtx.entries;
   if (target.kind === "unassigned") {
@@ -3154,70 +2758,56 @@ function dropWouldBeNoop(target) {
   });
 }
 
-function attachDropTarget(el, target) {
-  el.addEventListener("dragover", (e) => {
-    if (!_dragLayerCtx) return;
-    if (dropWouldBeNoop(target)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    el.classList.add("drop-target-active");
-  });
-  el.addEventListener("dragleave", () => {
-    el.classList.remove("drop-target-active");
-  });
-  el.addEventListener("drop", async (e) => {
-    el.classList.remove("drop-target-active");
-    if (!_dragLayerCtx) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const entries = _dragLayerCtx.entries;
-    _dragLayerCtx = null;
+async function handleSceneTreeLayerDrop(target) {
+  if (!target) return;
+  if (!_dragLayerCtx) return;
+  const entries = _dragLayerCtx.entries;
+  _dragLayerCtx = null;
 
-    const touchedBuildings = new Set();
+  const touchedBuildings = new Set();
 
-    for (const { layer, fromBi } of entries) {
-      if (target.kind === "unassigned") {
-        if (fromBi === "unassigned") continue;
-        transferToUnassigned(layer, fromBi);
-        continue;
-      }
-      if (target.kind === "modelLevel") {
-        // Drop on a global model-level row: for the source building, find a
-        // level whose floor number matches the target and move the layer there.
-        if (fromBi === "unassigned") continue; // staged → use right-click instead
-        const srcBuilding = buildings[fromBi];
-        if (!srcBuilding) continue;
-        const targetFn = target.floorNumber;
-        const lvl = srcBuilding.levels.find(l => levelNameToNumber(l.name) === targetFn);
-        if (!lvl) continue; // this building has no equivalent floor
-        moveShapefileToLevel(srcBuilding, layer, lvl.key ?? "");
-        touchedBuildings.add(fromBi);
-        continue;
-      }
-      const { bi: toBi, levelKey } = target;
-      if (fromBi === "unassigned") {
-        // Drag-from-staging is the natural import point. Split by feature
-        // `floor` column when present so multi-floor layers fan out to their
-        // matching levels instead of all piling onto one.
-        _selectedLayers.delete(layer);
-        const createdLayers = await dropStagedLayerOnBuilding(layer, toBi, levelKey);
-        for (const created of createdLayers) _selectedLayers.add(created);
-        touchedBuildings.add(toBi);
-        continue;
-      }
-      if (fromBi === toBi) {
-        moveShapefileToLevel(buildings[toBi], layer, levelKey);
-        touchedBuildings.add(toBi);
-        continue;
-      }
-      transferBetweenBuildings(layer, fromBi, toBi, levelKey);
-      touchedBuildings.add(toBi);
+  for (const { layer, fromBi } of entries) {
+    if (target.kind === "unassigned") {
+      if (fromBi === "unassigned") continue;
+      transferToUnassigned(layer, fromBi);
+      continue;
     }
-    for (const bi of touchedBuildings) applyShapefileLayerHeights(buildings[bi]);
-    // Selection survives drag-from-buildings cases (layer objects are the same).
-    // For from-unassigned cases we already re-targeted above.
-    invalidateAndRerender();
-  });
+    if (target.kind === "modelLevel") {
+      // Drop on a global model-level row: for the source building, find a
+      // level whose floor number matches the target and move the layer there.
+      if (fromBi === "unassigned") continue; // staged -> use right-click instead
+      const srcBuilding = buildings[fromBi];
+      if (!srcBuilding) continue;
+      const targetFn = target.floorNumber;
+      const lvl = srcBuilding.levels.find(l => levelNameToNumber(l.name) === targetFn);
+      if (!lvl) continue; // this building has no equivalent floor
+      moveShapefileToLevel(srcBuilding, layer, lvl.key ?? "");
+      touchedBuildings.add(fromBi);
+      continue;
+    }
+    const { bi: toBi, levelKey } = target;
+    if (fromBi === "unassigned") {
+      // Drag-from-staging is the natural import point. Split by feature
+      // `floor` column when present so multi-floor layers fan out to their
+      // matching levels instead of all piling onto one.
+      _selectedLayers.delete(layer);
+      const createdLayers = await dropStagedLayerOnBuilding(layer, toBi, levelKey);
+      for (const created of createdLayers) _selectedLayers.add(created);
+      touchedBuildings.add(toBi);
+      continue;
+    }
+    if (fromBi === toBi) {
+      moveShapefileToLevel(buildings[toBi], layer, levelKey);
+      touchedBuildings.add(toBi);
+      continue;
+    }
+    transferBetweenBuildings(layer, fromBi, toBi, levelKey);
+    touchedBuildings.add(toBi);
+  }
+  for (const bi of touchedBuildings) applyShapefileLayerHeights(buildings[bi]);
+  // Selection survives drag-from-buildings cases (layer objects are the same).
+  // For from-unassigned cases we already re-targeted above.
+  invalidateAndRerender();
 }
 
 // -- Shapefile Layers --
