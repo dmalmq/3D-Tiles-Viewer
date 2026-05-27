@@ -546,8 +546,10 @@ function initSectionCollapse() {
   document.querySelectorAll(".panel-section").forEach((section) => {
     const header = section.querySelector(".panel-section-header.collapsible");
     if (!header) return;
-    const labelEl = header.querySelector("span:not(.panel-section-chevron):not(.panel-section-count)");
-    const key = labelEl ? `section:${labelEl.textContent.trim()}:collapsed` : null;
+    // Key by the section's stable id attribute (e.g. "importedLayersSection")
+    // so renaming a translated header label does not reset the user's saved
+    // collapsed state. Sections without an id contribute no persistence.
+    const key = section.id ? `section:${section.id}:collapsed` : null;
     if (key && localStorage.getItem(key) === "1") {
       section.classList.add("collapsed");
     }
