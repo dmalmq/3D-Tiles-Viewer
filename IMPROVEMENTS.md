@@ -1,147 +1,406 @@
-# Improvement Plan
+# Improvement Recovery Plan
 
-A phased plan to address findings from the May 2026 code review. Phases are ordered so that earlier work creates the safety net and structural foundation that later work depends on. Each phase should be mergeable on its own.
+A phased plan to finish the May 2026 code-review improvements from the current
+partial implementation. Earlier phases create the safety net and structural
+foundation that later work depends on. Each phase should remain mergeable on its
+own.
 
 ---
 
-## Phase 0 — Safety net (prerequisite)
+## Current status
 
-**Goal:** make the later refactors verifiable. No behavior changes.
+Observed on the current branch after the first implementation pass:
 
-Without this, every change to `main.js` is a leap of faith. Land this first.
+- `npm run lint` passes with warnings.
+- `npm test` passes.
+- `npm run e2e` does **not** pass: the language-toggle smoke test clicks
+  `#languageToggle`, but the header remains in English.
+- The Playwright smoke suite exists, but it does not yet cover the full original
+  critical paths: sample tileset render signal and session round-trip with an
+  edited level name.
+- `src/main.js` is still above the Phase 1 target of 3,000 lines.
+- Phase 1 extraction work is started but not complete.
+- Phase 2 state unification is not complete: `importedLayers[]`,
+  `unassignedLayers[]`, and `building.shapefileLayers[]` still coexist.
+- Phase 3 error handling is partial: `notifyUser()` exists, but silent or
+  developer-only catches remain in `src/`.
+- `npm audit` reports transitive advisories through `cesium` / `@cesium/engine`
+  and `vite`.
 
-### 0.1 Add ESLint with a minimal config
-- Add `eslint` + `@eslint/js` as devDependencies; flat config in `eslint.config.js`.
-- Rules to start: `no-unused-vars`, `no-undef`, `no-implicit-globals`, `no-unused-expressions`, `eqeqeq`, `no-var`, `prefer-const`.
-- Add `npm run lint` script. Do **not** auto-fix the codebase in this PR — surface the warnings, then clean up in a follow-up.
-- Optional: pre-commit hook via `simple-git-hooks` or document running locally.
+Do not continue large `main.js` decomposition work until Phase 0A and Phase 0
+are green.
 
-### 0.2 Add Playwright smoke tests
-Playwright is already in `devDependencies`. Add 3 critical-path tests:
-1. **Load app + sample tileset** — open `/`, click sample tileset, confirm a tileset renders (canvas pixel check or wait for `tileset.tileLoad` event via exposed hook).
-2. **Toggle language** — switch EN→JA, confirm a known header label changes.
-3. **Save / load session round-trip** — load sample tileset, edit a level name, Save Session (download), reload, Load Session (upload), assert level name persisted.
+---
 
-Add `npm run e2e` script. Run in CI if/when CI is added.
+## Phase 0A — Stabilize current implementation
 
-### 0.3 Edge-case tests for new pure modules
-Quick wins. Add to existing test files:
-- `contextGhosting.test.js` — entity with no matching geometry types; double-call to `rememberEntityContextStyle`; falsy original-visibility.
-- `plateauAreaSelection.test.js` — invalid `selectionMode` string; empty `detected`; `fallbackSource` precedence.
-- `plateauCatalog.test.js` — empty catalog; malformed dataset entries; tie-breaking in `comparePlateauDatasetPreference`.
+**Goal:** make the current partially implemented safety net trustworthy before
+continuing refactors.
 
-**Exit criteria:** `npm run lint`, `npm test`, `npm run e2e` all pass on master.
+### 0A.1 Fix language-toggle initialization
+
+The current e2e failure suggests the app registers `#languageToggle` only after
+slow async Cesium terrain setup. Header controls should be interactive before
+any terrain or external-resource initialization can delay startup.
+
+Required change:
+
+- Initialize the language toggle and static DOM translations before awaited
+  Cesium terrain setup, or move terrain setup behind a non-blocking async task.
+- Preserve the current language behavior:
+  - saved `localStorage.language` wins;
+  - otherwise browser language decides;
+  - clicking toggles `en` ↔ `ja`;
+  - `#languageToggleLabel` updates after each toggle.
+
+### 0A.2 Make Playwright smoke tests match the intended critical paths
+
+The e2e suite should verify behavior, not only markup presence.
+
+Required tests:
+
+1. **Load app + sample tileset**
+   - Open `/`.
+   - Load `/tiles/tokyo/tileset.json` through the same UI path a user uses.
+   - Confirm the tileset registers in the scene tree.
+   - Confirm a render signal: canvas pixel check or a tile-load hook exposed only
+     for tests.
+2. **Toggle language**
+   - Force `localStorage.language = "en"`.
+   - Open `/`.
+   - Click `#languageToggle`.
+   - Assert `header.title` and `header.save` switch to Japanese.
+   - Assert `localStorage.language === "ja"`.
+   - Click again and assert English returns.
+3. **Save/load session round-trip**
+   - Load the sample tileset.
+   - Edit a level name through the UI.
+   - Save Session and capture the download.
+   - Reload the app.
+   - Load the saved session.
+   - Assert the edited level name persisted.
+
+### 0A.3 Keep stabilization behavior-scoped
+
+Only fix initialization timing and test coverage in this phase. Do not perform
+scene-tree extraction, layer-model unification, or broad error-handling rewrites
+here.
+
+**Exit criteria:** `npm run e2e` passes locally and the tests cover the three
+critical paths above.
+
+---
+
+## Phase 0 — Safety net
+
+**Goal:** make later refactors verifiable. No intended behavior changes beyond
+the Phase 0A startup fix.
+
+### 0.1 ESLint baseline
+
+Status: mostly done.
+
+Remaining work:
+
+- Keep `eslint` + `@eslint/js` + flat config.
+- Keep rules for `no-unused-vars`, `no-undef`, `no-implicit-globals`,
+  `no-unused-expressions`, `eqeqeq`, `no-var`, and `prefer-const`.
+- Keep `npm run lint`.
+- Do not run broad autofixes in the same PR as structural refactors.
+- Either leave current warnings as a documented baseline or clean them in a small
+  lint-only follow-up.
+
+### 0.2 Playwright smoke tests
+
+Status: started, not complete. Finish this through Phase 0A.
+
+### 0.3 Pure-module edge-case tests
+
+Status: mostly done.
+
+Keep coverage for:
+
+- `contextGhosting.test.js` — entities with no matching geometry types,
+  idempotent `rememberEntityContextStyle`, and originally hidden entities.
+- `plateauAreaSelection.test.js` — invalid `selectionMode`, empty `detected`,
+  and `fallbackSource` precedence.
+- `plateauCatalog.test.js` — empty/malformed catalog inputs and dataset
+  preference tie-breaking.
+- `session.test.js` — schema version validation and representative round-trips.
+- `sceneTreeView.test.js` — pure helper behavior until the full renderer
+  extraction lands.
+
+**Exit criteria:** `npm run lint`, `npm test`, and `npm run e2e` all pass on the
+branch.
 
 ---
 
 ## Phase 1 — Decompose `main.js`
 
-**Goal:** shrink `main.js` from ~5,300 lines to ~2,500 by extracting cohesive feature modules. Pure mechanical moves, no logic change.
+**Goal:** shrink `main.js` below 3,000 lines by extracting cohesive feature
+modules. Keep this phase as mechanical as possible after Phase 0 is green.
 
-Each sub-step is a separate PR.
+Each sub-step should be a separate PR.
 
-### 1.1 Introduce `invalidateAndRerender()`
-Single function in `main.js` that calls `renderLevelList()`, `renderPlateauFloatingCard()`, `applyLevelContextVisibility()`, and `syncRemoveAllBtnAndLod()`. Replace the 6+ ad-hoc trios. Debounce with `requestAnimationFrame` to coalesce bursts. Land this first — it makes the next extractions safer.
+### 1.1 Finish `invalidateAndRerender()`
 
-### 1.2 Extract scene tree view → `src/sceneTreeView.js`
-Move `renderLevelList()` and its helpers (~250 lines, currently `main.js:2562+`). Export `renderSceneTree({ buildings, importedLayers, modelLevels, selection, callbacks })`. Use event delegation on the tree container instead of per-element `addEventListener` inside `createElement` loops — fixes the listener-leak smell and shrinks the function.
+Status: introduced, not complete.
 
-### 1.3 Extract session save/load → `src/session.js`
-Move `main.js:4543–4750` to `src/session.js`. Export `saveSession(state)` and `loadSession(json)`. Define an explicit `SESSION_SCHEMA_VERSION` constant and a per-building round-trip serializer/deserializer so adding a new building field is a one-line change in one file. Cover with a unit test that round-trips a representative state.
+Required work:
 
-### 1.4 Extract PLATEAU overrides → `src/plateauOverrides.js`
-Move `main.js:893–1256` (override storage, `applyPlateauLayerStyle`, `pickThroughGhosts`, `renderPlateauFloatingCard` minus its DOM creation). Keep DOM creation in `main.js` for now and pass it pure data — the goal here is to extract the *logic*, not all the UI.
+- Replace remaining ad-hoc render call clusters with `invalidateAndRerender()`
+  where they update the same state surface.
+- Debounce with `requestAnimationFrame` so bursts coalesce.
+- Keep the function responsible for:
+  - `renderLevelList()`;
+  - `renderPlateauFloatingCard()`;
+  - `applyLevelContextVisibility()`;
+  - `syncRemoveAllBtnAndLod()`.
 
-### 1.5 Wrap transient module-scope flags
-Replace `_shpColorIdx`, `_shpPendingTarget`, `_gdbBusy`, `_reloadTargetIndex`, `savedGlobeBaseColor`, search state, etc. with a single `const transient = { ... }` object at the top of `main.js`. Makes lifecycle visible at a glance and prepares for future testing.
+### 1.2 Extract scene tree renderer
 
-**Exit criteria:** `main.js` under 3,000 lines. Smoke tests still green. No behavior diff (verify by running through the smoke tests manually as well).
+Status: helper extraction exists, full renderer extraction not done.
+
+Required target:
+
+```js
+renderSceneTree({
+  container,
+  buildings,
+  importedLayers,
+  unassignedLayers,
+  modelLevels,
+  selection,
+  callbacks,
+})
+```
+
+Implementation requirements:
+
+- Move `renderLevelList()` DOM construction out of `main.js`.
+- Keep `main.js` as the owner of application state and callback wiring.
+- Use event delegation on the scene-tree container instead of per-row
+  `addEventListener` calls created during every render.
+- Keep existing drag/drop, context menu, expand/collapse, selection, and layer
+  visibility behavior.
+- Extend `sceneTreeView.test.js` for any newly pure projection helpers; use
+  Playwright smoke tests for DOM-level behavior.
+
+### 1.3 Finish session boundary
+
+Status: serialization/parsing is extracted; restore orchestration still lives in
+`main.js`.
+
+Required work:
+
+- Keep `SESSION_SCHEMA_VERSION` and explicit supported-version validation.
+- Keep pure serialization/deserialization in `src/session.js`.
+- Move only logic that can be made DOM/Cesium-independent into `src/session.js`.
+- Leave live restore orchestration in `main.js` until dependencies are inverted
+  cleanly.
+- Keep backward compatibility for currently supported session versions.
+
+### 1.4 Finish PLATEAU override boundary
+
+Status: core override logic is extracted; UI wiring remains in `main.js`.
+
+Required work:
+
+- Keep override storage, feature-key extraction, style application, and
+  `pickThroughGhosts` in `src/plateauOverrides.js`.
+- Keep DOM creation in `main.js` until the scene-tree and notification
+  refactors are stable.
+- Remove any duplicated PLATEAU override logic from `main.js`.
+
+### 1.5 Finish transient state grouping
+
+Status: partially done.
+
+Required work:
+
+- Keep short-lived async/UI coordination flags in one `transient` object.
+- Move remaining search state into `transient` or document why it stays separate.
+- Do not move durable application state such as `buildings`, model levels, or
+  imported layers into `transient`.
+
+**Exit criteria:** `main.js` is below 3,000 lines, `npm run lint`, `npm test`,
+and `npm run e2e` pass, and the smoke flows show no behavior regression.
 
 ---
 
-## Phase 2 — Unify state & tighten boundaries
+## Phase 2 — Unify state and tighten boundaries
 
-**Goal:** remove parallel state pathways and stop callers reaching into module internals.
+**Goal:** remove parallel state pathways and stop callers reaching through module
+internals.
 
-### 2.1 Unify `importedLayers[]` and `building.shapefileLayers[]`
-Today they diverge in shape (`levelKey` only on the latter). Pick one canonical shape:
+### 2.1 Unify imported and shapefile layer state
 
-```js
-{ id, name, color, dataSource, features, source, levelKey?, parent: { kind: "building" | "unassigned", index? } }
-```
+Status: not done.
 
-Store all layers in a single `layers[]` and derive per-building / unassigned views with a filter. Collapses rendering, visibility toggles, color assignment, and reassign code to one path. Session save/load (now in `src/session.js` from Phase 1) needs a migration for old session JSON.
-
-### 2.2 Tighten `plateauCatalog` boundary
-Wrap the normalized catalog in a small object:
+Canonical layer shape:
 
 ```js
-class PlateauCatalog {
-  listAreas() { ... }
-  listChoicesFor(areas, options) { ... }
-  listCategoryChoicesFor(areas, options) { ... }
-  urlFor(dataset) { ... }
+{
+  id,
+  name,
+  color,
+  dataSource,
+  features,
+  source,
+  levelKey,
+  parent: { kind: "building", index } | { kind: "unassigned" } | { kind: "imported" }
 }
 ```
 
-`importDataModal.js` stops reaching into `.areaOptions` / raw `datasets`. Future API shape changes become a one-file diff. Add basic shape validation in `normalizePlateauCatalog` — log once, don't crash.
+Required work:
 
-### 2.3 Move `contextGhosting` cache to a `WeakMap`
-Replace `entity._contextOriginalStyle = ...` with a module-private `WeakMap<entity, originalStyle>`. Removes the hidden-key smell and the leak risk when entities are destroyed. Existing tests should cover this with minimal change.
+- Store mutable layer records in one `layers[]` collection.
+- Derive building-attached, unassigned, and imported views by filtering
+  `layers[]`.
+- Update visibility toggles, color assignment, reassign flows, scene-tree
+  rendering, and session serialization to use the canonical layer shape.
+- Add a migration path for old session JSON that still contains
+  `importedLayers`, `unassignedLayers`, and `building.shapefileLayers`.
 
-**Exit criteria:** one `layers[]` array, one `PlateauCatalog` query surface, no hidden keys on Cesium entities.
+### 2.2 Finish `plateauCatalog` boundary
+
+Status: query methods exist, raw fields remain for compatibility.
+
+Required work:
+
+- Keep a single query surface:
+  - `listAreas()`;
+  - `findAreaByCode(code)`;
+  - `listChoicesFor(areas, options)`;
+  - `listCategoryChoicesFor(areas, options)`;
+  - `urlFor(dataset)` or equivalent URL helper.
+- Stop production callers from reaching into `.areaOptions` or raw `.datasets`.
+- Update tests so direct raw-field assertions are limited to compatibility tests.
+- Keep malformed catalog inputs non-fatal: warn once and return an empty catalog.
+
+### 2.3 Keep `contextGhosting` cache private
+
+Status: done.
+
+Required guardrail:
+
+- Do not reintroduce hidden entity keys such as `_contextOriginalStyle`.
+- Keep the module-private `WeakMap` and existing idempotency tests.
+
+**Exit criteria:** one canonical layer collection, one PLATEAU catalog query
+surface for production code, and no hidden context-style keys on Cesium
+entities.
 
 ---
 
-## Phase 3 — Error handling & user-visible failures
+## Phase 3 — Error handling and user-visible failures
 
-**Goal:** users see meaningful messages when things break.
+**Goal:** users see meaningful messages when workflows fail.
 
-### 3.1 Add a `notifyUser` helper
-Small module `src/notifications.js` exporting `notifyUser(severity, key, params)` where `severity ∈ {info, warn, error}` and `key` is an i18n key. Renders a transient toast in the bottom-right (or wherever fits the existing UI). All copy goes through `i18nStrings.js`.
+### 3.1 Keep `notifyUser`
 
-### 3.2 Replace silent catches
-Walk the 15+ `try { ... } catch (e) { console.warn(...) }` sites in `main.js` and route each to `notifyUser` with an appropriate i18n key. The bare `} catch {}` at `main.js:1873` gets a key too — even "could not load level metadata" is better than nothing. Keep `console.warn` for developers; add user-visible toasts on top.
+Status: done.
 
-### 3.3 Add input validation at module boundaries
-- `plateauAreaSelection.resolveAutoPlateauAreaSelection` — guard against typo'd `selectionMode`, log a warning and fall back to manual.
-- `normalizePlateauCatalog` — validate `data.datasets` is iterable; return empty catalog with a warning if not.
-- `loadSession` — validate `SESSION_SCHEMA_VERSION`; surface a clear error if the JSON is from a future or incompatible version.
+Required guardrails:
 
-**Exit criteria:** no `} catch {}` in `src/`. Every user-facing failure path goes through `notifyUser`.
+- All user-facing copy goes through `i18nStrings.js`.
+- Toasts remain transient and non-blocking.
+- Keep severity values to `info`, `warn`, and `error`.
+
+### 3.2 Replace silent or developer-only catches
+
+Status: partial.
+
+Required work:
+
+- Audit `catch {}` and `catch (e) { console.warn(...) }` sites in `src/`.
+- For failures that affect user workflows, keep the developer `console.warn`
+  and add `notifyUser(...)`.
+- For intentionally ignored browser/platform cleanup failures, add a short
+  explanatory comment and keep them out of user notifications.
+- Add missing i18n keys for any new user-visible messages.
+
+### 3.3 Validate inputs at module boundaries
+
+Status: started.
+
+Required work:
+
+- Keep `plateauAreaSelection.resolveAutoPlateauAreaSelection` tolerant of
+  unknown modes and preserve current state on typos.
+- Keep `normalizePlateauCatalog` tolerant of malformed inputs.
+- Keep session version validation explicit and user-visible on load failure.
+
+**Exit criteria:** no unexplained bare `catch {}` remains in `src/`, and every
+workflow-impacting failure path uses `notifyUser`.
 
 ---
 
-## Phase 4 — Polish
+## Phase 4 — Dependency and polish work
 
-**Goal:** small fixes that don't fit anywhere else.
+**Goal:** finish small cleanup work that should not be mixed into structural
+refactors.
 
-### 4.1 Stable section-collapse IDs
-Section-collapse keys currently depend on translated title text (`section:<title>:collapsed`). Reword a label in `i18nStrings.js` and remembered state resets. Move to `data-section-id="building-list"` style attributes; key on the data attribute.
+### 4.1 Stable section-collapse keys
 
-### 4.2 Reset `savedGlobeBaseColor` on unload
-Or move into the `transient` object from 1.5 and clear it when the underground/level-context mode exits.
+Status: mostly done.
 
-### 4.3 Bump aging deps
-- `leaflet` is on `^1.9.4` (released 2023). Check for security advisories; if clean, leave for now.
-- Re-audit `cesium`, `vite`, `gdal3.js` quarterly.
+Required guardrail:
+
+- Keep collapse state keyed by stable section identity, not translated label
+  text.
+
+### 4.2 Reset `savedGlobeBaseColor`
+
+Status: mostly done.
+
+Required guardrail:
+
+- Keep globe base-color restoration tied to exiting underground/level-context
+  mode.
+- Do not leave captured globe color in durable state.
+
+### 4.3 Dependency audit
+
+Status: not clean.
+
+Current audit paths:
+
+- `cesium -> @cesium/engine -> dompurify`
+- `cesium -> @cesium/engine -> protobufjs -> @protobufjs/utf8`
+- `vite -> postcss`
+
+Required work:
+
+- Run `npm audit`.
+- Prefer safe direct dependency bumps that update transitive packages through
+  normal semver.
+- Do not force incompatible Cesium/Vite upgrades just to silence audit output.
+- Document any remaining advisory that cannot be safely resolved.
 
 ### 4.4 Consider Prettier
-After ESLint settles. Single `npm run format` to stop bike-shedding. Run once across the codebase as a single noisy commit.
 
-**Exit criteria:** none specific — this phase is opportunistic.
+Do this only after ESLint is stable. If adopted, land formatting as a single
+format-only commit.
+
+**Exit criteria:** `npm audit` is clean or documented, and polish changes are
+kept separate from behavioral refactors.
 
 ---
 
 ## Sequencing notes
 
-- **Don't skip Phase 0.** The biggest risk in this plan is silent regressions during the `main.js` decomposition. Smoke tests + lint are cheap insurance.
-- **Phases 1 and 2 are mostly independent** but 2.1 (unify layer arrays) is much easier *after* 1.3 (session extracted), because the migration is a one-file change.
-- **Phase 3 is independent of Phase 1/2** and could be done in parallel by a second hand if it ever happens.
-- **Phase 4 can be drizzled in** between other PRs.
+- Phase 0A is now the immediate blocker.
+- Do not treat existing helper files as proof that the matching phase is done;
+  use each phase's exit criteria.
+- Phase 1 should wait for a green smoke suite.
+- Phase 2.1 is easier after session serialization remains isolated.
+- Phase 3 can proceed independently once Phase 0A is green.
+- Phase 4 work should be small, isolated, and easy to review.
 
 ## Out of scope
 
-- Full TypeScript migration. Worth its own conversation, not bundled here.
-- Rewriting the Cesium picking / clipping math. It works; leave it alone unless a bug surfaces.
-- Mobile/responsive layout. Current design is desktop-first and the user hasn't asked.
+- Full TypeScript migration.
+- Rewriting Cesium picking or clipping math without a concrete bug.
+- Mobile/responsive redesign.
+- Broad formatting churn mixed with behavior changes.
