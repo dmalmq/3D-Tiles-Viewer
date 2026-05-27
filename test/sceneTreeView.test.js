@@ -6,6 +6,8 @@ import {
   findLayerParent,
   shapefilesForModelLevel,
   unassignedShapefilesAll,
+  computeSceneItemCount,
+  collectLayerTypes,
 } from "../src/sceneTreeView.js";
 
 // --- filterVisibleBuildings ----------------------------------------------
@@ -144,4 +146,54 @@ test("findLayerParent prefers the unassigned bucket over buildings if duplicated
   // we treat it as unassigned. Future code should keep the invariant that
   // a layer lives in exactly one place.
   assert.equal(findLayerParent(buildings, [layer], layer), "unassigned");
+});
+
+// --- computeSceneItemCount -----------------------------------------------
+
+test("computeSceneItemCount returns placeholder when no buildings or unassigned layers", () => {
+  const result = computeSceneItemCount([], [], "", 0);
+  assert.equal(result.text, "");
+  assert.equal(result.showPlaceholder, true);
+});
+
+test("computeSceneItemCount returns total count when no filter", () => {
+  const buildings = [{ name: "A" }, { name: "B" }];
+  const result = computeSceneItemCount(buildings, [], "", 2);
+  assert.deepEqual(result.text, { key: "scene.itemsCount", params: { count: 2 } });
+  assert.equal(result.showPlaceholder, false);
+});
+
+test("computeSceneItemCount returns filtered count when filter is active", () => {
+  const buildings = [{ name: "A" }, { name: "B" }, { name: "C" }];
+  const result = computeSceneItemCount(buildings, [], "a", 1);
+  assert.deepEqual(result.text, { key: "scene.itemsCountFiltered", params: { filtered: 1, total: 3 } });
+  assert.equal(result.showPlaceholder, false);
+});
+
+test("computeSceneItemCount treats unassigned layers as non-empty", () => {
+  const result = computeSceneItemCount([], [{ name: "staged" }], "", 0);
+  assert.deepEqual(result.text, { key: "scene.itemsCount", params: { count: 0 } });
+  assert.equal(result.showPlaceholder, false);
+});
+
+// --- collectLayerTypes ---------------------------------------------------
+
+test("collectLayerTypes gathers types from buildings and unassigned layers", () => {
+  const buildings = [
+    { shapefileLayers: [{ name: "foo_space" }, { name: "bar_unit" }] },
+  ];
+  const unassigned = [{ name: "baz_opening" }];
+  const types = collectLayerTypes(buildings, unassigned);
+  assert.deepEqual([...types].sort(), ["opening", "space", "unit"]);
+});
+
+test("collectLayerTypes returns empty set when no typed layers exist", () => {
+  const buildings = [{ shapefileLayers: [{ name: "walls" }] }];
+  const types = collectLayerTypes(buildings, []);
+  assert.equal(types.size, 0);
+});
+
+test("collectLayerTypes tolerates missing arrays", () => {
+  assert.equal(collectLayerTypes(null, null).size, 0);
+  assert.equal(collectLayerTypes([], undefined).size, 0);
 });

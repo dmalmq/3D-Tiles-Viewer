@@ -2,6 +2,8 @@ import {
   filterVisibleBuildings,
   shapefilesForModelLevel,
   unassignedShapefilesAll,
+  computeSceneItemCount,
+  collectLayerTypes,
 } from "./sceneTreeView.js";
 
 const CHEVRON_SVG =
@@ -18,6 +20,8 @@ const EYE_VISIBLE_SVG =
 const EYE_HIDDEN_SVG =
   '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/><path d="M3 13L13 3" stroke-linecap="round"/></svg>';
 
+const LAYER_TYPE_ORDER = ["space", "unit", "opening", "detail", "level"];
+
 export function renderSceneTree({
   container,
   buildings,
@@ -26,9 +30,14 @@ export function renderSceneTree({
   modelLevels,
   selection = {},
   callbacks = {},
+  itemCountEl,
+  placeholderEl,
+  layerTypeFiltersEl,
+  layerTypeFilters,
+  onToggleLayerType,
 }) {
   void importedLayers;
-  if (!container) return { visibleBuildings: [], shouldRenderLayerTypeFilters: false };
+  if (!container) return { visibleBuildings: [] };
 
   installSceneTreeDelegates(container);
   container.__sceneTreeCallbacks = callbacks;
@@ -37,8 +46,12 @@ export function renderSceneTree({
   const filterRaw = (selection.filterRaw ?? "").trim().toLowerCase();
   const visibleBuildings = filterVisibleBuildings(buildings, filterRaw);
 
+  updateItemCount(itemCountEl, callbacks, buildings, unassignedLayers, filterRaw, visibleBuildings.length);
+  updatePlaceholder(placeholderEl, buildings, unassignedLayers);
+
   if (buildings.length === 0 && unassignedLayers.length === 0) {
-    return { visibleBuildings, shouldRenderLayerTypeFilters: false };
+    updateLayerTypeFilters(layerTypeFiltersEl, null, layerTypeFilters, onToggleLayerType);
+    return { visibleBuildings };
   }
 
   container.appendChild(buildModelLevelsSection({
@@ -50,6 +63,7 @@ export function renderSceneTree({
     callbacks,
   }));
 
+  let showLayerTypeFilters = false;
   if (visibleBuildings.length > 0) {
     const buildingSection = buildBuildingsSection({
       visibleBuildings,
@@ -57,12 +71,45 @@ export function renderSceneTree({
       callbacks,
     });
     container.appendChild(buildingSection);
-    if (!selection.buildingsSectionExpanded) {
-      return { visibleBuildings, shouldRenderLayerTypeFilters: false };
-    }
+    showLayerTypeFilters = selection.buildingsSectionExpanded !== false;
   }
 
-  return { visibleBuildings, shouldRenderLayerTypeFilters: true };
+  const types = showLayerTypeFilters ? collectLayerTypes(buildings, unassignedLayers) : null;
+  updateLayerTypeFilters(layerTypeFiltersEl, types, layerTypeFilters, onToggleLayerType);
+
+  return { visibleBuildings };
+}
+
+function updateItemCount(el, callbacks, buildings, unassignedLayers, filterRaw, visibleCount) {
+  if (!el) return;
+  const info = computeSceneItemCount(buildings, unassignedLayers, filterRaw, visibleCount);
+  el.textContent = info.text ? translate(callbacks, info.text.key, info.text.params) : "";
+}
+
+function updatePlaceholder(el, buildings, unassignedLayers) {
+  if (!el) return;
+  const info = computeSceneItemCount(buildings, unassignedLayers, "", 0);
+  el.style.display = info.showPlaceholder ? "" : "none";
+}
+
+function updateLayerTypeFilters(el, types, layerTypeFilters, onToggleLayerType) {
+  if (!el) return;
+  if (!types || types.size === 0) {
+    el.innerHTML = "";
+    el.style.display = "none";
+    return;
+  }
+  el.innerHTML = "";
+  for (const type of LAYER_TYPE_ORDER) {
+    if (!types.has(type)) continue;
+    const btn = document.createElement("button");
+    btn.className = "layer-type-filter" + (layerTypeFilters?.[type] ? " active" : "");
+    btn.textContent = "_" + type;
+    btn.dataset.type = type;
+    btn.addEventListener("click", () => onToggleLayerType?.(type));
+    el.appendChild(btn);
+  }
+  el.style.display = "";
 }
 
 function installSceneTreeDelegates(container) {
