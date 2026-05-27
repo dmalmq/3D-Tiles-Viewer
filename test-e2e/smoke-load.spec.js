@@ -1,7 +1,13 @@
 import { test, expect } from "@playwright/test";
+import { loadSampleTileset, prepareCleanApp, waitForTilesetRenderSignal } from "./helpers.js";
 
-test("app loads with header and empty scene placeholder", async ({ page }) => {
-  await page.addInitScript(() => localStorage.clear());
+test("app loads and registers the sample tileset", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await prepareCleanApp(page);
   await page.goto("/");
 
   await expect(page.locator("#appHeader")).toBeVisible();
@@ -14,9 +20,10 @@ test("app loads with header and empty scene placeholder", async ({ page }) => {
   // Empty-state placeholder should be visible before any tileset is added.
   await expect(page.locator("#noScenePlaceholder")).toBeVisible();
 
-  // No JS errors during initial load.
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.waitForTimeout(500);
+  await loadSampleTileset(page);
+  await expect(page.locator("#noScenePlaceholder")).toBeHidden();
+  await expect(page.locator(".bldg-row .bldg-name").filter({ hasText: "tileset.json" })).toBeVisible();
+  await waitForTilesetRenderSignal(page);
+
   expect(errors).toEqual([]);
 });

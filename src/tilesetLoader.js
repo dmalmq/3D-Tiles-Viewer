@@ -6,6 +6,28 @@ import {
 import { t } from "./i18n.js";
 import { getFilesFromDirectoryHandle } from "./fileSystemAccess.js";
 
+function getE2eHook() {
+  const hook = globalThis.window?.__CESIUM_E2E__;
+  return hook && typeof hook === "object" ? hook : null;
+}
+
+function bindE2eTilesetSignals(tileset, source) {
+  const hook = getE2eHook();
+  if (!hook || !tileset) return;
+
+  hook.tilesetReadyCount = (hook.tilesetReadyCount ?? 0) + 1;
+  hook.lastTilesetSource = source ?? null;
+
+  const recordSignal = (name) => {
+    hook[name] = (hook[name] ?? 0) + 1;
+    hook.lastTilesetSignal = name;
+    hook.lastTilesetSignalAt = Date.now();
+  };
+
+  tileset.tileLoad?.addEventListener?.(() => recordSignal("tileLoadCount"));
+  tileset.allTilesLoaded?.addEventListener?.(() => recordSignal("allTilesLoadedCount"));
+}
+
 /**
  * Load a Cesium3DTileset from a URL.
  * e.g. http://localhost:5173/tiles/my-model/tileset.json
@@ -14,6 +36,7 @@ export async function loadTilesetFromUrl(viewer, url) {
   let tileset = null;
   try {
     tileset = await Cesium3DTileset.fromUrl(url);
+    bindE2eTilesetSignals(tileset, url);
     viewer.scene.primitives.add(tileset);
     await viewer.zoomTo(tileset);
     return tileset;
@@ -83,6 +106,7 @@ export async function loadTilesetFromFiles(viewer, fileList, statusEl) {
     tilesetBlobUrl = URL.createObjectURL(rewrittenBlob);
 
     tileset = await Cesium3DTileset.fromUrl(tilesetBlobUrl);
+    bindE2eTilesetSignals(tileset, tilesetJsonPath);
     viewer.scene.primitives.add(tileset);
     if (statusEl) statusEl.textContent = t("tileset.loaded", { path: tilesetJsonPath });
     await viewer.zoomTo(tileset);

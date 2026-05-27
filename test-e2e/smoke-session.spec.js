@@ -2,8 +2,14 @@ import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import {
+  addAndRenameLevel,
+  loadSampleTileset,
+  prepareCleanApp,
+  waitForTilesetRenderSignal,
+} from "./helpers.js";
 
-test("save / load session round-trip preserves a loaded tileset", async ({ page }) => {
+test("save / load session round-trip preserves a loaded tileset and edited level", async ({ page }) => {
   test.setTimeout(240_000);
 
   // Fail loudly if the app shows an alert during the round-trip.
@@ -12,26 +18,15 @@ test("save / load session round-trip preserves a loaded tileset", async ({ page 
     dialogs.push({ type: d.type(), message: d.message() });
     await d.accept().catch(() => {});
   });
-  await page.addInitScript(() => {
-    localStorage.clear();
-    localStorage.setItem("language", "en");
-  });
+  await prepareCleanApp(page);
   await page.goto("/");
   await expect(page.locator("#noScenePlaceholder")).toBeVisible();
 
-  // Open Add Data → Tileset URL…
-  await page.locator("#addDataBtn").click();
-  const menu = page.locator("#leftAddDataMenu");
-  await expect(menu).toBeVisible();
-  await menu.locator('[data-action="add-url"]').click();
-  await expect(page.locator("#urlLoadPopover")).toBeVisible();
-  await page.locator("#urlInput").fill("/tiles/tokyo/tileset.json");
-  await page.locator("#loadUrlBtn").click();
+  await loadSampleTileset(page);
+  await waitForTilesetRenderSignal(page);
 
-  // Wait for the tileset to register in the scene tree.
-  // inspectLinks has a 60s safety timeout for tilesets with no per-feature
-  // metadata (like this plain GLB sample), so allow up to 90s.
-  await expect(page.locator("#levelList > li").first()).toBeVisible({ timeout: 90_000 });
+  const editedLevelName = "1F E2E Edited";
+  await addAndRenameLevel(page, editedLevelName);
 
   // Save session — captures the JSON download.
   const downloadPromise = page.waitForEvent("download");
@@ -45,6 +40,7 @@ test("save / load session round-trip preserves a loaded tileset", async ({ page 
   expect(savedJson.version).toBeGreaterThanOrEqual(1);
   expect(Array.isArray(savedJson.buildings)).toBe(true);
   expect(savedJson.buildings.length).toBeGreaterThan(0);
+  expect(savedJson.buildings.flatMap((b) => b.levels.map((l) => l.name))).toContain(editedLevelName);
 
   // Reload — scene should start empty.
   await page.reload();
@@ -54,6 +50,9 @@ test("save / load session round-trip preserves a loaded tileset", async ({ page 
   await page.locator("#sessionInput").setInputFiles(sessionPath);
   await expect(page.locator("#loadingOverlay")).toBeHidden({ timeout: 90_000 });
   await expect(page.locator("#levelList > li").first()).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.locator(".bldg-level-row .level-name-text").filter({ hasText: editedLevelName }).first()
+  ).toBeVisible();
 
   expect(dialogs).toEqual([]);
 

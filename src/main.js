@@ -272,8 +272,38 @@ let searchResults = [];
 let searchSelectedIndex = -1;
 let searchOpen = false;
 
+function getE2eHook() {
+  const hook = window.__CESIUM_E2E__;
+  return hook && typeof hook === "object" ? hook : null;
+}
+
+function recordE2eEvent(name, payload = {}) {
+  const hook = getE2eHook();
+  if (!hook) return;
+  hook.events = Array.isArray(hook.events) ? hook.events : [];
+  hook.events.push({ name, payload, at: Date.now() });
+  hook[name] = (hook[name] ?? 0) + 1;
+}
+
+function getLinkInspectionOptions() {
+  const hook = getE2eHook();
+  if (!hook) return {};
+  const options = {};
+  const safetyTimeoutMs = Number(hook.linkInspectionSafetyTimeoutMs);
+  const tailTimeoutMs = Number(hook.linkInspectionTailTimeoutMs);
+  if (Number.isFinite(safetyTimeoutMs) && safetyTimeoutMs > 0) {
+    options.safetyTimeoutMs = safetyTimeoutMs;
+  }
+  if (Number.isFinite(tailTimeoutMs) && tailTimeoutMs > 0) {
+    options.tailTimeoutMs = tailTimeoutMs;
+  }
+  return options;
+}
+
 // -- Initialize --
-async function init() {
+function init() {
+  initLanguageToggle();
+
   const savedToken = localStorage.getItem("cesiumIonToken") || "";
   tokenInput.value = savedToken;
   if (savedToken) Ion.defaultAccessToken = savedToken;
@@ -288,23 +318,8 @@ async function init() {
     }),
   });
 
-  if (savedToken) {
-    try {
-      worldTerrainProvider = await createWorldTerrainAsync();
-    } catch (e) {
-      console.warn("Failed to load Cesium World Terrain:", e);
-    }
-  }
-
-  try {
-    const plateauResource = await IonResource.fromAssetId(3258112, {
-      accessToken: PLATEAU_TERRAIN_TOKEN,
-    });
-    plateauTerrainProvider = await CesiumTerrainProvider.fromUrl(plateauResource);
-  } catch (e) {
-    console.warn("Failed to load PLATEAU terrain:", e);
-  }
   switchTerrain();
+  initializeTerrainProviders(savedToken);
 
   saveSessionBtn.addEventListener("click", saveSession);
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
@@ -365,25 +380,45 @@ async function init() {
       importedLayers.push(layer);
       initializePlateauLayer(layer);
       renderImportedLayersList();
-      renderPlateauFloatingCard();
-      applyLevelContextVisibility();
+      invalidateAndRerender();
     }, {
       getPreferredImportPosition,
     })
   );
 
-  renderLevelList(); syncRemoveAllBtnAndLod();
+  invalidateAndRerender();
   renderImportedLayersList();
   initSectionCollapse();
   initPanelToggles();
   initThemeToggle();
-  initLanguageToggle();
+  bindLanguageRerendering();
   initSearch();
   initHighlight();
   initInfoBoxStyling();
   initLeftActionBar();
   initSceneFilter();
   initLeftPanelResizer();
+}
+
+async function initializeTerrainProviders(savedToken) {
+  if (savedToken) {
+    try {
+      worldTerrainProvider = await createWorldTerrainAsync();
+      switchTerrain();
+    } catch (e) {
+      console.warn("Failed to load Cesium World Terrain:", e);
+    }
+  }
+
+  try {
+    const plateauResource = await IonResource.fromAssetId(3258112, {
+      accessToken: PLATEAU_TERRAIN_TOKEN,
+    });
+    plateauTerrainProvider = await CesiumTerrainProvider.fromUrl(plateauResource);
+    switchTerrain();
+  } catch (e) {
+    console.warn("Failed to load PLATEAU terrain:", e);
+  }
 }
 
 function initLeftPanelResizer() {
@@ -590,14 +625,24 @@ function initThemeToggle() {
 }
 
 // -- Language toggle --
+let languageToggleInitialized = false;
+let languageRerenderingBound = false;
+
 function initLanguageToggle() {
   document.documentElement.setAttribute("data-language", getLanguage());
   applyTranslationsToDom(document.body);
   updateLanguageToggleLabel();
+  if (languageToggleInitialized) return;
+  languageToggleInitialized = true;
   document.getElementById("languageToggle").addEventListener("click", () => {
     setLanguage(getLanguage() === "ja" ? "en" : "ja");
     updateLanguageToggleLabel();
   });
+}
+
+function bindLanguageRerendering() {
+  if (languageRerenderingBound) return;
+  languageRerenderingBound = true;
   onLanguageChange(() => {
     invalidateAndRerender();
     renderImportedLayersList();
@@ -1392,7 +1437,11 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
   let sourceLevelGroups = new Map();
   let inspectedLevelsData = null;
   try {
-    inspection = await inspectLinks(tileset);
+    inspection = await inspectLinks(tileset, getLinkInspectionOptions());
+    recordE2eEvent("linkInspectionComplete", {
+      tilesInspected: inspection.tilesInspected,
+      featuresInspected: inspection.featuresInspected,
+    });
     sourceLevelGroups = sourceLevelGroupsFromInspection(inspection);
     inspectedLevelsData = levelsDataFromSourceLevelGroups(sourceLevelGroups);
     if (!explicitLevelsData && inspectedLevelsData) {
@@ -1456,6 +1505,10 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
 
   selectedBuildingIndex = buildings.indexOf(createdBuildings[0]);
   invalidateAndRerender();
+  recordE2eEvent("buildingRegistered", {
+    name,
+    buildingCount: buildings.length,
+  });
 
   // Compute per-link bounding spheres in the background; until they're ready,
   // zoomToBuilding falls back to tileset.boundingSphere.
@@ -1660,6 +1713,7 @@ function renderImportedLayersList() {
         layer.data.show = layer.visible;
       }
       applyImportedLayerLevelContext(layer);
+      invalidateAndRerender();
     });
 
     const nameSpan = document.createElement("span");
@@ -1696,7 +1750,7 @@ function removeImportedLayer(index, rerender = true) {
   importedLayers.splice(index, 1);
   if (rerender) {
     renderImportedLayersList();
-    renderPlateauFloatingCard();
+    invalidateAndRerender();
   }
 }
 
@@ -1707,7 +1761,7 @@ function clearImportedLayers(rerender = true) {
   selectedPlateauFeature = null;
   if (rerender) {
     renderImportedLayersList();
-    renderPlateauFloatingCard();
+    invalidateAndRerender();
   }
 }
 
@@ -1717,7 +1771,7 @@ function clearUnassignedLayers(rerender = true) {
   }
   _unassignedTreeExpanded = false;
   clearLayerSelection();
-  if (rerender) renderLevelList();
+  if (rerender) invalidateAndRerender();
 }
 
 // -- Levels --
@@ -1764,8 +1818,7 @@ function handleAddLevel(building, name, floor) {
   building.levels.push({ name, key: null, floor });
   building.levels.sort((a, b) => a.floor - b.floor);
   rebuildModelLevels();
-  applyLevelContextVisibility();
-  renderLevelList();
+  invalidateAndRerender();
 }
 
 // Rebuild the global modelLevels list from the union of all buildings' levels
@@ -1844,7 +1897,7 @@ function selectLevel(buildingIndex, levelIndex) {
     // Unmappable level (no floor-number synonym): apply per-building only.
     source.activeLevelIndex = levelIndex;
     applyActiveLevelForBuilding(source);
-    renderLevelList();
+    invalidateAndRerender();
     return;
   }
   const mli = modelLevels.findIndex(m => m.floorNumber === fn);
@@ -2193,7 +2246,7 @@ function renderLayerTypeFilters() {
       layerTypeFilters[type] = !layerTypeFilters[type];
       btn.classList.toggle("active", layerTypeFilters[type]);
       refreshAllLayerTypeVisibility();
-      renderLevelList();
+      invalidateAndRerender();
     });
     container.appendChild(btn);
   }
@@ -2435,11 +2488,22 @@ function buildDragEntriesFromSelection() {
   return out;
 }
 
+let invalidatedRenderFrame = null;
+
 // Re-render the four UI surfaces that need to refresh after any state change
 // touching buildings, levels, imported layers, or PLATEAU overrides. Prefer
 // this over calling the individual render functions to avoid drift between
-// call sites.
+// call sites. requestAnimationFrame coalesces bursts from drag/drop, sliders,
+// session restore, and language changes into one paint.
 function invalidateAndRerender() {
+  if (invalidatedRenderFrame != null) return;
+  invalidatedRenderFrame = requestAnimationFrame(() => {
+    invalidatedRenderFrame = null;
+    renderInvalidatedSurfaces();
+  });
+}
+
+function renderInvalidatedSurfaces() {
   renderLevelList();
   syncRemoveAllBtnAndLod();
   renderPlateauFloatingCard();
@@ -2919,7 +2983,7 @@ function buildShapefileChildrenFlat(entries) {
       e.stopPropagation();
       layer._hidden = !layer._hidden;
       applyLayerVisibility(building, layer);
-      renderLevelList();
+      invalidateAndRerender();
     });
 
     const swatch = document.createElement("span");
@@ -3152,7 +3216,7 @@ function attachDropTarget(el, target) {
     for (const bi of touchedBuildings) applyShapefileLayerHeights(buildings[bi]);
     // Selection survives drag-from-buildings cases (layer objects are the same).
     // For from-unassigned cases we already re-targeted above.
-    renderLevelList();
+    invalidateAndRerender();
   });
 }
 
@@ -3297,7 +3361,7 @@ async function applyGdbDecisions(decisions) {
     applyShapefileLayerHeights(building);
   }
   if (unassignedLayers.length > 0) _unassignedTreeExpanded = true;
-  renderLevelList();
+  invalidateAndRerender();
   reportGdbDuplicateSkips(duplicateSkipped);
 }
 
@@ -3383,7 +3447,7 @@ async function applyReassignDecisions(decisions) {
     applyLevelToShapefilesForBuilding(building);
     applyShapefileLayerHeights(building);
   }
-  renderLevelList();
+  invalidateAndRerender();
   reportGdbDuplicateSkips(duplicateSkipped);
 }
 
@@ -3493,13 +3557,13 @@ async function handleShpSelect(e) {
       for (const fc of fcs) await addFeatureCollectionLayer(b, fc);
       applyLevelToShapefilesForBuilding(b);
       if (selectedBuildingIndex !== buildingIndex) selectBuilding(buildingIndex);
-      else renderLevelList();
+      else invalidateAndRerender();
     } else {
       // No building target — land in the unassigned bucket so the user can
       // drag the layer(s) onto whichever building they want.
       for (const fc of fcs) await addUnassignedLayer(fc, { origin: "shp" });
       _unassignedTreeExpanded = true;
-      renderLevelList();
+      invalidateAndRerender();
     }
   } catch (err) {
     notifyUser("error", "alert.failedShp", { message: err.message });
@@ -3598,7 +3662,7 @@ function moveUnassignedLayerToBuilding(layer, buildingIndex, levelKey) {
   moved.dataSource.show = true;
   applyShapefileLayerHeight(building, moved);
   applyLevelToShapefilesForBuilding(building);
-  renderLevelList();
+  invalidateAndRerender();
   return moved;
 }
 
@@ -3607,7 +3671,7 @@ function removeUnassignedLayer(layer) {
   if (idx === -1) return;
   viewer.dataSources.remove(layer.dataSource, true);
   unassignedLayers.splice(idx, 1);
-  renderLevelList();
+  invalidateAndRerender();
 }
 
 // Map a feature's `image` property value to the URL Vite serves from
@@ -3743,7 +3807,7 @@ function removeShapefileLayer(building, layer) {
   if (idx === -1) return;
   viewer.dataSources.remove(layer.dataSource, true);
   building.shapefileLayers.splice(idx, 1);
-  renderLevelList();
+  invalidateAndRerender();
 }
 
 function moveShapefileToLevel(building, layer, newLevelKey) {
@@ -3753,7 +3817,7 @@ function moveShapefileToLevel(building, layer, newLevelKey) {
   layer.levelKey = newLevelKey;
   applyShapefileLayerHeight(building, layer);
   applyLevelToShapefilesForBuilding(building);
-  renderLevelList();
+  invalidateAndRerender();
   return true;
 }
 
@@ -3775,7 +3839,7 @@ function moveLayerToModelLevel(srcBuilding, fromBi, layer, floorNumber) {
     if (transferBetweenBuildings(layer, fromBi, bi, targetLvl.key ?? "")) {
       applyLevelToShapefilesForBuilding(target);
       applyLevelToShapefilesForBuilding(srcBuilding);
-      renderLevelList();
+      invalidateAndRerender();
     }
     return;
   }
@@ -3913,7 +3977,7 @@ function showMoveToFloorMenu(event, building, layer) {
       hideFloatingMenu();
       layer.heightOffset = 0;
       applyShapefileLayerHeight(building, layer);
-      renderLevelList();
+      invalidateAndRerender();
     });
   }
   ul.appendChild(resetLi);
@@ -4169,8 +4233,7 @@ function showBuildingContextMenu(event, building, bi) {
         building.levelBaseElevation = parseFloat(base) || 0;
         applyShapefileLayerHeights(building);
         if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
-        applyLevelContextVisibility();
-        renderLevelList();
+        invalidateAndRerender();
       },
     });
   });
@@ -4218,7 +4281,7 @@ function showModelLevelContextMenu(event, mli) {
         const trimmed = (name ?? "").trim();
         if (!trimmed) return;
         ml.name = trimmed;
-        renderLevelList();
+        invalidateAndRerender();
       },
     });
   });
@@ -4240,8 +4303,7 @@ function showModelLevelContextMenu(event, mli) {
             applyShapefileLayerHeights(b);
           }
         }
-        applyLevelContextVisibility();
-        renderLevelList();
+        invalidateAndRerender();
       },
     });
   });
@@ -4273,8 +4335,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         if (!trimmed) return;
         level.name = trimmed;
         rebuildModelLevels();
-        applyLevelContextVisibility();
-        renderLevelList();
+        invalidateAndRerender();
       },
     });
   });
@@ -4290,8 +4351,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         applyShapefileLayerHeights(building);
         if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
         rebuildModelLevels();
-        applyLevelContextVisibility();
-        renderLevelList();
+        invalidateAndRerender();
       },
     });
   });
@@ -4306,9 +4366,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
     }
     applyShapefileLayerHeights(building);
     rebuildModelLevels();
-    applyLevelContextVisibility();
-    renderLevelList();
-    syncRemoveAllBtnAndLod();
+    invalidateAndRerender();
   });
 
   floatingMenu.appendChild(ul);
@@ -4744,7 +4802,7 @@ function setBuildingHeightOffset(building, value) {
   for (const sibling of siblings) sibling.heightOffset = value;
   applyHeightOffset(building.tileset, value);
   for (const sibling of siblings) applyShapefileLayerHeights(sibling);
-  applyLevelContextVisibility();
+  invalidateAndRerender();
 }
 
 function applyHeightOffset(tileset, offsetMeters) {
