@@ -26,8 +26,8 @@ const catalog = normalizePlateauCatalog({
   ],
 });
 
-const shinjuku = catalog.areaOptions.find(area => area.code === "13104");
-const shibuya = catalog.areaOptions.find(area => area.code === "13113");
+const shinjuku = catalog.findAreaByCode("13104");
+const shibuya = catalog.findAreaByCode("13113");
 
 test("PLATEAU multi-area choices include one selected category per detected area", () => {
   const choices = getPlateauChoicesForAreas(catalog, [shinjuku, shibuya], {
@@ -76,8 +76,7 @@ test("normalizePlateauCatalog warns and returns empty for non-object input", () 
   console.warn = (...args) => warnings.push(args.join(" "));
   try {
     const result = normalizePlateauCatalog(42);
-    assert.deepEqual(result.datasets, []);
-    assert.deepEqual(result.areaOptions, []);
+    assert.deepEqual(result.listAreas(), []);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /expected object or array/);
   } finally {
@@ -87,29 +86,37 @@ test("normalizePlateauCatalog warns and returns empty for non-object input", () 
 
 test("normalizePlateauCatalog tolerates null and malformed input", () => {
   const empty = normalizePlateauCatalog(null);
-  assert.deepEqual(empty.datasets, []);
-  assert.deepEqual(empty.areaOptions, []);
+  assert.deepEqual(empty.listAreas(), []);
 
-  // Object lacking both latest_datasets and datasets.
   const bare = normalizePlateauCatalog({});
-  assert.deepEqual(bare.datasets, []);
+  assert.deepEqual(bare.listAreas(), []);
 
-  // Datasets that fail the 3D Tiles filter are dropped silently.
   const filtered = normalizePlateauCatalog({
     datasets: [
       { ...dataset("x", "city", "11111", "bldg", "1", true, 2025), format: "MVT" },
       { ...dataset("y", "city", "22222", "bldg", "1", true, 2025), url: null, composite_url: null },
     ],
   });
-  assert.equal(filtered.datasets.length, 0);
+  assert.deepEqual(filtered.listAreas(), []);
 });
 
 test("normalizePlateauCatalog accepts a bare array of datasets", () => {
   const cat = normalizePlateauCatalog([
     dataset("a", "city", "11111", "bldg", "1", true, 2025),
   ]);
+  const areas = cat.listAreas();
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0].code, "11111");
+});
+
+test("catalog raw fields remain accessible for backward compatibility", () => {
+  const cat = normalizePlateauCatalog([
+    dataset("a", "city", "11111", "bldg", "1", true, 2025),
+  ]);
+  assert.ok(Array.isArray(cat.datasets));
+  assert.ok(Array.isArray(cat.areaOptions));
   assert.equal(cat.datasets.length, 1);
-  assert.equal(cat.areaOptions[0].code, "11111");
+  assert.equal(cat.areaOptions.length, 1);
 });
 
 test("getPlateauChoicesForAreas with empty inputs returns no choices", () => {

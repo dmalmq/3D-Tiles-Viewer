@@ -71,6 +71,7 @@ function fsExists(fs, path) {
   try {
     return fs.analyzePath(path).exists;
   } catch {
+    // Emscripten FS can throw on invalid paths — treat as non-existent.
     return false;
   }
 }
@@ -110,6 +111,7 @@ function removeTree(fs, path) {
   try {
     stat = fs.stat(path);
   } catch {
+    // Path disappeared between exists check and stat — nothing to remove.
     return;
   }
 

@@ -3,6 +3,7 @@
 // callback wiring.
 
 import { levelNameToNumber } from "./floorSplit.js";
+import { getLayerType } from "./layerColorConfig.js";
 
 // Buildings whose name matches the filter (case-insensitive substring).
 // Returns [{ b, i }] preserving original building indices.
@@ -69,4 +70,42 @@ export function findLayerParent(buildings, unassignedLayers, layer) {
     if (buildings[bi].shapefileLayers?.indexOf(layer) !== -1) return bi;
   }
   return null;
+}
+
+// Compute the item count display text for the scene tree header.
+// Returns { text, showPlaceholder } where text is the string to display
+// (empty when nothing is loaded) and showPlaceholder indicates whether
+// the empty-state placeholder should be visible.
+export function computeSceneItemCount(buildings, unassignedLayers, filterRaw, visibleCount) {
+  const total = buildings?.length ?? 0;
+  const hasUnassigned = (unassignedLayers?.length ?? 0) > 0;
+  const isEmpty = total === 0 && !hasUnassigned;
+  if (isEmpty) return { text: "", showPlaceholder: true };
+  if (filterRaw) {
+    return {
+      text: { key: "scene.itemsCountFiltered", params: { filtered: visibleCount, total } },
+      showPlaceholder: false,
+    };
+  }
+  return {
+    text: { key: "scene.itemsCount", params: { count: total } },
+    showPlaceholder: false,
+  };
+}
+
+// Collect the set of layer types currently present across all buildings
+// and unassigned layers. Used to decide which type-filter buttons to show.
+export function collectLayerTypes(buildings, unassignedLayers) {
+  const types = new Set();
+  for (const b of buildings ?? []) {
+    for (const l of b.shapefileLayers ?? []) {
+      const t = getLayerType(l.name);
+      if (t) types.add(t);
+    }
+  }
+  for (const l of unassignedLayers ?? []) {
+    const t = getLayerType(l.name);
+    if (t) types.add(t);
+  }
+  return types;
 }

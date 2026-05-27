@@ -159,69 +159,52 @@ Required work:
 
 ### 1.2 Extract scene tree renderer
 
-Status: helper extraction exists, full renderer extraction not done.
+Status: done.
 
-Required target:
-
-```js
-renderSceneTree({
-  container,
-  buildings,
-  importedLayers,
-  unassignedLayers,
-  modelLevels,
-  selection,
-  callbacks,
-})
-```
-
-Implementation requirements:
-
-- Move `renderLevelList()` DOM construction out of `main.js`.
-- Keep `main.js` as the owner of application state and callback wiring.
-- Use event delegation on the scene-tree container instead of per-row
-  `addEventListener` calls created during every render.
-- Keep existing drag/drop, context menu, expand/collapse, selection, and layer
-  visibility behavior.
-- Extend `sceneTreeView.test.js` for any newly pure projection helpers; use
-  Playwright smoke tests for DOM-level behavior.
+- `renderSceneTree()` accepts container, state, selection, callbacks, and optional
+  DOM elements for item count, placeholder, and layer type filters.
+- DOM construction moved out of `main.js` into `sceneTreeRenderer.js`.
+- `main.js` remains the owner of application state and callback wiring.
+- Event delegation on the scene-tree container replaces per-row `addEventListener` calls.
+- Existing drag/drop, context menu, expand/collapse, selection, and layer visibility
+  behavior preserved.
+- `sceneTreeView.test.js` extended with pure helper tests; Playwright smoke tests
+  cover DOM-level behavior.
 
 ### 1.3 Finish session boundary
 
-Status: serialization/parsing is extracted; restore orchestration still lives in
-`main.js`.
+Status: done.
 
-Required work:
-
-- Keep `SESSION_SCHEMA_VERSION` and explicit supported-version validation.
-- Keep pure serialization/deserialization in `src/session.js`.
-- Move only logic that can be made DOM/Cesium-independent into `src/session.js`.
-- Leave live restore orchestration in `main.js` until dependencies are inverted
-  cleanly.
-- Keep backward compatibility for currently supported session versions.
+- `SESSION_SCHEMA_VERSION` and explicit supported-version validation in place.
+- Pure serialization/deserialization in `src/session.js`.
+- Session restore helpers extracted: `createSessionRestorePlan`, `applySavedModelLevelOverrides`,
+  `normalizeRestoredShapefileLayerData`, `normalizeRestoredUnassignedLayerData`.
+- Live restore orchestration remains in `main.js` (depends on Cesium/DOM).
+- Backward compatibility maintained for currently supported session versions.
 
 ### 1.4 Finish PLATEAU override boundary
 
-Status: core override logic is extracted; UI wiring remains in `main.js`.
+Status: done.
 
-Required work:
-
-- Keep override storage, feature-key extraction, style application, and
-  `pickThroughGhosts` in `src/plateauOverrides.js`.
-- Keep DOM creation in `main.js` until the scene-tree and notification
-  refactors are stable.
-- Remove any duplicated PLATEAU override logic from `main.js`.
+- Override storage, feature-key extraction, style application, and `pickThroughGhosts`
+  in `src/plateauOverrides.js`.
+- Mutation helpers extracted: `setPlateauFeatureOverride`, `removePlateauFeatureOverride`,
+  `clearPlateauFeatureOverrides`, `countPlateauOverrides`, `listPlateauOverrideEntries`.
+- DOM creation remains in `main.js` (depends on scene-tree and notification refactors).
+- No duplicated PLATEAU override logic in `main.js`.
 
 ### 1.5 Finish transient state grouping
 
-Status: partially done.
+Status: done.
 
-Required work:
-
-- Keep short-lived async/UI coordination flags in one `transient` object.
-- Move remaining search state into `transient` or document why it stays separate.
-- Do not move durable application state such as `buildings`, model levels, or
-  imported layers into `transient`.
+- Short-lived async/UI coordination flags grouped in one `transient` object.
+- Search state (`searchQuery`, `searchResults`, `searchSelectedIndex`, `searchOpen`)
+  moved into `transient`.
+- UI expansion state (`unassignedTreeExpanded`, `buildingsSectionExpanded`) moved into `transient`.
+- Async coordination flags (`lodRefreshTimer`, `invalidatedRenderFrame`,
+  `languageToggleInitialized`, `languageRerenderingBound`) moved into `transient`.
+- Drag/popover state (`dragLayerCtx`, `lastClickedLayer`, `openPopoverCleanup`) moved into `transient`.
+- Durable application state (`buildings`, `modelLevels`, `importedLayers`) remains separate.
 
 **Exit criteria:** `main.js` is below 3,000 lines, `npm run lint`, `npm test`,
 and `npm run e2e` pass, and the smoke flows show no behavior regression.
@@ -264,19 +247,13 @@ Required work:
 
 ### 2.2 Finish `plateauCatalog` boundary
 
-Status: query methods exist, raw fields remain for compatibility.
+Status: done.
 
-Required work:
-
-- Keep a single query surface:
-  - `listAreas()`;
-  - `findAreaByCode(code)`;
-  - `listChoicesFor(areas, options)`;
-  - `listCategoryChoicesFor(areas, options)`;
-  - `urlFor(dataset)` or equivalent URL helper.
-- Stop production callers from reaching into `.areaOptions` or raw `.datasets`.
-- Update tests so direct raw-field assertions are limited to compatibility tests.
-- Keep malformed catalog inputs non-fatal: warn once and return an empty catalog.
+- Single query surface: `listAreas()`, `findAreaByCode(code)`, `listChoicesFor(areas, options)`,
+  `listCategoryChoicesFor(areas, options)`, `urlFor(dataset)`.
+- Production callers use the query methods; no direct `.areaOptions` or `.datasets` access.
+- Tests use query methods; raw-field assertions limited to one compatibility test.
+- Malformed catalog inputs remain non-fatal: warn once and return an empty catalog.
 
 ### 2.3 Keep `contextGhosting` cache private
 
@@ -309,27 +286,20 @@ Required guardrails:
 
 ### 3.2 Replace silent or developer-only catches
 
-Status: partial.
+Status: done.
 
-Required work:
-
-- Audit `catch {}` and `catch (e) { console.warn(...) }` sites in `src/`.
-- For failures that affect user workflows, keep the developer `console.warn`
-  and add `notifyUser(...)`.
-- For intentionally ignored browser/platform cleanup failures, add a short
-  explanatory comment and keep them out of user notifications.
-- Add missing i18n keys for any new user-visible messages.
+All bare `catch {}` blocks in `src/` now have explanatory comments documenting
+why the failure is intentionally ignored. Workflow-impacting failures use
+`notifyUser()` with appropriate i18n keys.
 
 ### 3.3 Validate inputs at module boundaries
 
-Status: started.
+Status: done.
 
-Required work:
-
-- Keep `plateauAreaSelection.resolveAutoPlateauAreaSelection` tolerant of
-  unknown modes and preserve current state on typos.
-- Keep `normalizePlateauCatalog` tolerant of malformed inputs.
-- Keep session version validation explicit and user-visible on load failure.
+- `plateauAreaSelection.resolveAutoPlateauAreaSelection` tolerates unknown modes
+  and preserves current state on typos.
+- `normalizePlateauCatalog` tolerates malformed inputs and warns on non-object input.
+- Session version validation is explicit and user-visible on load failure.
 
 **Exit criteria:** no unexplained bare `catch {}` remains in `src/`, and every
 workflow-impacting failure path uses `notifyUser`.

@@ -79,6 +79,11 @@ import {
   serializeSession,
   parseSessionJson,
   downloadSessionJson,
+  applySavedModelLevelOverrides,
+  createSessionRestorePlan,
+  isValidActiveModelLevelIndex,
+  normalizeRestoredShapefileLayerData,
+  normalizeRestoredUnassignedLayerData,
 } from "./session.js";
 import { notifyUser } from "./notifications.js";
 import {
@@ -95,15 +100,21 @@ import {
 import {
   CONTEXT_GHOST_COLOR,
   applyPlateauLayerStyle as applyPlateauLayerStyleImpl,
-  getPlateauFeatureKey,
-  getPlateauFeatureLabel,
-  initializePlateauLayer,
+  clearPlateauFeatureOverrides,
+  countPlateauOverrides,
+  createPlateauFeatureSelection,
+  findPlateauLayerForFeature,
+  getPlateauOverrideMode,
   isPlateauLayer,
+  listPlateauLayers,
+  listPlateauOverrideEntries,
   pickThroughGhosts as pickThroughGhostsImpl,
+  removePlateauFeatureOverride,
+  restoreSerializedPlateauOverrides,
   serializePlateauOverrides,
+  setPlateauFeatureOverride,
 } from "./plateauOverrides.js";
 import {
-  filterVisibleBuildings,
   findLayerParent as findLayerParentImpl,
 } from "./sceneTreeView.js";
 import { renderSceneTree } from "./sceneTreeRenderer.js";
@@ -128,8 +139,6 @@ const importedLayers = [];
 // has the same shape as building.shapefileLayers[*] but with no parent
 // building and no levelKey: { name, dataSource, color, features, source }.
 const unassignedLayers = [];
-let _unassignedTreeExpanded = false;
-let _buildingsSectionExpanded = true;
 // Global model-level list, derived from the union of every building's levels by
 // floor number (via levelNameToNumber). User edits to elevation/name are
 // preserved across rebuilds. Drives the single global level selector that fans
@@ -200,6 +209,23 @@ const transient = {
   gdbBusy: false,            // serialize concurrent gdal3.js loads
   reloadTargetIndex: -1,
   savedGlobeBaseColor: null, // captured when entering underground mode
+  // Search UI state
+  searchQuery: "",
+  searchResults: [],
+  searchSelectedIndex: -1,
+  searchOpen: false,
+  // UI expansion state
+  unassignedTreeExpanded: false,
+  buildingsSectionExpanded: true,
+  // Async coordination
+  lodRefreshTimer: null,
+  invalidatedRenderFrame: null,
+  languageToggleInitialized: false,
+  languageRerenderingBound: false,
+  // Drag/click/popover coordination
+  dragLayerCtx: null,
+  lastClickedLayer: null,
+  openPopoverCleanup: null,
 };
 
 const cityGmlLayers = [];
@@ -264,12 +290,6 @@ const DEFAULT_PLATEAU_TERRAIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJq
 const PLATEAU_TERRAIN_TOKEN = import.meta.env.VITE_PLATEAU_TERRAIN_TOKEN || DEFAULT_PLATEAU_TERRAIN_TOKEN;
 let plateauTerrainProvider = null;
 const lodFilter = new LodFilter();
-let _lodRefreshTimer = null;
-
-let searchQuery = "";
-let searchResults = [];
-let searchSelectedIndex = -1;
-let searchOpen = false;
 
 function getE2eHook() {
   const hook = window.__CESIUM_E2E__;
@@ -377,7 +397,6 @@ function init() {
   importDataBtn.addEventListener("click", () =>
     openImportDataModal(viewer, loadTilesetFromUrl, (layer) => {
       importedLayers.push(layer);
-      initializePlateauLayer(layer);
       renderImportedLayersList();
       invalidateAndRerender();
     }, {
@@ -624,15 +643,12 @@ function initThemeToggle() {
 }
 
 // -- Language toggle --
-let languageToggleInitialized = false;
-let languageRerenderingBound = false;
-
 function initLanguageToggle() {
   document.documentElement.setAttribute("data-language", getLanguage());
   applyTranslationsToDom(document.body);
   updateLanguageToggleLabel();
-  if (languageToggleInitialized) return;
-  languageToggleInitialized = true;
+  if (transient.languageToggleInitialized) return;
+  transient.languageToggleInitialized = true;
   document.getElementById("languageToggle").addEventListener("click", () => {
     setLanguage(getLanguage() === "ja" ? "en" : "ja");
     updateLanguageToggleLabel();
@@ -640,8 +656,8 @@ function initLanguageToggle() {
 }
 
 function bindLanguageRerendering() {
-  if (languageRerenderingBound) return;
-  languageRerenderingBound = true;
+  if (transient.languageRerenderingBound) return;
+  transient.languageRerenderingBound = true;
   onLanguageChange(() => {
     invalidateAndRerender();
     renderImportedLayersList();
@@ -693,7 +709,7 @@ function initHighlight() {
 
     const picked = pickThroughGhosts(click.position);
 
-    const plateauLayer = findPlateauLayerForFeature(picked);
+    const plateauLayer = findPlateauLayerForFeature(importedLayers, picked);
     if (plateauLayer) {
       selectPlateauFeature(plateauLayer, picked);
     } else {
@@ -902,6 +918,8 @@ function createGsiTerrainProvider(type) {
       try {
         return decodeGsiHeightmap(await loadImage(url));
       } catch {
+        // GSI tile fetch or decode failed — return flat heightmap so terrain
+        // rendering continues without this tile's elevation data.
         return new Float32Array(256 * 256);
       }
     },
@@ -945,7 +963,7 @@ function loadImage(url) {
 // the DOM-bound floating card.
 
 function getPlateauLayers() {
-  return importedLayers.filter(isPlateauLayer);
+  return listPlateauLayers(importedLayers);
 }
 
 function hasPlateauLayers() {
@@ -956,19 +974,10 @@ function isContextGhosted() {
   return activeModelLevelIndex >= 0;
 }
 
-function findPlateauLayerForFeature(feature) {
-  if (!feature || typeof feature.getProperty !== "function") return null;
-  return getPlateauLayers().find((layer) => layer.data === feature.tileset
-    || layer.data === feature.content?.tileset
-    || layer.data === feature.primitive?.content?.tileset
-    || layer.data === feature.primitive?._content?.tileset
-    || (feature.primitive?.root && layer.data === feature.primitive)) || null;
-}
-
 function pickThroughGhosts(position) {
   return pickThroughGhostsImpl(position, {
     drillPick: (p) => viewer.scene.drillPick(p),
-    layerForFeature: findPlateauLayerForFeature,
+    layerForFeature: (feature) => findPlateauLayerForFeature(importedLayers, feature),
   });
 }
 
@@ -981,18 +990,12 @@ function applyPlateauLayerStyle(layer) {
 
 function refreshAllPlateauOverrideStyles() {
   for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
     applyPlateauLayerStyle(layer);
   }
 }
 
 function getPlateauOverrideCount() {
-  let count = 0;
-  for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
-    count += layer.plateauOverrides.size;
-  }
-  return count;
+  return countPlateauOverrides(importedLayers);
 }
 
 function shouldShowPlateauToolsPanel() {
@@ -1000,15 +1003,9 @@ function shouldShowPlateauToolsPanel() {
 }
 
 function selectPlateauFeature(layer, feature) {
-  initializePlateauLayer(layer);
-  const featureKey = getPlateauFeatureKey(feature);
-  if (!featureKey) return;
-  selectedPlateauFeature = {
-    layerId: layer.id,
-    layer,
-    featureKey,
-    label: getPlateauFeatureLabel(feature, featureKey),
-  };
+  const selection = createPlateauFeatureSelection(layer, feature);
+  if (!selection) return;
+  selectedPlateauFeature = selection;
   renderPlateauFloatingCard();
 }
 
@@ -1017,27 +1014,15 @@ function setSelectedPlateauOverride(mode) {
   if (!selected) return;
   const layer = importedLayers.find((l) => l.id === selected.layerId) || selected.layer;
   if (!isPlateauLayer(layer)) return;
-  initializePlateauLayer(layer);
-
-  if (mode === null) {
-    layer.plateauOverrides.delete(selected.featureKey);
-  } else {
-    layer.plateauOverrides.set(selected.featureKey, {
-      mode,
-      label: selected.label || selected.featureKey,
-    });
-  }
+  if (!setPlateauFeatureOverride(layer, selected.featureKey, mode, selected.label)) return;
 
   applyPlateauLayerStyle(layer);
   renderPlateauFloatingCard();
 }
 
 function clearPlateauOverrides() {
-  for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
-    layer.plateauOverrides.clear();
-    applyPlateauLayerStyle(layer);
-  }
+  clearPlateauFeatureOverrides(importedLayers);
+  refreshAllPlateauOverrideStyles();
   selectedPlateauFeature = null;
   renderPlateauFloatingCard();
 }
@@ -1045,8 +1030,7 @@ function clearPlateauOverrides() {
 function restorePlateauOverride(layerId, featureKey) {
   const layer = importedLayers.find((l) => l.id === layerId);
   if (!isPlateauLayer(layer)) return;
-  initializePlateauLayer(layer);
-  layer.plateauOverrides.delete(featureKey);
+  removePlateauFeatureOverride(layer, featureKey);
   applyPlateauLayerStyle(layer);
   if (selectedPlateauFeature?.layerId === layerId && selectedPlateauFeature.featureKey === featureKey) {
     selectedPlateauFeature = null;
@@ -1101,7 +1085,7 @@ function renderPlateauFloatingCard() {
   const selected = selectedPlateauFeature;
   if (selected) {
     const layer = importedLayers.find((l) => l.id === selected.layerId) || selected.layer;
-    const mode = layer?.plateauOverrides?.get(selected.featureKey)?.mode ?? null;
+    const mode = getPlateauOverrideMode(layer, selected.featureKey);
 
     const nameDiv = document.createElement("div");
     nameDiv.className = "plateau-feature-name";
@@ -1148,32 +1132,29 @@ function renderPlateauFloatingCard() {
   const overridesList = document.createElement("ul");
   overridesList.id = "plateauOverrideList";
   let count = 0;
-  for (const layer of getPlateauLayers()) {
-    initializePlateauLayer(layer);
-    for (const [featureKey, entry] of layer.plateauOverrides) {
-      count++;
-      const li = document.createElement("li");
-      li.className = "plateau-override-item";
+  for (const { layer, featureKey, entry } of listPlateauOverrideEntries(importedLayers)) {
+    count++;
+    const li = document.createElement("li");
+    li.className = "plateau-override-item";
 
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "plateau-override-name";
-      nameSpan.textContent = entry.label || featureKey;
-      nameSpan.title = `${layer.label}: ${featureKey}`;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "plateau-override-name";
+    nameSpan.textContent = entry.label || featureKey;
+    nameSpan.title = `${layer.label}: ${featureKey}`;
 
-      const modeSpan = document.createElement("span");
-      modeSpan.className = "plateau-override-mode";
-      modeSpan.textContent = t(entry.mode === "hidden" ? "plateau.mode.hidden" : "plateau.mode.ghost");
+    const modeSpan = document.createElement("span");
+    modeSpan.className = "plateau-override-mode";
+    modeSpan.textContent = t(entry.mode === "hidden" ? "plateau.mode.hidden" : "plateau.mode.ghost");
 
-      const restoreBtn = document.createElement("button");
-      restoreBtn.className = "plateau-override-restore-btn";
-      restoreBtn.textContent = t("plateau.visible");
-      restoreBtn.addEventListener("click", () => restorePlateauOverride(layer.id, featureKey));
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "plateau-override-restore-btn";
+    restoreBtn.textContent = t("plateau.visible");
+    restoreBtn.addEventListener("click", () => restorePlateauOverride(layer.id, featureKey));
 
-      li.appendChild(nameSpan);
-      li.appendChild(modeSpan);
-      li.appendChild(restoreBtn);
-      overridesList.appendChild(li);
-    }
+    li.appendChild(nameSpan);
+    li.appendChild(modeSpan);
+    li.appendChild(restoreBtn);
+    overridesList.appendChild(li);
   }
   plateauFloatingCard.appendChild(overridesList);
 
@@ -1188,9 +1169,9 @@ function renderPlateauFloatingCard() {
 
 // -- LOD filter --
 function handleLodFilterToggle() {
-  if (!lodFilterToggle.checked && _lodRefreshTimer) {
-    clearTimeout(_lodRefreshTimer);
-    _lodRefreshTimer = null;
+  if (!lodFilterToggle.checked && transient.lodRefreshTimer) {
+    clearTimeout(transient.lodRefreshTimer);
+    transient.lodRefreshTimer = null;
   }
   lodFilter.toggle(lodFilterToggle.checked);
   updateLodFilterStatus();
@@ -1206,9 +1187,9 @@ function refreshLodFilterIfEnabled() {
 }
 
 function scheduleLodFilterRefresh() {
-  if (!lodFilterToggle.checked || _lodRefreshTimer) return;
-  _lodRefreshTimer = setTimeout(() => {
-    _lodRefreshTimer = null;
+  if (!lodFilterToggle.checked || transient.lodRefreshTimer) return;
+  transient.lodRefreshTimer = setTimeout(() => {
+    transient.lodRefreshTimer = null;
     refreshLodFilterIfEnabled();
   }, 250);
 }
@@ -1768,7 +1749,7 @@ function clearUnassignedLayers(rerender = true) {
   for (const layer of unassignedLayers.splice(0)) {
     if (layer.dataSource) viewer.dataSources.remove(layer.dataSource, true);
   }
-  _unassignedTreeExpanded = false;
+  transient.unassignedTreeExpanded = false;
   clearLayerSelection();
   if (rerender) invalidateAndRerender();
 }
@@ -1807,6 +1788,7 @@ async function detectLevelsFromUrl(tilesetUrl) {
     if (!res.ok) return null;
     return await res.json();
   } catch {
+    // levels.json is optional — tilesets without it use auto-detected levels.
     return null;
   }
 }
@@ -2218,39 +2200,10 @@ function refreshAllLayerTypeVisibility() {
   }
 }
 
-function renderLayerTypeFilters() {
-  const container = document.getElementById("layerTypeFilters");
-  if (!container) return;
-
-  const existing = new Set();
-  for (const b of buildings) {
-    for (const l of b.shapefileLayers) {
-      const t = getLayerType(l.name);
-      if (t) existing.add(t);
-    }
-  }
-  for (const l of unassignedLayers) {
-    const t = getLayerType(l.name);
-    if (t) existing.add(t);
-  }
-
-  container.innerHTML = "";
-  for (const type of ["space", "unit", "opening", "detail", "level"]) {
-    if (!existing.has(type)) continue;
-    const btn = document.createElement("button");
-    btn.className = "layer-type-filter" + (layerTypeFilters[type] ? " active" : "");
-    btn.textContent = "_" + type;
-    btn.dataset.type = type;
-    btn.addEventListener("click", () => {
-      layerTypeFilters[type] = !layerTypeFilters[type];
-      btn.classList.toggle("active", layerTypeFilters[type]);
-      refreshAllLayerTypeVisibility();
-      invalidateAndRerender();
-    });
-    container.appendChild(btn);
-  }
-
-  container.style.display = existing.size > 0 ? "" : "none";
+function handleLayerTypeToggle(type) {
+  layerTypeFilters[type] = !layerTypeFilters[type];
+  refreshAllLayerTypeVisibility();
+  invalidateAndRerender();
 }
 
 function findShapefileLevel(building, layer) {
@@ -2425,19 +2378,17 @@ function resolveShapefileLevels(building, layer) {
 }
 
 // Module-level drag state. dataTransfer can't read its payload during
-// dragover (only on drop), so the source row is stashed here instead.
-let _dragLayerCtx = null; // { entries: [{ layer, fromBi: number | "unassigned" }, …] }
+// dragover (only on drop), so the source row is stashed in transient.dragLayerCtx instead.
 
 // Multi-select state. _selectedLayers holds layer object references (which
-// survive renderLevelList() rebuilds). _lastClickedLayer is the anchor for
+// survive renderLevelList() rebuilds). transient.lastClickedLayer is the anchor for
 // Shift+click range selection.
 const _selectedLayers = new Set();
-let _lastClickedLayer = null;
 
 function clearLayerSelection() {
-  if (_selectedLayers.size === 0 && _lastClickedLayer == null) return false;
+  if (_selectedLayers.size === 0 && transient.lastClickedLayer == null) return false;
   _selectedLayers.clear();
-  _lastClickedLayer = null;
+  transient.lastClickedLayer = null;
   return true;
 }
 
@@ -2457,8 +2408,8 @@ function selectLayerRange(target) {
   const visible = Array.from(document.querySelectorAll(".shp-tree-item"))
     .map((el) => el.__layerRef)
     .filter(Boolean);
-  const anchor = _lastClickedLayer && visible.includes(_lastClickedLayer)
-    ? _lastClickedLayer
+  const anchor = transient.lastClickedLayer && visible.includes(transient.lastClickedLayer)
+    ? transient.lastClickedLayer
     : visible[0];
   const i1 = visible.indexOf(anchor);
   const i2 = visible.indexOf(target);
@@ -2487,17 +2438,15 @@ function buildDragEntriesFromSelection() {
   return out;
 }
 
-let invalidatedRenderFrame = null;
-
 // Re-render the four UI surfaces that need to refresh after any state change
 // touching buildings, levels, imported layers, or PLATEAU overrides. Prefer
 // this over calling the individual render functions to avoid drift between
 // call sites. requestAnimationFrame coalesces bursts from drag/drop, sliders,
 // session restore, and language changes into one paint.
 function invalidateAndRerender() {
-  if (invalidatedRenderFrame != null) return;
-  invalidatedRenderFrame = requestAnimationFrame(() => {
-    invalidatedRenderFrame = null;
+  if (transient.invalidatedRenderFrame != null) return;
+  transient.invalidatedRenderFrame = requestAnimationFrame(() => {
+    transient.invalidatedRenderFrame = null;
     renderInvalidatedSurfaces();
   });
 }
@@ -2511,26 +2460,8 @@ function renderInvalidatedSurfaces() {
 
 function renderLevelList() {
   const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
-  const visibleBuildings = filterVisibleBuildings(buildings, filterRaw);
 
-  if (sceneItemCountEl) {
-    if (buildings.length === 0 && unassignedLayers.length === 0) {
-      sceneItemCountEl.textContent = "";
-    } else if (filterRaw) {
-      sceneItemCountEl.textContent = t("scene.itemsCountFiltered", {
-        filtered: visibleBuildings.length,
-        total: buildings.length,
-      });
-    } else {
-      sceneItemCountEl.textContent = t("scene.itemsCount", { count: buildings.length });
-    }
-  }
-  if (noScenePlaceholder) {
-    noScenePlaceholder.style.display =
-      buildings.length === 0 && unassignedLayers.length === 0 ? "" : "none";
-  }
-
-  const result = renderSceneTree({
+  renderSceneTree({
     container: levelListEl,
     buildings,
     importedLayers,
@@ -2541,13 +2472,16 @@ function renderLevelList() {
       activeModelLevelIndex,
       selectedBuildingIndex,
       selectedLayers: _selectedLayers,
-      unassignedTreeExpanded: _unassignedTreeExpanded,
-      buildingsSectionExpanded: _buildingsSectionExpanded,
+      unassignedTreeExpanded: transient.unassignedTreeExpanded,
+      buildingsSectionExpanded: transient.buildingsSectionExpanded,
     },
     callbacks: getSceneTreeCallbacks(),
+    itemCountEl: sceneItemCountEl,
+    placeholderEl: noScenePlaceholder,
+    layerTypeFiltersEl: document.getElementById("layerTypeFilters"),
+    layerTypeFilters,
+    onToggleLayerType: handleLayerTypeToggle,
   });
-
-  if (result.shouldRenderLayerTypeFilters) renderLayerTypeFilters();
 }
 
 function getSceneTreeCallbacks() {
@@ -2585,12 +2519,12 @@ function toggleModelLevelExpanded(modelLevelIndex) {
 }
 
 function toggleUnassignedExpanded() {
-  _unassignedTreeExpanded = !_unassignedTreeExpanded;
+  transient.unassignedTreeExpanded = !transient.unassignedTreeExpanded;
   renderLevelList();
 }
 
 function toggleBuildingsSection() {
-  _buildingsSectionExpanded = !_buildingsSectionExpanded;
+  transient.buildingsSectionExpanded = !transient.buildingsSectionExpanded;
   renderLevelList();
 }
 
@@ -2625,11 +2559,11 @@ function handleSceneTreeLayerSelect({ layer, buildingIndex }, event) {
     event.preventDefault();
   } else if (event.ctrlKey || event.metaKey) {
     toggleLayerSelection(layer);
-    _lastClickedLayer = layer;
+    transient.lastClickedLayer = layer;
     event.preventDefault();
   } else {
     setSingleLayerSelection(layer);
-    _lastClickedLayer = layer;
+    transient.lastClickedLayer = layer;
     if (typeof buildingIndex === "number" && buildingIndex >= 0) {
       selectedBuildingIndex = buildingIndex;
     }
@@ -2670,7 +2604,7 @@ function handleSceneTreeLayerDragStart({ event, row, layer, fromBi }) {
   const entries = _selectedLayers.has(layer) && _selectedLayers.size > 1
     ? buildDragEntriesFromSelection()
     : [{ layer, fromBi }];
-  _dragLayerCtx = { entries };
+  transient.dragLayerCtx = { entries };
   row?.classList.add("dragging");
   event.dataTransfer.effectAllowed = "move";
   try {
@@ -2683,7 +2617,7 @@ function handleSceneTreeLayerDragStart({ event, row, layer, fromBi }) {
 
 function handleSceneTreeLayerDragEnd({ row }) {
   row?.classList.remove("dragging");
-  _dragLayerCtx = null;
+  transient.dragLayerCtx = null;
   levelListEl.querySelectorAll(".drop-target-active").forEach((el) => {
     el.classList.remove("drop-target-active");
   });
@@ -2735,8 +2669,8 @@ function showMoveUnassignedToBuildingMenu(event, layer) {
 // shows the "not allowed" icon.
 function dropWouldBeNoop(target) {
   if (!target) return true;
-  if (!_dragLayerCtx) return true;
-  const entries = _dragLayerCtx.entries;
+  if (!transient.dragLayerCtx) return true;
+  const entries = transient.dragLayerCtx.entries;
   if (target.kind === "unassigned") {
     return entries.every((e) => e.fromBi === "unassigned");
   }
@@ -2760,9 +2694,9 @@ function dropWouldBeNoop(target) {
 
 async function handleSceneTreeLayerDrop(target) {
   if (!target) return;
-  if (!_dragLayerCtx) return;
-  const entries = _dragLayerCtx.entries;
-  _dragLayerCtx = null;
+  if (!transient.dragLayerCtx) return;
+  const entries = transient.dragLayerCtx.entries;
+  transient.dragLayerCtx = null;
 
   const touchedBuildings = new Set();
 
@@ -2950,7 +2884,7 @@ async function applyGdbDecisions(decisions) {
     applyLevelToShapefilesForBuilding(building);
     applyShapefileLayerHeights(building);
   }
-  if (unassignedLayers.length > 0) _unassignedTreeExpanded = true;
+  if (unassignedLayers.length > 0) transient.unassignedTreeExpanded = true;
   invalidateAndRerender();
   reportGdbDuplicateSkips(duplicateSkipped);
 }
@@ -3152,7 +3086,7 @@ async function handleShpSelect(e) {
       // No building target — land in the unassigned bucket so the user can
       // drag the layer(s) onto whichever building they want.
       for (const fc of fcs) await addUnassignedLayer(fc, { origin: "shp" });
-      _unassignedTreeExpanded = true;
+      transient.unassignedTreeExpanded = true;
       invalidateAndRerender();
     }
   } catch (err) {
@@ -3283,6 +3217,7 @@ function safeColorFromHex(hex, fallbackHex = COLOR2_DEFAULT) {
   try {
     return Color.fromCssColorString(hex);
   } catch {
+    // Invalid CSS color string — use fallback to keep rendering.
     return Color.fromCssColorString(fallbackHex);
   }
 }
@@ -3600,11 +3535,10 @@ function hideFloatingMenu() {
 }
 
 // Single open popover at a time (clicking elsewhere closes it).
-let _openPopoverCleanup = null;
 function closeContextPopover() {
-  if (_openPopoverCleanup) {
-    _openPopoverCleanup();
-    _openPopoverCleanup = null;
+  if (transient.openPopoverCleanup) {
+    transient.openPopoverCleanup();
+    transient.openPopoverCleanup = null;
   }
 }
 
@@ -3641,7 +3575,7 @@ function mountContextPopover(event, contentEl) {
     document.addEventListener("keydown", onKey);
   }, 0);
 
-  _openPopoverCleanup = () => {
+  transient.openPopoverCleanup = () => {
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKey);
     if (popover.parentNode) popover.parentNode.removeChild(popover);
@@ -4082,39 +4016,27 @@ async function restoreSession(data) {
   if (data.imagery) { imagerySelect.value = data.imagery; switchImagery(); }
   if (data.terrain) { terrainSelect.value = data.terrain; switchTerrain(); }
 
-  // Group entries by tilesetGroupId so siblings sharing a tileset are reunited
-  const groups = new Map();
-  let unique = 0;
-  for (const bData of data.buildings ?? []) {
-    const key = bData.tilesetGroupId != null
-      ? `g:${bData.tilesetGroupId}`
-      : `u:${unique++}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(bData);
-  }
-  const importedList = data.importedLayers ?? [];
-  const total = groups.size + importedList.length;
+  const restorePlan = createSessionRestorePlan(data);
   let done = 0;
   showLoadingOverlay(
     t("loading.session.title"),
-    t("loading.session.progress", { current: 0, total }),
+    t("loading.session.progress", { current: 0, total: restorePlan.primaryItemCount }),
   );
-  for (const group of groups.values()) {
+  for (const group of restorePlan.buildingGroups) {
     if (group.length === 1) {
       await restoreBuilding(group[0]);
     } else {
       await restoreSiblingGroup(group);
     }
     done++;
-    updateLoadingOverlay(t("loading.session.progress", { current: done, total }));
+    updateLoadingOverlay(t("loading.session.progress", { current: done, total: restorePlan.primaryItemCount }));
   }
-  for (const lData of importedList) {
+  for (const lData of restorePlan.importedLayers) {
     try {
       const layer = await restoreImportedLayer(viewer, loadTilesetFromUrl, lData);
       if (layer) {
         if (isPlateauLayer(layer)) {
-          layer.plateauOverrides = lData.plateauOverrides ?? [];
-          initializePlateauLayer(layer);
+          restoreSerializedPlateauOverrides(layer, lData.plateauOverrides ?? []);
         }
         importedLayers.push(layer);
       }
@@ -4122,9 +4044,9 @@ async function restoreSession(data) {
       console.warn("Could not restore imported layer:", lData.label, e);
     }
     done++;
-    updateLoadingOverlay(t("loading.session.progress", { current: done, total }));
+    updateLoadingOverlay(t("loading.session.progress", { current: done, total: restorePlan.primaryItemCount }));
   }
-  for (const u of data.unassignedLayers ?? []) {
+  for (const u of restorePlan.unassignedLayers) {
     try {
       await restoreUnassignedLayer(u);
     } catch (e) {
@@ -4133,21 +4055,8 @@ async function restoreSession(data) {
   }
   selectedBuildingIndex = buildings.length > 0 ? 0 : -1;
   rebuildModelLevels();
-  // Restore saved model-level overrides (user-edited name/elevation) and
-  // active selection.
-  if (Array.isArray(data.modelLevels) && data.modelLevels.length > 0) {
-    const byFn = new Map(data.modelLevels.map(m => [m.floorNumber, m]));
-    for (const ml of modelLevels) {
-      const saved = byFn.get(ml.floorNumber);
-      if (saved) {
-        if (saved.name) ml.name = saved.name;
-        if (Number.isFinite(saved.elevation)) ml.elevation = saved.elevation;
-      }
-    }
-  }
-  if (Number.isFinite(data.activeModelLevelIndex)
-      && data.activeModelLevelIndex >= -1
-      && data.activeModelLevelIndex < modelLevels.length) {
+  applySavedModelLevelOverrides(modelLevels, data.modelLevels);
+  if (isValidActiveModelLevelIndex(data.activeModelLevelIndex, modelLevels)) {
     selectModelLevel(data.activeModelLevelIndex);
   }
   renderImportedLayersList();
@@ -4271,9 +4180,12 @@ async function restoreSiblingGroup(group) {
 }
 
 async function restoreShapefileLayer(building, slData) {
-  if (!slData.features?.length) return;
-  const geojson = { type: "FeatureCollection", features: slData.features };
-  const cesiumColor = Color.fromCssColorString(slData.color ?? "#4fc3f7");
+  const layerData = normalizeRestoredShapefileLayerData(slData, {
+    fallbackSource: detectShapefileSource(slData?.features),
+  });
+  if (!layerData) return;
+  const geojson = { type: "FeatureCollection", features: layerData.features };
+  const cesiumColor = Color.fromCssColorString(layerData.color);
   const dataSource = await GeoJsonDataSource.load(geojson, {
     fill: cesiumColor.withAlpha(1.0),
     stroke: cesiumColor,
@@ -4281,22 +4193,10 @@ async function restoreShapefileLayer(building, slData) {
     clampToGround: false,
   });
   const layer = {
-    name: slData.name ?? "layer",
+    ...layerData,
     dataSource,
-    color: slData.color ?? "#4fc3f7",
-    levelKey: slData.levelKey ?? null,
-    source: slData.source ?? detectShapefileSource(slData.features) ?? null,
-    features: slData.features,
-    heightOffset: slData.heightOffset ?? 0,
-    // Saved sessions pre-date the _origin tag — assume GDB (most layers in
-    // practice came from the GDB importer) so they show up in the reassign
-    // dialog. Newer sessions persist the real origin.
-    _origin: slData._origin ?? "gdb",
-    _hidden: !!slData._hidden,
-    colorColumn: slData.colorColumn ?? null,
-    colorMappings: slData.colorMappings ?? null,
   };
-  applyEntityStyling(dataSource, slData.name ?? "", layer);
+  applyEntityStyling(dataSource, layer.name, layer);
   viewer.dataSources.add(dataSource);
   building.shapefileLayers.push(layer);
   applyShapefileLayerHeight(building, layer);
@@ -4307,30 +4207,24 @@ async function restoreShapefileLayer(building, slData) {
 // but skips building plumbing and keeps dataSource.show = false until the user
 // drags it onto a building.
 async function restoreUnassignedLayer(u) {
-  if (!u?.features?.length) return;
-  const geojson = { type: "FeatureCollection", features: u.features };
-  const cesiumColor = Color.fromCssColorString(u.color ?? "#4fc3f7");
+  const layerData = normalizeRestoredUnassignedLayerData(u, {
+    fallbackSource: detectShapefileSource(u?.features),
+  });
+  if (!layerData) return;
+  const geojson = { type: "FeatureCollection", features: layerData.features };
+  const cesiumColor = Color.fromCssColorString(layerData.color);
   const dataSource = await GeoJsonDataSource.load(geojson, {
     fill: cesiumColor.withAlpha(1.0),
     stroke: cesiumColor,
     strokeWidth: 2,
     clampToGround: false,
   });
-  const hidden = !!u._hidden;
   const layer = {
-    name: u.name ?? "layer",
+    ...layerData,
     dataSource,
-    color: u.color ?? "#4fc3f7",
-    source: u.source ?? detectShapefileSource(u.features) ?? null,
-    features: u.features,
-    heightOffset: u.heightOffset ?? 0,
-    _origin: u._origin ?? "gdb",
-    _hidden: hidden,
-    colorColumn: u.colorColumn ?? null,
-    colorMappings: u.colorMappings ?? null,
   };
-  applyEntityStyling(dataSource, u.name ?? "", layer);
-  dataSource.show = !hidden;
+  applyEntityStyling(dataSource, layer.name, layer);
+  dataSource.show = !layer._hidden;
   viewer.dataSources.add(dataSource);
   unassignedLayers.push(layer);
 }
@@ -4464,26 +4358,26 @@ function hasPointGeometry(entity) {
 
 function handleSearchInput() {
   const raw = searchInput.value.trim();
-  searchQuery = raw;
+  transient.searchQuery = raw;
   if (!raw) {
     closeSearchDropdown();
     return;
   }
   const q = raw.toLowerCase();
   const all = getSearchableEntities();
-  searchResults = all
+  transient.searchResults = all
     .filter((item) => item.symbolId.toLowerCase().includes(q) || item.name.toLowerCase().includes(q))
     .slice(0, 25);
-  searchSelectedIndex = searchResults.length > 0 ? 0 : -1;
-  searchOpen = true;
+  transient.searchSelectedIndex = transient.searchResults.length > 0 ? 0 : -1;
+  transient.searchOpen = true;
   renderSearchDropdown();
 }
 
 function handleSearchKeydown(e) {
-  if (!searchOpen) {
-    if (e.key === "ArrowDown" && searchResults.length > 0) {
+  if (!transient.searchOpen) {
+    if (e.key === "ArrowDown" && transient.searchResults.length > 0) {
       e.preventDefault();
-      searchOpen = true;
+      transient.searchOpen = true;
       renderSearchDropdown();
     }
     return;
@@ -4491,24 +4385,24 @@ function handleSearchKeydown(e) {
   switch (e.key) {
     case "ArrowDown":
       e.preventDefault();
-      if (searchResults.length > 0) {
-        searchSelectedIndex = (searchSelectedIndex + 1) % searchResults.length;
+      if (transient.searchResults.length > 0) {
+        transient.searchSelectedIndex = (transient.searchSelectedIndex + 1) % transient.searchResults.length;
         renderSearchDropdown();
       }
       break;
     case "ArrowUp":
       e.preventDefault();
-      if (searchResults.length > 0) {
-        searchSelectedIndex = (searchSelectedIndex - 1 + searchResults.length) % searchResults.length;
+      if (transient.searchResults.length > 0) {
+        transient.searchSelectedIndex = (transient.searchSelectedIndex - 1 + transient.searchResults.length) % transient.searchResults.length;
         renderSearchDropdown();
       }
       break;
     case "Enter":
       e.preventDefault();
-      if (searchSelectedIndex >= 0 && searchSelectedIndex < searchResults.length) {
-        selectSearchResult(searchResults[searchSelectedIndex]);
-      } else if (searchResults.length > 0) {
-        selectSearchResult(searchResults[0]);
+      if (transient.searchSelectedIndex >= 0 && transient.searchSelectedIndex < transient.searchResults.length) {
+        selectSearchResult(transient.searchResults[transient.searchSelectedIndex]);
+      } else if (transient.searchResults.length > 0) {
+        selectSearchResult(transient.searchResults[0]);
       }
       break;
     case "Escape":
@@ -4520,11 +4414,11 @@ function handleSearchKeydown(e) {
 }
 
 function renderSearchDropdown() {
-  if (!searchOpen) {
+  if (!transient.searchOpen) {
     searchDropdown.style.display = "none";
     return;
   }
-  if (searchResults.length === 0) {
+  if (transient.searchResults.length === 0) {
     searchDropdown.innerHTML = "";
     const noMatch = document.createElement("div");
     noMatch.className = "search-dropdown-empty";
@@ -4535,16 +4429,16 @@ function renderSearchDropdown() {
   }
 
   searchDropdown.innerHTML = "";
-  for (let i = 0; i < searchResults.length; i++) {
-    const item = searchResults[i];
+  for (let i = 0; i < transient.searchResults.length; i++) {
+    const item = transient.searchResults[i];
     const row = document.createElement("div");
-    row.className = "search-dropdown-row" + (i === searchSelectedIndex ? " selected" : "");
+    row.className = "search-dropdown-row" + (i === transient.searchSelectedIndex ? " selected" : "");
     row.addEventListener("click", (e) => {
       e.stopPropagation();
       selectSearchResult(item);
     });
     row.addEventListener("mouseenter", () => {
-      searchSelectedIndex = i;
+      transient.searchSelectedIndex = i;
       searchDropdown.querySelectorAll(".search-dropdown-row").forEach((r, idx) => {
         r.classList.toggle("selected", idx === i);
       });
@@ -4565,7 +4459,7 @@ function renderSearchDropdown() {
   }
   searchDropdown.style.display = "";
 
-  if (searchSelectedIndex >= 0) {
+  if (transient.searchSelectedIndex >= 0) {
     const selectedRow = searchDropdown.querySelector(".search-dropdown-row.selected");
     if (selectedRow) {
       selectedRow.scrollIntoView({ block: "nearest", behavior: "instant" });
@@ -4585,16 +4479,16 @@ function buildSearchSubtitle(item) {
 }
 
 function closeSearchDropdown() {
-  searchOpen = false;
+  transient.searchOpen = false;
   searchDropdown.style.display = "none";
 }
 
 function selectSearchResult(item) {
   closeSearchDropdown();
   searchInput.value = "";
-  searchQuery = "";
-  searchResults = [];
-  searchSelectedIndex = -1;
+  transient.searchQuery = "";
+  transient.searchResults = [];
+  transient.searchSelectedIndex = -1;
 
   if (item.buildingIndex !== -1) {
     let targetLevelIndex = -1;
@@ -4617,7 +4511,7 @@ function selectSearchResult(item) {
 }
 
 function handleSearchOutsideClick(e) {
-  if (!searchOpen) return;
+  if (!transient.searchOpen) return;
   if (!searchInput.contains(e.target) && !searchDropdown.contains(e.target)) {
     closeSearchDropdown();
   }

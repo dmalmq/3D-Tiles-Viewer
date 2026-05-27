@@ -36,9 +36,6 @@ function makeEmptyCatalog() {
 }
 
 function makeCatalog(datasets, areaOptions) {
-  // Plain data fields are kept for backward compatibility with code that
-  // serializes the catalog or peeks at it for debugging. New callers should
-  // prefer the methods below — the data fields may go away in a future change.
   const catalog = {
     datasets,
     areaOptions,
@@ -60,6 +57,9 @@ function makeCatalog(datasets, areaOptions) {
     },
     listCategoryChoicesFor(areas, options) {
       return getPlateauCategoryChoicesForAreas(catalog, areas, options);
+    },
+    urlFor(dataset) {
+      return getPlateauDatasetUrl(dataset);
     },
   };
   return catalog;

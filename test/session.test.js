@@ -4,7 +4,13 @@ import assert from "node:assert/strict";
 import {
   SESSION_SCHEMA_VERSION,
   SUPPORTED_SESSION_VERSIONS,
+  applySavedModelLevelOverrides,
+  createSessionRestorePlan,
+  groupSessionBuildingsByTileset,
   isSupportedSessionVersion,
+  isValidActiveModelLevelIndex,
+  normalizeRestoredShapefileLayerData,
+  normalizeRestoredUnassignedLayerData,
   parseSessionJson,
   serializeSession,
 } from "../src/session.js";
@@ -101,6 +107,79 @@ test("isSupportedSessionVersion is true for supported, false otherwise", () => {
   for (const v of SUPPORTED_SESSION_VERSIONS) assert.equal(isSupportedSessionVersion(v), true);
   assert.equal(isSupportedSessionVersion(0), false);
   assert.equal(isSupportedSessionVersion(99), false);
+});
+
+test("groupSessionBuildingsByTileset reunites saved sibling groups", () => {
+  const a = { name: "A", tilesetGroupId: 1 };
+  const b = { name: "B", tilesetGroupId: 1 };
+  const c = { name: "C" };
+  const d = { name: "D" };
+  assert.deepEqual(groupSessionBuildingsByTileset([a, b, c, d]), [[a, b], [c], [d]]);
+});
+
+test("createSessionRestorePlan reports primary restore progress items", () => {
+  const data = {
+    buildings: [
+      { name: "A", tilesetGroupId: 1 },
+      { name: "B", tilesetGroupId: 1 },
+      { name: "C" },
+    ],
+    importedLayers: [{ label: "imported" }],
+    unassignedLayers: [{ name: "staged" }],
+  };
+  const plan = createSessionRestorePlan(data);
+  assert.equal(plan.buildingGroups.length, 2);
+  assert.equal(plan.importedLayers.length, 1);
+  assert.equal(plan.unassignedLayers.length, 1);
+  assert.equal(plan.primaryItemCount, 3);
+});
+
+test("applySavedModelLevelOverrides restores user-edited names and elevations", () => {
+  const modelLevels = [
+    { floorNumber: 1, name: "1F", elevation: 0 },
+    { floorNumber: 2, name: "2F", elevation: 4 },
+  ];
+  applySavedModelLevelOverrides(modelLevels, [
+    { floorNumber: 1, name: "Lobby", elevation: 0.5 },
+    { floorNumber: 2, name: "", elevation: Number.NaN },
+  ]);
+  assert.deepEqual(modelLevels, [
+    { floorNumber: 1, name: "Lobby", elevation: 0.5 },
+    { floorNumber: 2, name: "2F", elevation: 4 },
+  ]);
+});
+
+test("isValidActiveModelLevelIndex accepts all-floors and in-range indices", () => {
+  const modelLevels = [{ floorNumber: 1 }, { floorNumber: 2 }];
+  assert.equal(isValidActiveModelLevelIndex(-1, modelLevels), true);
+  assert.equal(isValidActiveModelLevelIndex(0, modelLevels), true);
+  assert.equal(isValidActiveModelLevelIndex(1, modelLevels), true);
+  assert.equal(isValidActiveModelLevelIndex(2, modelLevels), false);
+  assert.equal(isValidActiveModelLevelIndex("1", modelLevels), false);
+});
+
+test("normalizeRestoredShapefileLayerData applies defaults and fallback source", () => {
+  const features = [{ type: "Feature", properties: {} }];
+  assert.deepEqual(
+    normalizeRestoredShapefileLayerData({ features }, { fallbackSource: "detected" }),
+    {
+      name: "layer",
+      color: "#4fc3f7",
+      levelKey: null,
+      source: "detected",
+      features,
+      heightOffset: 0,
+      _origin: "gdb",
+      _hidden: false,
+      colorColumn: null,
+      colorMappings: null,
+    },
+  );
+});
+
+test("normalizeRestoredUnassignedLayerData skips empty feature payloads", () => {
+  assert.equal(normalizeRestoredUnassignedLayerData({ features: [] }), null);
+  assert.equal(normalizeRestoredUnassignedLayerData(null), null);
 });
 
 function makeBuilding({ name, tileset }) {
