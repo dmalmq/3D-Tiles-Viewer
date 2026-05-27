@@ -73,9 +73,14 @@ import {
   recordsToLevelsData,
   sourceLevelGroupsFromInspection,
   levelsDataFromSourceLevelGroups,
-  serializeSourceLevelGroups,
   deserializeSourceLevelGroups,
 } from "./levelMetadata.js";
+import {
+  serializeSession,
+  parseSessionJson,
+  downloadSessionJson,
+} from "./session.js";
+import { notifyUser } from "./notifications.js";
 import {
   chooseDefaultColorColumn,
   getLayerType,
@@ -83,6 +88,10 @@ import {
   isColorConfigurableLayer,
   isSpaceLayerName,
 } from "./layerColorConfig.js";
+import {
+  applyEntitiesContextState,
+  applyEntityContextState,
+} from "./contextGhosting.js";
 
 // -- State --
 let viewer;
@@ -168,10 +177,15 @@ const POINT_EXTRA_HEIGHT_M = 0.25;
 // Fixture layers (_Fixture) need extra lift above the floor plane to avoid
 // overlapping with other units and the floor mesh itself.
 const FIXTURE_EXTRA_HEIGHT_M = 0.10;
-let _shpColorIdx = 0;
-let _shpPendingTarget = null; // { buildingIndex } set by the building-row + button
-let _gdbBusy = false;         // serialize concurrent gdal3.js loads
-let _reloadTargetIndex = -1;
+// Transient module-scope state — short-lived flags that coordinate between
+// async UI handlers. Grouped to keep their lifecycle visible at a glance.
+const transient = {
+  shpColorIdx: 0,
+  shpPendingTarget: null,    // { buildingIndex } set by the building-row + button
+  gdbBusy: false,            // serialize concurrent gdal3.js loads
+  reloadTargetIndex: -1,
+  savedGlobeBaseColor: null, // captured when entering underground mode
+};
 
 const cityGmlLayers = [];
 const SURFACE_COLORS = {
@@ -296,11 +310,11 @@ async function init() {
   gdbInput.addEventListener("change", handleGdbZipSelect);
   gdbDirInput.addEventListener("change", handleGdbDirSelect);
   loadGdbZipBtn.addEventListener("click", () => {
-    if (_gdbBusy) return;
+    if (transient.gdbBusy) return;
     gdbInput.click();
   });
   loadGdbFolderBtn.addEventListener("click", () => {
-    if (_gdbBusy) return;
+    if (transient.gdbBusy) return;
     gdbDirInput.click();
   });
   loadShpBtn.addEventListener("click", () => {
@@ -309,9 +323,9 @@ async function init() {
     // the target unset — handleShpSelect will route to the unassigned bucket
     // so the user can drag layers onto whichever building they want.
     if (selectedBuildingIndex >= 0 && buildings[selectedBuildingIndex]) {
-      _shpPendingTarget = { buildingIndex: selectedBuildingIndex };
+      transient.shpPendingTarget = { buildingIndex: selectedBuildingIndex };
     } else {
-      _shpPendingTarget = { buildingIndex: -1 };
+      transient.shpPendingTarget = { buildingIndex: -1 };
     }
     shpInput.click();
   });
@@ -336,6 +350,7 @@ async function init() {
       initializePlateauLayer(layer);
       renderImportedLayersList();
       renderPlateauFloatingCard();
+      applyLevelContextVisibility();
     }, {
       getPreferredImportPosition,
     })
@@ -382,7 +397,7 @@ function initLeftPanelResizer() {
   const stop = (e) => {
     if (!dragging) return;
     dragging = false;
-    try { resizer.releasePointerCapture(e.pointerId); } catch (_) {}
+    try { resizer.releasePointerCapture(e.pointerId); } catch { /* pointer already released — ignore */ }
     document.body.classList.remove("panel-resizing");
     const current = parseInt(
       getComputedStyle(document.documentElement).getPropertyValue("--panel-width"),
@@ -566,10 +581,8 @@ function initLanguageToggle() {
     updateLanguageToggleLabel();
   });
   onLanguageChange(() => {
-    renderLevelList(); syncRemoveAllBtnAndLod();
-    renderPlateauFloatingCard();
+    invalidateAndRerender();
     renderImportedLayersList();
-    renderLevelList();
     renderCityGmlList();
     updateLodFilterStatus();
   });
@@ -865,6 +878,7 @@ function loadImage(url) {
 
 // -- PLATEAU manual feature overrides --
 const PLATEAU_GHOST_COLOR = Color.fromCssColorString("rgba(255, 255, 255, 0.18)");
+const CONTEXT_GHOST_COLOR = Color.fromCssColorString("rgba(255, 255, 255, 0.18)");
 const PLATEAU_ID_PROPERTIES = [
   "buildingIDAttribute_uro:buildingID",
   "uro:buildingID",
@@ -895,6 +909,10 @@ function getPlateauLayers() {
 
 function hasPlateauLayers() {
   return getPlateauLayers().length > 0;
+}
+
+function isContextGhosted() {
+  return activeModelLevelIndex >= 0;
 }
 
 function initializePlateauLayer(layer) {
@@ -1008,7 +1026,8 @@ function applyPlateauLayerStyle(layer) {
   }
 
   const hasOverrides = layer.plateauOverrides.size > 0;
-  if (!plateauOverridesEnabled || !hasOverrides) {
+  const contextGhosted = isContextGhosted();
+  if (!contextGhosted && (!plateauOverridesEnabled || !hasOverrides)) {
     layer.data.style = layer._plateauOriginalStyle;
     layer.data.makeStyleDirty();
     layer._plateauOverrideStyleApplied = false;
@@ -1017,12 +1036,15 @@ function applyPlateauLayerStyle(layer) {
 
   const style = new Cesium3DTileStyle();
   style.show = {
-    evaluate: (feature) => getPlateauOverride(layer, feature)?.mode !== "hidden",
+    evaluate: (feature) => {
+      const mode = plateauOverridesEnabled ? getPlateauOverride(layer, feature)?.mode : null;
+      return mode !== "hidden";
+    },
   };
   style.color = {
     evaluateColor: (feature, result) => {
-      const mode = getPlateauOverride(layer, feature)?.mode;
-      if (mode === "ghost") return Color.clone(PLATEAU_GHOST_COLOR, result);
+      const mode = plateauOverridesEnabled ? getPlateauOverride(layer, feature)?.mode : null;
+      if (mode === "ghost" || contextGhosted) return Color.clone(PLATEAU_GHOST_COLOR, result);
       return Color.clone(Color.WHITE, result);
     },
   };
@@ -1297,7 +1319,7 @@ async function handleLoadUrl() {
     await addBuilding(tileset, name, levelsData, url);
   } catch (e) {
     cleanupUntrackedTileset(tileset);
-    alert(t("alert.failedLoad", { message: e.message }));
+    notifyUser("error", "alert.failedLoad", { message: e.message });
   } finally {
     setButtonLoading(loadUrlBtn, false);
   }
@@ -1321,7 +1343,7 @@ async function handleDirectoryPick() {
     } catch (e) {
       cleanupUntrackedTileset(tileset);
       fileStatus.textContent = "";
-      alert(t("alert.failedLoad", { message: e.message }));
+      notifyUser("error", "alert.failedLoad", { message: e.message });
     } finally {
       setButtonLoading(loadFileBtn, false);
     }
@@ -1364,7 +1386,7 @@ async function handleReloadTilesetClick() {
     }
   }
 
-  _reloadTargetIndex = selectedBuildingIndex;
+  transient.reloadTargetIndex = selectedBuildingIndex;
   fileInput.click();
 }
 
@@ -1376,9 +1398,9 @@ async function handleFileSelect(e) {
     return;
   }
 
-  if (_reloadTargetIndex !== -1) {
-    const targetIdx = _reloadTargetIndex;
-    _reloadTargetIndex = -1;
+  if (transient.reloadTargetIndex !== -1) {
+    const targetIdx = transient.reloadTargetIndex;
+    transient.reloadTargetIndex = -1;
     await attachTilesetToBuilding(targetIdx, files);
     fileInput.value = "";
     return;
@@ -1395,7 +1417,7 @@ async function handleFileSelect(e) {
   } catch (e) {
     cleanupUntrackedTileset(tileset);
     fileStatus.textContent = "";
-    alert(t("alert.failedLoad", { message: e.message }));
+    notifyUser("error", "alert.failedLoad", { message: e.message });
   } finally {
     setButtonLoading(loadFileBtn, false);
     fileInput.value = "";
@@ -1551,8 +1573,7 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
   refreshLodFilterIfEnabled();
 
   selectedBuildingIndex = buildings.indexOf(createdBuildings[0]);
-  renderLevelList(); syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
+  invalidateAndRerender();
 
   // Compute per-link bounding spheres in the background; until they're ready,
   // zoomToBuilding falls back to tileset.boundingSphere.
@@ -1621,8 +1642,7 @@ function zoomToBuilding(i) {
     zoomToTileset(viewer, b.tileset);
   }
 
-  renderLevelList(); syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
+  invalidateAndRerender();
 }
 
 /**
@@ -1665,8 +1685,7 @@ function promptSplitConfirm(split, baseName) {
 
 function selectBuilding(i) {
   selectedBuildingIndex = i;
-  renderLevelList(); syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
+  invalidateAndRerender();
 }
 
 function handleRemoveBuilding(index) {
@@ -1701,10 +1720,7 @@ function handleRemoveBuilding(index) {
   }
   fileStatus.textContent = "";
   rebuildModelLevels();
-  applyLevelClippingForAllTilesets();
-  renderLevelList(); syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
-  applyUndergroundMode();
+  invalidateAndRerender();
 }
 
 function handleRemoveAll() {
@@ -1728,9 +1744,7 @@ function handleRemoveAll() {
   activeModelLevelIndex = -1;
   rebuildModelLevels();
   fileStatus.textContent = "";
-  renderLevelList(); syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
-  applyUndergroundMode();
+  invalidateAndRerender();
 }
 
 function syncRemoveAllBtnAndLod() {
@@ -1763,6 +1777,7 @@ function renderImportedLayersList() {
       } else if (layer.type === "datasource") {
         layer.data.show = layer.visible;
       }
+      applyImportedLayerLevelContext(layer);
     });
 
     const nameSpan = document.createElement("span");
@@ -1854,9 +1869,11 @@ async function detectLevelsFromUrl(tilesetUrl) {
     : tilesetUrl.replace(/\/?$/, "/");
   try {
     const res = await fetch(base + "levels.json");
-    if (res.ok) return res.json();
-  } catch {}
-  return null;
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 function handleAddLevel(building, name, floor) {
@@ -1865,7 +1882,7 @@ function handleAddLevel(building, name, floor) {
   building.levels.push({ name, key: null, floor });
   building.levels.sort((a, b) => a.floor - b.floor);
   rebuildModelLevels();
-  applyLevelClippingForAllTilesets();
+  applyLevelContextVisibility();
   renderLevelList();
 }
 
@@ -1925,11 +1942,7 @@ function selectModelLevel(modelLevelIndex) {
       }
     }
   }
-  applyLevelClippingForAllTilesets();
-  applyUndergroundMode();
-  renderLevelList();
-  syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
+  invalidateAndRerender();
 }
 
 // Wrapper preserved for existing UI call sites. Maps a per-building level
@@ -1967,7 +1980,6 @@ function applyActiveLevelForBuilding(building) {
   if (!building.tileset) return;
   applyFiltersForTileset(building.tileset);
   applyLevelToShapefilesForBuilding(building);
-  applyUndergroundMode();
 }
 
 function activeModelFloorNumber() {
@@ -2022,7 +2034,6 @@ function applyLevelClippingForAllTilesets() {
 }
 
 const UNDERGROUND_BASE_COLOR = Color.fromCssColorString("#1a1a1a");
-let savedGlobeBaseColor = null;
 
 function isUndergroundActive() {
   if (activeModelLevelIndex < 0) return false;
@@ -2030,12 +2041,17 @@ function isUndergroundActive() {
   return !!ml && ml.floorNumber < 0;
 }
 
+function applyLevelContextVisibility() {
+  applyLevelClippingForAllTilesets();
+  applyUndergroundMode();
+}
+
 function applyUndergroundMode() {
   const layer = viewer.imageryLayers.get(0);
   const globe = viewer.scene.globe;
   if (isUndergroundActive()) {
-    if (savedGlobeBaseColor === null) {
-      savedGlobeBaseColor = Color.clone(globe.baseColor);
+    if (transient.savedGlobeBaseColor === null) {
+      transient.savedGlobeBaseColor = Color.clone(globe.baseColor);
     }
     globe.baseColor = UNDERGROUND_BASE_COLOR;
     if (layer) {
@@ -2043,14 +2059,89 @@ function applyUndergroundMode() {
       layer.brightness = 1.0;
     }
   } else {
-    if (savedGlobeBaseColor !== null) {
-      globe.baseColor = savedGlobeBaseColor;
-      savedGlobeBaseColor = null;
+    if (transient.savedGlobeBaseColor !== null) {
+      globe.baseColor = transient.savedGlobeBaseColor;
+      transient.savedGlobeBaseColor = null;
     }
     if (layer) {
       layer.alpha = 1.0;
       layer.brightness = 1.0;
     }
+  }
+  applyContextGhostingForAllLayers();
+}
+
+function applyDataSourceContextGhosting(dataSource, ghosted, layerVisible = true) {
+  applyEntitiesContextState(dataSource?.entities?.values, {
+    ghosted,
+    ghostStyle: CONTEXT_GHOST_COLOR,
+    layerVisible,
+  });
+}
+
+function applyGenericTilesetContextGhosting(layer, ghosted) {
+  if (!layer?.data || isPlateauLayer(layer)) return;
+  disableImportedTilesetLevelClip(layer.data);
+  if (!layer._contextOriginalStyleCaptured) {
+    layer._contextOriginalStyle = layer.data.style;
+    layer._contextOriginalStyleCaptured = true;
+  }
+  layer.data.style = ghosted
+    ? new Cesium3DTileStyle({ color: 'color("white", 0.18)' })
+    : layer._contextOriginalStyle;
+  layer.data.makeStyleDirty?.();
+}
+
+function disableImportedTilesetLevelClip(tileset) {
+  const existing = tileset?._levelTopClippingPlanes;
+  if (existing) existing.enabled = false;
+}
+
+function applyImportedLayerLevelContext(layer) {
+  const ghosted = isContextGhosted();
+  if (isPlateauLayer(layer)) {
+    if (layer.data) layer.data.show = !!layer.visible && !isUndergroundActive();
+    disableImportedTilesetLevelClip(layer.data);
+    applyPlateauLayerStyle(layer);
+    return;
+  }
+  if (layer?.type === "datasource" && layer.data) {
+    layer.data.show = !!layer.visible;
+    applyDataSourceContextGhosting(layer.data, ghosted, layer.visible);
+  } else if (layer?.type === "entities" && Array.isArray(layer.data)) {
+    applyEntitiesContextState(layer.data, {
+      ghosted,
+      ghostStyle: CONTEXT_GHOST_COLOR,
+      layerVisible: layer.visible,
+    });
+  } else if (layer?.type === "tileset" && layer.data) {
+    layer.data.show = !!layer.visible;
+    applyGenericTilesetContextGhosting(layer, ghosted);
+  }
+}
+
+function applyContextGhostingForAllLayers() {
+  for (const layer of importedLayers) applyImportedLayerLevelContext(layer);
+  for (const layer of cityGmlLayers) applyCityGmlLayerContextGhosting(layer);
+}
+
+function cityGmlPolygonToHierarchy(polygon) {
+  const positions = Cartesian3.fromDegreesArrayHeights(polygon.positions.flat());
+  const holes = (polygon.holes ?? []).map(
+    hole => new PolygonHierarchy(Cartesian3.fromDegreesArrayHeights(hole.flat()))
+  );
+  return new PolygonHierarchy(positions, holes);
+}
+
+function applyCityGmlLayerContextGhosting(layer) {
+  const ghosted = isContextGhosted();
+  for (const item of layer.entities ?? []) {
+    item.entity.polygon.hierarchy = new ConstantProperty(cityGmlPolygonToHierarchy(item.polygon));
+    applyEntityContextState(item.entity, {
+      ghosted,
+      ghostStyle: CONTEXT_GHOST_COLOR,
+      layerVisible: true,
+    });
   }
 }
 
@@ -2464,6 +2555,17 @@ function buildDragEntriesFromSelection() {
     out.push({ layer, fromBi });
   }
   return out;
+}
+
+// Re-render the four UI surfaces that need to refresh after any state change
+// touching buildings, levels, imported layers, or PLATEAU overrides. Prefer
+// this over calling the individual render functions to avoid drift between
+// call sites.
+function invalidateAndRerender() {
+  renderLevelList();
+  syncRemoveAllBtnAndLod();
+  renderPlateauFloatingCard();
+  applyLevelContextVisibility();
 }
 
 function renderLevelList() {
@@ -3108,7 +3210,7 @@ function attachDragSource(rowEl, layer, fromBi) {
         "text/plain",
         entries.length > 1 ? `${entries.length} layers` : (layer.name ?? "layer"),
       );
-    } catch (_) {}
+    } catch { /* some browsers reject setData under unusual drag conditions — non-fatal */ }
   });
   rowEl.addEventListener("dragend", () => {
     rowEl.classList.remove("dragging");
@@ -3214,7 +3316,7 @@ function attachDropTarget(el, target) {
 
 // -- Shapefile Layers --
 function handleAddShapefilesToBuilding(buildingIndex) {
-  _shpPendingTarget = { buildingIndex };
+  transient.shpPendingTarget = { buildingIndex };
   shpInput.click();
 }
 
@@ -3291,17 +3393,17 @@ async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
 // Parse a .gdb input, then hand it to the review dialog. Selected rows import
 // immediately; unselected renderable rows return as staged GDB work.
 async function runGdbLoad(input) {
-  if (_gdbBusy) return;
-  _gdbBusy = true;
+  if (transient.gdbBusy) return;
+  transient.gdbBusy = true;
   showLoadingOverlay(t("gdb.loading"));
   let parsed;
   try {
     parsed = await loadGdb(input);
   } catch (err) {
     console.error(err);
-    alert(t("alert.failedGdb", { message: err?.message ?? String(err) }));
+    notifyUser("error", "alert.failedGdb", { message: err?.message ?? String(err) });
     hideLoadingOverlay();
-    _gdbBusy = false;
+    transient.gdbBusy = false;
     return;
   }
 
@@ -3315,7 +3417,7 @@ async function runGdbLoad(input) {
     });
   }
   hideLoadingOverlay();
-  _gdbBusy = false;
+  transient.gdbBusy = false;
 }
 
 async function applyGdbDecisions(decisions) {
@@ -3360,7 +3462,7 @@ async function applyGdbDecisions(decisions) {
 function openGdbReassignDialog() {
   const entries = collectGdbLayersForReassign();
   if (entries.length === 0) {
-    alert(t("gdb.reassign.empty"));
+    notifyUser("info", "gdb.reassign.empty");
     return;
   }
   const featureCollections = entries.map((entry) => ({
@@ -3444,7 +3546,7 @@ async function applyReassignDecisions(decisions) {
 }
 
 function reportGdbDuplicateSkips(count) {
-  if (count > 0) alert(t("gdb.import.duplicatesSkipped", { count }));
+  if (count > 0) notifyUser("info", "gdb.import.duplicatesSkipped", { count });
 }
 
 function isGdbLayer(layer) {
@@ -3534,12 +3636,12 @@ function transferBetweenBuildings(layer, fromBi, toBi, newLevelKey) {
 async function handleShpSelect(e) {
   const file = e.target.files[0];
   shpInput.value = "";
-  if (!file || !_shpPendingTarget) {
-    _shpPendingTarget = null;
+  if (!file || !transient.shpPendingTarget) {
+    transient.shpPendingTarget = null;
     return;
   }
-  const { buildingIndex } = _shpPendingTarget;
-  _shpPendingTarget = null;
+  const { buildingIndex } = transient.shpPendingTarget;
+  transient.shpPendingTarget = null;
   const b = buildings[buildingIndex];
   try {
     const { default: shp } = await import("shpjs");
@@ -3558,7 +3660,7 @@ async function handleShpSelect(e) {
       renderLevelList();
     }
   } catch (err) {
-    alert(t("alert.failedShp", { message: err.message }));
+    notifyUser("error", "alert.failedShp", { message: err.message });
   }
 }
 
@@ -3587,7 +3689,7 @@ async function addFeatureCollectionLayer(building, fc, opts = {}) {
   if (origin === "gdb" && hasEquivalentGdbLayer(building, name, levelKey)) {
     return null;
   }
-  const color = SHP_COLORS[_shpColorIdx++ % SHP_COLORS.length];
+  const color = SHP_COLORS[transient.shpColorIdx++ % SHP_COLORS.length];
   const cesiumColor = Color.fromCssColorString(color);
   const dataSource = await GeoJsonDataSource.load(
     { type: "FeatureCollection", features },
@@ -3612,7 +3714,7 @@ async function addUnassignedLayer(fc, opts = {}) {
   }
   const features = fc.features ?? [];
   const source = detectShapefileSource(features);
-  const color = SHP_COLORS[_shpColorIdx++ % SHP_COLORS.length];
+  const color = SHP_COLORS[transient.shpColorIdx++ % SHP_COLORS.length];
   const cesiumColor = Color.fromCssColorString(color);
   const dataSource = await GeoJsonDataSource.load(
     { type: "FeatureCollection", features },
@@ -4225,6 +4327,7 @@ function showBuildingContextMenu(event, building, bi) {
         building.levelBaseElevation = parseFloat(base) || 0;
         applyShapefileLayerHeights(building);
         if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
+        applyLevelContextVisibility();
         renderLevelList();
       },
     });
@@ -4295,7 +4398,7 @@ function showModelLevelContextMenu(event, mli) {
             applyShapefileLayerHeights(b);
           }
         }
-        applyLevelClippingForAllTilesets();
+        applyLevelContextVisibility();
         renderLevelList();
       },
     });
@@ -4328,7 +4431,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         if (!trimmed) return;
         level.name = trimmed;
         rebuildModelLevels();
-        applyLevelClippingForAllTilesets();
+        applyLevelContextVisibility();
         renderLevelList();
       },
     });
@@ -4345,7 +4448,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         applyShapefileLayerHeights(building);
         if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
         rebuildModelLevels();
-        applyLevelClippingForAllTilesets();
+        applyLevelContextVisibility();
         renderLevelList();
       },
     });
@@ -4361,7 +4464,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
     }
     applyShapefileLayerHeights(building);
     rebuildModelLevels();
-    applyLevelClippingForAllTilesets();
+    applyLevelContextVisibility();
     renderLevelList();
     syncRemoveAllBtnAndLod();
   });
@@ -4384,16 +4487,13 @@ async function handleCityGmlSelect(e) {
     if (polygons.length === 0) throw new Error(t("tileset.noPolygon"));
 
     const dataSource = new CustomDataSource(file.name);
+    const cityGmlEntities = [];
     for (const poly of polygons) {
       const flatPos = poly.positions.flat();
       if (flatPos.length < 9) continue;
-      const positions = Cartesian3.fromDegreesArrayHeights(flatPos);
-      const holes = poly.holes.map(
-        (h) => new PolygonHierarchy(Cartesian3.fromDegreesArrayHeights(h.flat()))
-      );
-      dataSource.entities.add({
+      const entity = dataSource.entities.add({
         polygon: {
-          hierarchy: new PolygonHierarchy(positions, holes),
+          hierarchy: cityGmlPolygonToHierarchy(poly),
           perPositionHeight: true,
           material: SURFACE_COLORS[poly.surfaceType],
           outline: true,
@@ -4401,14 +4501,17 @@ async function handleCityGmlSelect(e) {
           outlineWidth: 1,
         },
       });
+      cityGmlEntities.push({ entity, polygon: poly });
     }
 
     await viewer.dataSources.add(dataSource);
-    cityGmlLayers.push({ name: file.name, dataSource });
+    const layer = { name: file.name, dataSource, entities: cityGmlEntities };
+    cityGmlLayers.push(layer);
+    applyCityGmlLayerContextGhosting(layer);
     viewer.zoomTo(dataSource);
     renderCityGmlList();
   } catch (err) {
-    alert(t("alert.failedGml", { message: err.message }));
+    notifyUser("error", "alert.failedGml", { message: err.message });
   } finally {
     loadCityGmlBtn.disabled = false;
     loadCityGmlBtn.textContent = t("cityGml.button");
@@ -4446,88 +4549,25 @@ function renderCityGmlList() {
 }
 
 // -- Session save / restore --
+// Serialization shape lives in src/session.js — only orchestration is here.
 function saveSession() {
   if (buildings.length === 0 && importedLayers.length === 0 && unassignedLayers.length === 0) {
-    alert(t("alert.nothingToSave"));
+    notifyUser("info", "alert.nothingToSave");
     return;
   }
-  const data = {
-    version: 2,
+  const data = serializeSession({
     imagery: imagerySelect.value,
     terrain: terrainSelect.value,
     plateauOverridesEnabled,
-    modelLevels: modelLevels.map(m => ({
-      floorNumber: m.floorNumber,
-      name: m.name,
-      elevation: m.elevation,
-    })),
+    modelLevels,
     activeModelLevelIndex,
-    buildings: (() => {
-      // Assign a stable tilesetGroupId so siblings sharing one tileset can be
-      // reunited on restore (they will load the same tileset once).
-      const tilesetIds = new Map();
-      let nextId = 0;
-      const idFor = (tileset) => {
-        if (!tileset) return null;
-        if (!tilesetIds.has(tileset)) tilesetIds.set(tileset, ++nextId);
-        return tilesetIds.get(tileset);
-      };
-      return buildings.map(b => ({
-        name: b.name,
-        sourceType: b.sourceUrl ? "url" : "file",
-        sourceUrl: b.sourceUrl ?? null,
-        tilesetGroupId: idFor(b.tileset),
-        linkFilter: b.linkFilter ?? null,
-        heightOffset: b.heightOffset,
-        levelBaseElevation: b.levelBaseElevation,
-        aliases: b.aliases ?? [],
-        activeLevelIndex: b.activeLevelIndex,
-        levels: b.levels.map(l => ({ name: l.name, key: l.key ?? null, floor: l.floor })),
-        sourceLevelGroups: serializeSourceLevelGroups(b.sourceLevelGroups),
-        shapefileLayers: b.shapefileLayers.map(sl => ({
-          name: sl.name,
-          color: sl.color,
-          levelKey: sl.levelKey ?? null,
-          source: sl.source ?? null,
-          features: sl.features ?? [],
-          heightOffset: sl.heightOffset ?? 0,
-          _origin: sl._origin ?? null,
-          _hidden: !!sl._hidden,
-          colorColumn: sl.colorColumn ?? null,
-          colorMappings: sl.colorMappings ?? null,
-        })),
-        directoryHandleId: b.directoryHandleId ?? null,
-        _directoryFolderName: b._directoryFolderName ?? null,
-      }));
-    })(),
-    importedLayers: importedLayers
-      .filter(l => l.sourceConfig)
-      .map(l => {
-        const saved = { label: l.label, visible: l.visible, sourceConfig: l.sourceConfig };
-        if (isPlateauLayer(l)) saved.plateauOverrides = serializePlateauOverrides(l);
-        return saved;
-      }),
-    unassignedLayers: unassignedLayers.map(l => ({
-      name: l.name,
-      color: l.color,
-      source: l.source ?? null,
-      features: l.features ?? [],
-      heightOffset: l.heightOffset ?? 0,
-      _origin: l._origin ?? "gdb",
-      _hidden: !!l._hidden,
-      colorColumn: l.colorColumn ?? null,
-      colorMappings: l.colorMappings ?? null,
-    })),
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `session-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+    buildings,
+    importedLayers,
+    unassignedLayers,
+    isPlateauLayer,
+    serializePlateauOverrides,
+  });
+  downloadSessionJson(data);
 }
 
 async function handleLoadSession(e) {
@@ -4535,11 +4575,10 @@ async function handleLoadSession(e) {
   sessionInput.value = "";
   if (!file) return;
   try {
-    const data = JSON.parse(await file.text());
-    if (![1, 2].includes(data.version)) throw new Error("Unsupported session version.");
+    const data = parseSessionJson(await file.text());
     await restoreSession(data);
   } catch (err) {
-    alert(t("alert.failedSession", { message: err.message }));
+    notifyUser("error", "alert.failedSession", { message: err.message });
   } finally {
     hideLoadingOverlay();
   }
@@ -4621,11 +4660,9 @@ async function restoreSession(data) {
       && data.activeModelLevelIndex < modelLevels.length) {
     selectModelLevel(data.activeModelLevelIndex);
   }
-  renderLevelList(); syncRemoveAllBtnAndLod();
-  renderPlateauFloatingCard();
   renderImportedLayersList();
   refreshAllPlateauOverrideStyles();
-  applyUndergroundMode();
+  invalidateAndRerender();
 }
 
 async function restoreBuilding(bData) {
@@ -4848,12 +4885,11 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
     for (const b of siblings) applyShapefileLayerHeights(b);
     applyFiltersForTileset(tileset);
     refreshLodFilterIfEnabled();
-    renderLevelList(); syncRemoveAllBtnAndLod();
-    renderPlateauFloatingCard();
+    invalidateAndRerender();
   } catch (e) {
     if (!attached) cleanupUntrackedTileset(tileset);
     fileStatus.textContent = "";
-    alert(t("alert.failedLoad", { message: e.message }));
+    notifyUser("error", "alert.failedLoad", { message: e.message });
   } finally {
     setButtonLoading(loadFileBtn, false);
   }
@@ -4866,6 +4902,7 @@ function setBuildingHeightOffset(building, value) {
   for (const sibling of siblings) sibling.heightOffset = value;
   applyHeightOffset(building.tileset, value);
   for (const sibling of siblings) applyShapefileLayerHeights(sibling);
+  applyLevelContextVisibility();
 }
 
 function applyHeightOffset(tileset, offsetMeters) {

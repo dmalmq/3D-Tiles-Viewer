@@ -1372,6 +1372,63 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
   line-height: 1.25;
 }
 
+@media (max-width: 700px) {
+  #importModal {
+    width: calc(100vw - 24px);
+    height: min(720px, calc(100vh - 32px));
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 32px);
+  }
+
+  .import-source-list {
+    padding: 4px 10px 0;
+  }
+
+  .import-source-row {
+    gap: 8px;
+    padding: 8px 2px;
+  }
+
+  .import-source-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .import-source-cat,
+  .import-source-badge {
+    display: none;
+  }
+
+  .import-source-area {
+    min-width: 0;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .import-source-add-btn {
+    padding: 4px 10px !important;
+  }
+
+  .import-modal-body {
+    flex-direction: column;
+  }
+
+  .import-desc-pane {
+    width: auto;
+    max-height: 46%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .import-map-pane {
+    flex: 1 1 220px;
+    min-height: 220px;
+  }
+}
+
 /* ── Revit link split chip + dialog ─────────────────────────── */
 .building-link-chip {
   flex-shrink: 0;
@@ -2592,7 +2649,7 @@ body.left-collapsed #leftPanelResizer {
 /* ── Floating card (PLATEAU tools etc.) ────────────────────── */
 .floating-card {
   position: fixed;
-  right: 12px;
+  left: calc(var(--panel-width) + 12px);
   bottom: 12px;
   z-index: 1100;
   min-width: 280px;
@@ -2604,6 +2661,11 @@ body.left-collapsed #leftPanelResizer {
   padding: 12px 14px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.left-collapsed .floating-card {
+  left: 12px;
 }
 
 .floating-card[hidden] { display: none; }
@@ -2629,4 +2691,84 @@ body.left-collapsed #leftPanelResizer {
 
 html[data-theme="light"] .floating-card {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* ── Notifications (toasts) ───────────────────────────────── */
+#notificationContainer {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.notification {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-input);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+  animation: notification-in 180ms ease-out;
+}
+
+.notification.notification-leaving {
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 180ms ease-in, transform 180ms ease-in;
+}
+
+.notification-info {
+  border-left-color: var(--accent);
+}
+
+.notification-warn {
+  border-left-color: var(--warning);
+}
+
+.notification-error {
+  border-left-color: var(--danger-hover);
+}
+
+.notification-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.notification-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.notification-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+@keyframes notification-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+html[data-theme="light"] .notification {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
 }

@@ -5,6 +5,7 @@
 // they remain visible under the Scene tree's GDB staging group.
 
 import { t } from "./i18n.js";
+import { notifyUser } from "./notifications.js";
 import {
   matchLayerToTarget,
   summarizeGeometry,
@@ -546,7 +547,7 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
       removeDialog();
     } catch (e) {
       console.error(e);
-      alert(t("alert.failedGdb", { message: e?.message ?? String(e) }));
+      notifyUser("error", "alert.failedGdb", { message: e?.message ?? String(e) });
       submitting = false;
       importBtn.disabled = false;
       cancelBtn.disabled = false;

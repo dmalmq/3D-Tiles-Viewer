@@ -188,6 +188,7 @@ function compactNameText(value) {
 
 function isMeaningfulVariant(value) {
   if (!value) return false;
+  // eslint-disable-next-line no-control-regex -- intentional ASCII range for non-ASCII detection
   if (/[^\x00-\x7F]/.test(value)) return value.length >= 1;
   return value.length >= 3;
 }

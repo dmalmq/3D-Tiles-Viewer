@@ -56,6 +56,7 @@ export function extractFloorNumber(text) {
 //   "1F"                    → "1F"
 export function shortLevelName(name) {
   if (!name) return name;
+  // eslint-disable-next-line no-irregular-whitespace -- U+3000 (JP full-width space) is intentional
   const first = String(name).split(/[_\s（(　]+/, 1)[0];
   return first || String(name);
 }

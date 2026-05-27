@@ -1,0 +1,140 @@
+// Pure (de)serialization for session JSON. The actual reload/restore
+// orchestration lives in main.js — this module only owns the on-disk shape.
+
+import { serializeSourceLevelGroups } from "./levelMetadata.js";
+
+// Bump when changing the JSON shape in a non-backward-compatible way. Old
+// session files that match a previously-supported version remain loadable.
+export const SESSION_SCHEMA_VERSION = 2;
+export const SUPPORTED_SESSION_VERSIONS = [1, 2];
+
+export function isSupportedSessionVersion(v) {
+  return SUPPORTED_SESSION_VERSIONS.includes(v);
+}
+
+// Serialize the live in-memory state into the JSON shape persisted to disk.
+// The caller supplies the relevant slices of main.js state; this function does
+// not touch the DOM, Cesium, or any module-scope state.
+export function serializeSession({
+  imagery,
+  terrain,
+  plateauOverridesEnabled,
+  modelLevels,
+  activeModelLevelIndex,
+  buildings,
+  importedLayers,
+  unassignedLayers,
+  isPlateauLayer,
+  serializePlateauOverrides,
+}) {
+  // Assign a stable tilesetGroupId so siblings sharing one tileset can be
+  // reunited on restore (they will load the same tileset once).
+  const tilesetIds = new Map();
+  let nextId = 0;
+  const idFor = (tileset) => {
+    if (!tileset) return null;
+    if (!tilesetIds.has(tileset)) tilesetIds.set(tileset, ++nextId);
+    return tilesetIds.get(tileset);
+  };
+
+  return {
+    version: SESSION_SCHEMA_VERSION,
+    imagery,
+    terrain,
+    plateauOverridesEnabled,
+    modelLevels: modelLevels.map((m) => ({
+      floorNumber: m.floorNumber,
+      name: m.name,
+      elevation: m.elevation,
+    })),
+    activeModelLevelIndex,
+    buildings: buildings.map((b) => serializeBuilding(b, idFor)),
+    importedLayers: importedLayers
+      .filter((l) => l.sourceConfig)
+      .map((l) => {
+        const saved = { label: l.label, visible: l.visible, sourceConfig: l.sourceConfig };
+        if (isPlateauLayer(l)) saved.plateauOverrides = serializePlateauOverrides(l);
+        return saved;
+      }),
+    unassignedLayers: unassignedLayers.map(serializeUnassignedLayer),
+  };
+}
+
+function serializeBuilding(b, idFor) {
+  return {
+    name: b.name,
+    sourceType: b.sourceUrl ? "url" : "file",
+    sourceUrl: b.sourceUrl ?? null,
+    tilesetGroupId: idFor(b.tileset),
+    linkFilter: b.linkFilter ?? null,
+    heightOffset: b.heightOffset,
+    levelBaseElevation: b.levelBaseElevation,
+    aliases: b.aliases ?? [],
+    activeLevelIndex: b.activeLevelIndex,
+    levels: b.levels.map((l) => ({ name: l.name, key: l.key ?? null, floor: l.floor })),
+    sourceLevelGroups: serializeSourceLevelGroups(b.sourceLevelGroups),
+    shapefileLayers: b.shapefileLayers.map(serializeShapefileLayer),
+    directoryHandleId: b.directoryHandleId ?? null,
+    _directoryFolderName: b._directoryFolderName ?? null,
+  };
+}
+
+function serializeShapefileLayer(sl) {
+  return {
+    name: sl.name,
+    color: sl.color,
+    levelKey: sl.levelKey ?? null,
+    source: sl.source ?? null,
+    features: sl.features ?? [],
+    heightOffset: sl.heightOffset ?? 0,
+    _origin: sl._origin ?? null,
+    _hidden: !!sl._hidden,
+    colorColumn: sl.colorColumn ?? null,
+    colorMappings: sl.colorMappings ?? null,
+  };
+}
+
+function serializeUnassignedLayer(l) {
+  return {
+    name: l.name,
+    color: l.color,
+    source: l.source ?? null,
+    features: l.features ?? [],
+    heightOffset: l.heightOffset ?? 0,
+    _origin: l._origin ?? "gdb",
+    _hidden: !!l._hidden,
+    colorColumn: l.colorColumn ?? null,
+    colorMappings: l.colorMappings ?? null,
+  };
+}
+
+// Parse + validate a session JSON string. Throws Error with a user-friendly
+// message on any failure. Returns the parsed data on success.
+export function parseSessionJson(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Session file is not valid JSON.");
+  }
+  if (!data || typeof data !== "object") {
+    throw new Error("Session file did not contain a session object.");
+  }
+  if (!isSupportedSessionVersion(data.version)) {
+    throw new Error(`Unsupported session version: ${data.version}`);
+  }
+  return data;
+}
+
+// Trigger a browser download of the serialized session.
+export function downloadSessionJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename ?? `session-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
