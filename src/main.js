@@ -918,6 +918,8 @@ function createGsiTerrainProvider(type) {
       try {
         return decodeGsiHeightmap(await loadImage(url));
       } catch {
+        // GSI tile fetch or decode failed — return flat heightmap so terrain
+        // rendering continues without this tile's elevation data.
         return new Float32Array(256 * 256);
       }
     },
@@ -1786,6 +1788,7 @@ async function detectLevelsFromUrl(tilesetUrl) {
     if (!res.ok) return null;
     return await res.json();
   } catch {
+    // levels.json is optional — tilesets without it use auto-detected levels.
     return null;
   }
 }
@@ -3214,6 +3217,7 @@ function safeColorFromHex(hex, fallbackHex = COLOR2_DEFAULT) {
   try {
     return Color.fromCssColorString(hex);
   } catch {
+    // Invalid CSS color string — use fallback to keep rendering.
     return Color.fromCssColorString(fallbackHex);
   }
 }

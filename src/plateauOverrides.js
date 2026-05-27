@@ -67,6 +67,7 @@ export function getFeatureProperty(feature, propertyName) {
     const value = feature.getProperty(propertyName);
     if (value != null && value !== "") return String(value);
   } catch {
+    // Cesium feature property access can throw on malformed metadata — treat as missing.
     return null;
   }
   return null;

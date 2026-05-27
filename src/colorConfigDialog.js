@@ -408,6 +408,7 @@ function readPaletteLibrary() {
         typeof p.mappings === "object"
     );
   } catch {
+    // Malformed localStorage data — return empty library so user can start fresh.
     return [];
   }
 }
