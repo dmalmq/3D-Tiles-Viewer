@@ -102,6 +102,12 @@ import {
   pickThroughGhosts as pickThroughGhostsImpl,
   serializePlateauOverrides,
 } from "./plateauOverrides.js";
+import {
+  filterVisibleBuildings,
+  findLayerParent as findLayerParentImpl,
+  shapefilesForModelLevel as shapefilesForModelLevelImpl,
+  unassignedShapefilesAll as unassignedShapefilesAllImpl,
+} from "./sceneTreeView.js";
 
 // -- State --
 let viewer;
@@ -2413,11 +2419,7 @@ function selectLayerRange(target) {
 
 // Find a layer's current parent (buildingIndex or "unassigned").
 function findLayerParent(layer) {
-  if (unassignedLayers.indexOf(layer) !== -1) return "unassigned";
-  for (let bi = 0; bi < buildings.length; bi++) {
-    if (buildings[bi].shapefileLayers.indexOf(layer) !== -1) return bi;
-  }
-  return null;
+  return findLayerParentImpl(buildings, unassignedLayers, layer);
 }
 
 // Convert the current selection into drag entries (each with fromBi).
@@ -2446,11 +2448,7 @@ function renderLevelList() {
   levelListEl.innerHTML = "";
 
   const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
-  const visibleBuildings = filterRaw
-    ? buildings
-        .map((b, i) => ({ b, i }))
-        .filter(({ b }) => b.name.toLowerCase().includes(filterRaw))
-    : buildings.map((b, i) => ({ b, i }));
+  const visibleBuildings = filterVisibleBuildings(buildings, filterRaw);
 
   // Update item count + empty placeholder.
   if (sceneItemCountEl) {
@@ -2889,44 +2887,12 @@ function appendLevelChevron(li, expanded, onToggle) {
   li.appendChild(chev);
 }
 
-// Collect every shapefile (across all buildings) whose host-building level
-// resolves to the given floor number. Used by the global Model Levels panel.
 function shapefilesForModelLevel(floorNumber, filterRaw = "") {
-  const out = [];
-  for (let bi = 0; bi < buildings.length; bi++) {
-    const b = buildings[bi];
-    if (!b.shapefileLayers) continue;
-    for (const layer of b.shapefileLayers) {
-      if (layer.levelKey == null) continue;
-      const lvl = b.levels.find(l => (l.key ?? "") === layer.levelKey);
-      const fn = lvl ? levelNameToNumber(lvl.name) : null;
-      if (fn !== floorNumber) continue;
-      if (filterRaw && !(layer.name ?? "").toLowerCase().includes(filterRaw)) continue;
-      out.push({ building: b, buildingIndex: bi, layer });
-    }
-  }
-  return out;
+  return shapefilesForModelLevelImpl(buildings, floorNumber, filterRaw);
 }
 
-// All "unassigned" shapefiles in one flat list: building-attached layers whose
-// levelKey is null + the global unassignedLayers staging bucket. When
-// `filterRaw` is non-empty, narrow to layers whose name matches.
 function unassignedShapefilesAll(filterRaw = "") {
-  const out = [];
-  for (let bi = 0; bi < buildings.length; bi++) {
-    const b = buildings[bi];
-    if (!b.shapefileLayers) continue;
-    for (const layer of b.shapefileLayers) {
-      if (layer.levelKey != null) continue;
-      if (filterRaw && !(layer.name ?? "").toLowerCase().includes(filterRaw)) continue;
-      out.push({ building: b, buildingIndex: bi, layer });
-    }
-  }
-  for (const layer of unassignedLayers) {
-    if (filterRaw && !(layer.name ?? "").toLowerCase().includes(filterRaw)) continue;
-    out.push({ building: null, buildingIndex: "unassigned", layer });
-  }
-  return out;
+  return unassignedShapefilesAllImpl(buildings, unassignedLayers, filterRaw);
 }
 
 // Variant of buildShapefileChildren that handles entries from anywhere
