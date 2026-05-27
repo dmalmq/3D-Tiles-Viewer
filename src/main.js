@@ -92,6 +92,16 @@ import {
   applyEntitiesContextState,
   applyEntityContextState,
 } from "./contextGhosting.js";
+import {
+  CONTEXT_GHOST_COLOR,
+  applyPlateauLayerStyle as applyPlateauLayerStyleImpl,
+  getPlateauFeatureKey,
+  getPlateauFeatureLabel,
+  initializePlateauLayer,
+  isPlateauLayer,
+  pickThroughGhosts as pickThroughGhostsImpl,
+  serializePlateauOverrides,
+} from "./plateauOverrides.js";
 
 // -- State --
 let viewer;
@@ -877,31 +887,10 @@ function loadImage(url) {
 }
 
 // -- PLATEAU manual feature overrides --
-const PLATEAU_GHOST_COLOR = Color.fromCssColorString("rgba(255, 255, 255, 0.18)");
-const CONTEXT_GHOST_COLOR = Color.fromCssColorString("rgba(255, 255, 255, 0.18)");
-const PLATEAU_ID_PROPERTIES = [
-  "buildingIDAttribute_uro:buildingID",
-  "uro:buildingID",
-  "gml_id",
-  "id",
-  "featureId",
-  "featureID",
-  "fid",
-];
-const PLATEAU_LABEL_PROPERTIES = [
-  ...PLATEAU_ID_PROPERTIES,
-  "name",
-  "type",
-  "class",
-  "function",
-  "measuredHeight",
-  "_lod",
-];
-
-function isPlateauLayer(layer) {
-  return layer?.type === "tileset" &&
-    ["plateau-buildings", "plateau-3dtiles"].includes(layer.sourceConfig?.kind);
-}
+// Pure helpers and the override-style application live in plateauOverrides.js.
+// What remains here is the wiring to module-scope state (importedLayers,
+// selectedPlateauFeature, plateauOverridesEnabled, activeModelLevelIndex) and
+// the DOM-bound floating card.
 
 function getPlateauLayers() {
   return importedLayers.filter(isPlateauLayer);
@@ -915,142 +904,27 @@ function isContextGhosted() {
   return activeModelLevelIndex >= 0;
 }
 
-function initializePlateauLayer(layer) {
-  if (!isPlateauLayer(layer) || !layer.data) return;
-  if (!(layer.plateauOverrides instanceof Map)) {
-    layer.plateauOverrides = deserializePlateauOverrides(layer.plateauOverrides);
-  }
-  if (!layer._plateauOriginalStyleCaptured) {
-    layer._plateauOriginalStyle = layer.data.style;
-    layer._plateauOriginalStyleCaptured = true;
-  }
-}
-
-function deserializePlateauOverrides(saved = []) {
-  const map = new Map();
-  if (!Array.isArray(saved)) return map;
-  for (const entry of saved) {
-    if (!entry?.featureKey || !["ghost", "hidden"].includes(entry.mode)) continue;
-    map.set(entry.featureKey, {
-      mode: entry.mode,
-      label: entry.label || entry.featureKey,
-    });
-  }
-  return map;
-}
-
-function serializePlateauOverrides(layer) {
-  initializePlateauLayer(layer);
-  return [...(layer.plateauOverrides ?? new Map()).entries()].map(([featureKey, entry]) => ({
-    featureKey,
-    mode: entry.mode,
-    label: entry.label || featureKey,
-  }));
-}
-
-function getFeatureTileset(feature) {
-  if (!feature) return null;
-  if (feature.tileset) return feature.tileset;
-  if (feature.content?.tileset) return feature.content.tileset;
-  if (feature.primitive?.content?.tileset) return feature.primitive.content.tileset;
-  if (feature.primitive?._content?.tileset) return feature.primitive._content.tileset;
-  return feature.primitive?.root ? feature.primitive : null;
-}
-
 function findPlateauLayerForFeature(feature) {
   if (!feature || typeof feature.getProperty !== "function") return null;
-  const tileset = getFeatureTileset(feature);
-  if (!tileset) return null;
-  return getPlateauLayers().find((layer) => layer.data === tileset) || null;
+  return getPlateauLayers().find((layer) => layer.data === feature.tileset
+    || layer.data === feature.content?.tileset
+    || layer.data === feature.primitive?.content?.tileset
+    || layer.data === feature.primitive?._content?.tileset
+    || (feature.primitive?.root && layer.data === feature.primitive)) || null;
 }
 
 function pickThroughGhosts(position) {
-  const list = viewer.scene.drillPick(position) ?? [];
-  for (const p of list) {
-    const layer = findPlateauLayerForFeature(p);
-    if (layer && getPlateauOverride(layer, p)?.mode === "ghost") continue;
-    return p;
-  }
-  return list[0];
-}
-
-function getFeatureProperty(feature, propertyName) {
-  try {
-    const value = feature.getProperty(propertyName);
-    if (value != null && value !== "") return String(value);
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function getPlateauFeatureKey(feature) {
-  for (const propertyName of PLATEAU_ID_PROPERTIES) {
-    const value = getFeatureProperty(feature, propertyName);
-    if (value) return `${propertyName}:${value}`;
-  }
-
-  const contentUrl = feature.content?.url
-    || feature.primitive?.content?.url
-    || feature.primitive?._content?.url
-    || "";
-  const featureId = feature.featureId ?? feature._batchId;
-  if (contentUrl || featureId != null) {
-    return `feature:${contentUrl}:${featureId ?? "unknown"}`;
-  }
-
-  return null;
-}
-
-function getPlateauFeatureLabel(feature, featureKey) {
-  for (const propertyName of PLATEAU_LABEL_PROPERTIES) {
-    const value = getFeatureProperty(feature, propertyName);
-    if (value) return value;
-  }
-  return featureKey;
-}
-
-function getPlateauOverride(layer, feature) {
-  const featureKey = getPlateauFeatureKey(feature);
-  return featureKey ? layer.plateauOverrides?.get(featureKey) : null;
+  return pickThroughGhostsImpl(position, {
+    drillPick: (p) => viewer.scene.drillPick(p),
+    layerForFeature: findPlateauLayerForFeature,
+  });
 }
 
 function applyPlateauLayerStyle(layer) {
-  if (!isPlateauLayer(layer) || !layer.data) return;
-  if (!(layer.plateauOverrides instanceof Map)) {
-    layer.plateauOverrides = deserializePlateauOverrides(layer.plateauOverrides);
-  }
-  if (!layer._plateauOriginalStyleCaptured) {
-    layer._plateauOriginalStyle = layer.data.style;
-    layer._plateauOriginalStyleCaptured = true;
-  }
-
-  const hasOverrides = layer.plateauOverrides.size > 0;
-  const contextGhosted = isContextGhosted();
-  if (!contextGhosted && (!plateauOverridesEnabled || !hasOverrides)) {
-    layer.data.style = layer._plateauOriginalStyle;
-    layer.data.makeStyleDirty();
-    layer._plateauOverrideStyleApplied = false;
-    return;
-  }
-
-  const style = new Cesium3DTileStyle();
-  style.show = {
-    evaluate: (feature) => {
-      const mode = plateauOverridesEnabled ? getPlateauOverride(layer, feature)?.mode : null;
-      return mode !== "hidden";
-    },
-  };
-  style.color = {
-    evaluateColor: (feature, result) => {
-      const mode = plateauOverridesEnabled ? getPlateauOverride(layer, feature)?.mode : null;
-      if (mode === "ghost" || contextGhosted) return Color.clone(PLATEAU_GHOST_COLOR, result);
-      return Color.clone(Color.WHITE, result);
-    },
-  };
-  layer.data.style = style;
-  layer.data.makeStyleDirty();
-  layer._plateauOverrideStyleApplied = true;
+  applyPlateauLayerStyleImpl(layer, {
+    overridesEnabled: plateauOverridesEnabled,
+    contextGhosted: isContextGhosted(),
+  });
 }
 
 function refreshAllPlateauOverrideStyles() {
