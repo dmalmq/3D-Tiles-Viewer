@@ -883,6 +883,296 @@ select option {
   color: #ff6b6b;
 }
 
+.layer-floor-chip {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.layer-floor-chip:hover {
+  background: var(--bg-hover);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.layer-floor-chip.unassigned {
+  background: transparent;
+  color: var(--text-secondary);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* ── App-wide file drop overlay ───────────────────────────── */
+#appDropOverlay {
+  position: fixed;
+  inset: 0;
+  background: var(--accent-dim);
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1800;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  backdrop-filter: blur(2px);
+}
+#appDropOverlay.visible { opacity: 1; }
+#appDropOverlay .app-drop-overlay-message {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 18px 28px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  border: 1px solid var(--accent);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* ── Import Review Tray ───────────────────────────────────── */
+.import-tray {
+  position: fixed;
+  top: var(--header-height);
+  left: var(--panel-width);
+  bottom: 0;
+  width: 380px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 1500;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.45);
+  transform: translateX(-12px);
+  opacity: 0;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+.import-tray.with-map { width: 760px; }
+.import-tray.open {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.import-tray-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.import-tray.with-map .import-tray-body { width: 380px; flex-shrink: 0; }
+.import-tray.with-map .import-tray-map { flex: 1; }
+.import-tray-map {
+  background: var(--bg-base);
+  border-left: 1px solid var(--border);
+}
+
+.import-tray-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.import-tray-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.import-tray-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 16px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.import-tray-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.import-tray-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-tray-group-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.import-tray-group.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.import-tray-group-head { cursor: pointer; }
+
+.import-tray-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 16px;
+}
+
+.import-tray-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.import-tray-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  min-height: 32px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border);
+}
+.import-tray-chevron {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  width: 18px;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.import-tray-group-label {
+  flex: 1;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-tray-group-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.import-tray-group-pickers {
+  display: flex;
+  gap: 4px;
+  padding: 5px 8px;
+  min-height: 30px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.import-tray-group-pickers select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px;
+  font-size: 11px;
+  background-color: var(--bg-input);
+  background-image: none;
+  color: var(--text-primary);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+}
+.import-tray-icon-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-input);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.import-tray-icon-btn.accept:hover:not(:disabled) {
+  background: rgba(76, 175, 80, 0.25);
+  color: #b6efb6;
+  border-color: #4caf50;
+}
+.import-tray-icon-btn.skip:hover {
+  background: rgba(220, 53, 69, 0.25);
+  color: #ffbcbc;
+  border-color: rgba(220, 53, 69, 0.8);
+}
+.import-tray-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.import-tray-group.collapsed .import-tray-group-pickers { display: none; }
+
+.import-tray-members {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.import-tray-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  min-height: 26px;
+  font-size: 11px;
+}
+.import-tray-member.skipped { opacity: 0.45; }
+.import-tray-member:hover { background: var(--bg-hover); }
+.import-tray-member-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.import-tray-confidence {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.import-tray-confidence.conf-high   { background: #4caf50; }
+.import-tray-confidence.conf-medium { background: var(--warning); }
+.import-tray-confidence.conf-none   { background: rgba(220, 53, 69, 0.7); }
+
+.import-tray-member select {
+  padding: 2px 4px;
+  font-size: 10px;
+  background-color: var(--bg-input);
+  background-image: none;
+  color: var(--text-primary);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  max-width: 100px;
+}
+
+.import-tray-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
 /* ── Floating context menu ────────────────────────────────── */
 .floating-menu {
   position: absolute;
@@ -1543,7 +1833,8 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
 
 .color-config-column-row select {
   flex: 1;
-  background: var(--bg-input, #2a2a2a);
+  background-color: var(--bg-input, #2a2a2a);
+  background-image: none;
   color: var(--text-primary, #e0e0e0);
   border: 1px solid var(--border, #333);
   border-radius: 4px;

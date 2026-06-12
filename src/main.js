@@ -64,6 +64,8 @@ import { openImportDataModal, restoreImportedLayer } from "./importDataModal.js"
 import { parseCityGml } from "./cityGmlLoader.js";
 import { loadGdb } from "./gdbLoader.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
+import { openImportReviewTray } from "./importReviewTray.js";
+import { classifyImportFiles } from "./importPipeline.js";
 import { openColorConfigDialog } from "./colorConfigDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
 import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber, shortLevelName } from "./floorSplit.js";
@@ -416,6 +418,7 @@ function init() {
   initLeftActionBar();
   initSceneFilter();
   initLeftPanelResizer();
+  initFileDropZone();
 }
 
 async function initializeTerrainProviders(savedToken) {
@@ -589,6 +592,151 @@ function initSceneFilter() {
     renderLevelList();
     renderImportedLayersList();
   });
+}
+
+// Document-level drop zone: drop a .zip / .gdb folder anywhere on the app
+// and route to the right importer. Per-row drops onto building / level rows
+// in the scene tree go through dropFilesOnTarget below and preempt this.
+function initFileDropZone() {
+  let overlay = null;
+  let depth = 0;
+
+  function ensureOverlay() {
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "appDropOverlay";
+    overlay.innerHTML = `<div class="app-drop-overlay-message"></div>`;
+    overlay.querySelector(".app-drop-overlay-message").textContent =
+      t("drop.overlayMessage");
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function hasFiles(e) {
+    return Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  }
+
+  window.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    depth++;
+    ensureOverlay().classList.add("visible");
+  });
+  window.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+  });
+  window.addEventListener("dragleave", () => {
+    if (depth > 0) depth--;
+    if (depth === 0) overlay?.classList.remove("visible");
+  });
+  window.addEventListener("drop", async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    overlay?.classList.remove("visible");
+    const items = collectDroppedItems(e.dataTransfer);
+    await routeDroppedFiles(items, null);
+  });
+}
+
+// Collect dropped DataTransferItems synchronously so async file traversal
+// has stable references. Returns either a `{ kind: "files", files: File[] }`
+// for plain file drops, or `{ kind: "directory", entry }` when a folder
+// was dropped (used for .gdb directories).
+function collectDroppedItems(dataTransfer) {
+  // Try to detect a single dropped directory via webkitGetAsEntry, which
+  // only stays valid in this tick.
+  for (const item of dataTransfer.items ?? []) {
+    if (item.kind !== "file") continue;
+    const entry = item.webkitGetAsEntry?.();
+    if (entry?.isDirectory) {
+      return { kind: "directory", entry };
+    }
+  }
+  return { kind: "files", files: Array.from(dataTransfer.files ?? []) };
+}
+
+// Route arriving files through the single classifier so file-picker
+// buttons, drop-on-viewport, and drop-on-tree-row all share semantics.
+// `defaults` carries optional { defaultBuildingIndex, defaultLevelKey }
+// from the surface that triggered the import.
+async function routeDroppedFiles(items, defaults) {
+  const classified = classifyImportFiles(items);
+  switch (classified.kind) {
+    case "gdb-zip":
+      await runGdbLoad(classified.file, defaults);
+      return;
+    case "gdb-dir-files":
+      await runGdbLoad(classified.files, defaults);
+      return;
+    case "gdb-dir-entry": {
+      const files = await flattenDirectoryEntry(classified.entry);
+      if (files.length === 0) {
+        notifyUser("warn", "drop.emptyFolder");
+        return;
+      }
+      await runGdbLoad(files, defaults);
+      return;
+    }
+    case "shp":
+      await routeDroppedShapefile(classified.file, defaults);
+      return;
+    case "unsupported":
+      if (classified.reason === "type") {
+        notifyUser("warn", "drop.unsupportedType", { name: classified.name ?? "" });
+      }
+      return;
+  }
+}
+
+async function flattenDirectoryEntry(rootEntry) {
+  const out = [];
+  async function visit(entry, prefix) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      file.relativePath = prefix + entry.name;
+      out.push(file);
+      return;
+    }
+    if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const childPrefix = prefix + entry.name + "/";
+      // readEntries returns up to ~100 at a time; loop until empty.
+      let batch;
+      do {
+        batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        for (const child of batch) await visit(child, childPrefix);
+      } while (batch.length > 0);
+    }
+  }
+  await visit(rootEntry, "");
+  return out;
+}
+
+async function routeDroppedShapefile(file, defaults) {
+  const buildingIndex = defaults?.defaultBuildingIndex;
+  const target = typeof buildingIndex === "number" && buildings[buildingIndex]
+    ? { buildingIndex }
+    : {};
+  await runShpImport(file, target);
+}
+
+// Per-row drop handler delegated from the scene tree. Called for any
+// [data-drop-target] element when the user releases dragged OS files.
+async function dropFilesOnTarget(target, files, event) {
+  void event;
+  const items = { kind: "files", files: Array.from(files ?? []) };
+  const defaults = {};
+  if (target?.kind === "building" || target?.kind === "buildingLevel") {
+    if (typeof target.bi === "number") defaults.defaultBuildingIndex = target.bi;
+    if (target.levelKey != null) defaults.defaultLevelKey = target.levelKey;
+  } else if (target?.kind === "modelLevel" && target.floorNumber != null) {
+    // Resolve floor number to a building level on a best-effort basis once
+    // the user picks a building in the tray.
+    defaults.defaultLevelKey = null;
+    defaults.defaultFloorNumber = target.floorNumber;
+  }
+  await routeDroppedFiles(items, defaults);
 }
 
 // Persist each panel section's collapsed state in localStorage keyed by the
@@ -2504,10 +2652,12 @@ function getSceneTreeCallbacks() {
     toggleLayerVisibility: handleSceneTreeLayerVisibility,
     removeLayer: handleSceneTreeLayerRemove,
     showLayerContextMenu: handleSceneTreeLayerContextMenu,
+    openLayerFloorPicker: handleSceneTreeOpenLayerFloorPicker,
     startLayerDrag: handleSceneTreeLayerDragStart,
     endLayerDrag: handleSceneTreeLayerDragEnd,
     dropWouldBeNoop,
     dropLayer: handleSceneTreeLayerDrop,
+    dropFilesOnTarget,
   };
 }
 
@@ -2755,14 +2905,14 @@ async function handleGdbZipSelect(e) {
   const file = e.target.files[0];
   gdbInput.value = "";
   if (!file) return;
-  await runGdbLoad(file);
+  await routeDroppedFiles({ kind: "files", files: [file] }, null);
 }
 
 async function handleGdbDirSelect(e) {
   const files = e.target.files; // FileList from a webkitdirectory pick.
   gdbDirInput.value = "";
   if (!files.length) return;
-  await runGdbLoad(files);
+  await routeDroppedFiles({ kind: "files", files: Array.from(files) }, null);
 }
 
 // Drop a staged layer onto a building. If the source features carry a `floor`
@@ -2822,7 +2972,7 @@ async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
 
 // Parse a .gdb input, then hand it to the review dialog. Selected rows import
 // immediately; unselected renderable rows return as staged GDB work.
-async function runGdbLoad(input) {
+async function runGdbLoad(input, defaults = null) {
   if (transient.gdbBusy) return;
   transient.gdbBusy = true;
   showLoadingOverlay(t("gdb.loading"));
@@ -2840,10 +2990,17 @@ async function runGdbLoad(input) {
   const { featureCollections, warnings } = parsed;
   if (warnings?.length) console.warn("[.gdb] warnings:", warnings);
   if (featureCollections?.length) {
-    openGdbImportDialog({
+    openImportReviewTray({
       featureCollections,
       buildings,
+      viewer,
+      mode: "import",
       onImport: applyGdbDecisions,
+      onSilentImport: applyGdbDecisions,
+      defaultBuildingIndex: defaults?.defaultBuildingIndex ?? null,
+      defaultLevelKey: defaults?.defaultLevelKey ?? null,
+      onOpenClassicTable: () =>
+        openGdbImportDialog({ featureCollections, buildings, onImport: applyGdbDecisions }),
     });
   }
   hideLoadingOverlay();
@@ -2900,11 +3057,19 @@ function openGdbReassignDialog() {
     features: entry.layer.features,
     _existingEntry: entry,
   }));
-  openGdbImportDialog({
+  openImportReviewTray({
     featureCollections,
     buildings,
-    onImport: applyReassignDecisions,
+    viewer,
     mode: "reassign",
+    onImport: applyReassignDecisions,
+    onOpenClassicTable: () =>
+      openGdbImportDialog({
+        featureCollections,
+        buildings,
+        onImport: applyReassignDecisions,
+        mode: "reassign",
+      }),
   });
 }
 
@@ -3066,17 +3231,25 @@ function transferBetweenBuildings(layer, fromBi, toBi, newLevelKey) {
 async function handleShpSelect(e) {
   const file = e.target.files[0];
   shpInput.value = "";
-  if (!file || !transient.shpPendingTarget) {
+  if (!file) {
     transient.shpPendingTarget = null;
     return;
   }
-  const { buildingIndex } = transient.shpPendingTarget;
+  const buildingIndex = transient.shpPendingTarget?.buildingIndex ?? null;
   transient.shpPendingTarget = null;
-  const b = buildings[buildingIndex];
+  await runShpImport(file, { buildingIndex });
+}
+
+// Parse a single shapefile .zip and either attach it to the given building
+// or land it in the unassigned bucket. Shared by the file-picker flow and
+// the OS drag-drop flow so both honour the same heuristics.
+async function runShpImport(file, { buildingIndex } = {}) {
+  if (!file) return;
   try {
     const { default: shp } = await import("shpjs");
     const raw = await shp(await file.arrayBuffer());
     const fcs = Array.isArray(raw) ? raw : [raw];
+    const b = typeof buildingIndex === "number" ? buildings[buildingIndex] : null;
     if (b) {
       for (const fc of fcs) await addFeatureCollectionLayer(b, fc);
       applyLevelToShapefilesForBuilding(b);
@@ -3153,9 +3326,18 @@ async function addUnassignedLayer(fc, opts = {}) {
   const origin = opts.origin ?? "gdb";
   const layer = { name, dataSource, color, features, source, heightOffset: 0, _origin: origin, colorColumn: null, colorMappings: null };
   applyEntityStyling(dataSource, name, layer);
-  dataSource.show = false;
   viewer.dataSources.add(dataSource);
   unassignedLayers.push(layer);
+  // Render staged layers ghosted so the user can see what's pending in 3D
+  // rather than guessing from the panel alone. Bail out when the staging
+  // bucket gets unreasonably large — many entities + ghost-restyling thrash
+  // the Cesium scene more than the discoverability win is worth.
+  if (unassignedLayers.length > 100) {
+    dataSource.show = false;
+  } else {
+    dataSource.show = true;
+    applyDataSourceContextGhosting(dataSource, true, true);
+  }
   return layer;
 }
 
@@ -3184,6 +3366,9 @@ function moveUnassignedLayerToBuilding(layer, buildingIndex, levelKey) {
   };
   building.shapefileLayers.push(moved);
   moved.dataSource.show = true;
+  // Restore the original (non-ghosted) materials cached when the layer was
+  // first added to the unassigned bucket.
+  applyDataSourceContextGhosting(moved.dataSource, false, true);
   applyShapefileLayerHeight(building, moved);
   applyLevelToShapefilesForBuilding(building);
   invalidateAndRerender();
@@ -3420,25 +3605,31 @@ function appendConfigureColorsMenuItem(ul, layer) {
   ul.appendChild(colorsLi);
 }
 
-function showMoveToFloorMenu(event, building, layer) {
+// Click-handler for the inline floor chip on layer rows. For layers attached
+// to a building, opens a flat popover listing All Floors + every model-level;
+// for unassigned layers, delegates to the building+floor picker that
+// right-click previously surfaced.
+function handleSceneTreeOpenLayerFloorPicker({ layer, buildingIndex }, event) {
+  if (!layer) return;
+  if (typeof buildingIndex === "number") {
+    const building = buildings[buildingIndex];
+    if (building) showLayerFloorPicker(event, building, layer);
+  } else {
+    showMoveUnassignedToBuildingMenu(event, layer);
+  }
+}
+
+function showLayerFloorPicker(event, building, layer) {
   floatingMenu.innerHTML = "";
   const ul = document.createElement("ul");
 
-  // Resolve the layer's current floor number (if any) so we can mark the
-  // matching model-level entry as the disabled "current" choice.
   const fromBi = buildings.indexOf(building);
   const currentLvl = layer.levelKey != null
-    ? building.levels.find(l => (l.key ?? "") === layer.levelKey)
+    ? building.levels.find((l) => (l.key ?? "") === layer.levelKey)
     : null;
   const currentFn = currentLvl ? levelNameToNumber(currentLvl.name) : null;
 
-  // "Move to floor" submenu — driven by the global model-levels list.
-  const moveParent = document.createElement("li");
-  moveParent.className = "submenu-parent";
-  moveParent.textContent = t("ctx.layer.moveToFloor");
-  const moveSub = document.createElement("ul");
-  moveSub.className = "submenu";
-  const buildMoveItem = (label, action, disabled) => {
+  const buildItem = (label, action, disabled) => {
     const li = document.createElement("li");
     li.textContent = label;
     if (disabled) {
@@ -3450,27 +3641,29 @@ function showMoveToFloorMenu(event, building, layer) {
         action();
       });
     }
-    moveSub.appendChild(li);
+    ul.appendChild(li);
   };
-  buildMoveItem(
+  buildItem(
     t("level.allFloors"),
     () => moveShapefileToLevel(building, layer, null),
-    layer.levelKey == null
+    layer.levelKey == null,
   );
-  // Top floor first to match the panel order. Every model-level is enabled
-  // unless it's the layer's current floor — when the source building has no
-  // matching level, the action transfers across buildings.
   for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
     const ml = modelLevels[mli];
-    const disabled = currentFn === ml.floorNumber;
-    buildMoveItem(
+    buildItem(
       ml.name,
       () => moveLayerToModelLevel(building, fromBi, layer, ml.floorNumber),
-      disabled,
+      currentFn === ml.floorNumber,
     );
   }
-  moveParent.appendChild(moveSub);
-  ul.appendChild(moveParent);
+
+  floatingMenu.appendChild(ul);
+  positionFloatingMenu(event);
+}
+
+function showMoveToFloorMenu(event, building, layer) {
+  floatingMenu.innerHTML = "";
+  const ul = document.createElement("ul");
 
   // Adjust height (opens slider popover)
   const adjustLi = document.createElement("li");

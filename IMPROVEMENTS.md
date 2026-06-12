@@ -313,40 +313,31 @@ refactors.
 
 ### 4.1 Stable section-collapse keys
 
-Status: mostly done.
+Status: done.
 
-Required guardrail:
-
-- Keep collapse state keyed by stable section identity, not translated label
-  text.
+- Section collapse state keyed by stable `section.id` (e.g., `importedLayersSection`,
+  `cityGmlSection`, `environmentSection`), not translated label text.
+- Buildings section uses `transient.buildingsSectionExpanded` flag.
 
 ### 4.2 Reset `savedGlobeBaseColor`
 
-Status: mostly done.
+Status: done.
 
-Required guardrail:
-
-- Keep globe base-color restoration tied to exiting underground/level-context
-  mode.
-- Do not leave captured globe color in durable state.
+- Globe base-color capture/restoration tied to entering/exiting underground mode.
+- Stored in `transient.savedGlobeBaseColor`, reset to `null` on exit.
+- Not persisted in durable state.
 
 ### 4.3 Dependency audit
 
-Status: not clean.
+Status: done.
 
-Current audit paths:
-
-- `cesium -> @cesium/engine -> dompurify`
-- `cesium -> @cesium/engine -> protobufjs -> @protobufjs/utf8`
-- `vite -> postcss`
-
-Required work:
-
-- Run `npm audit`.
-- Prefer safe direct dependency bumps that update transitive packages through
-  normal semver.
-- Do not force incompatible Cesium/Vite upgrades just to silence audit output.
-- Document any remaining advisory that cannot be safely resolved.
+- `npm audit` clean (0 vulnerabilities).
+- Updated transitive dependencies via `npm audit fix`:
+  - `dompurify`: 3.3.3 → 3.4.6
+  - `postcss`: 8.5.8 → 8.5.15
+  - `protobufjs`: 8.0.1 → 8.4.2 (now bundles @protobufjs/* subpackages)
+  - `nanoid`: 3.3.11 → 3.3.12
+- All updates within normal semver ranges; no breaking changes to Cesium/Vite.
 
 ### 4.4 Consider Prettier
 

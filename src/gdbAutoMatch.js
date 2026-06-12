@@ -197,7 +197,7 @@ function stripExt(name) {
   return String(name ?? "").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
 }
 
-function detectSource(features) {
+export function detectSource(features) {
   if (!features?.length) return null;
   const counts = new Map();
   for (const f of features) {
