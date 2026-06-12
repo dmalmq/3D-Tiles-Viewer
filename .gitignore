@@ -19,3 +19,6 @@ ui-*.png
 .claude/
 .playwright-mcp/
 test-results/
+
+CLAUDE.md
+IMPROVEMENTS.md
