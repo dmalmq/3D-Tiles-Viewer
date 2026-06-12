@@ -12,6 +12,8 @@ ui-*.png
 /split-*.png
 /multiselect.png
 /resized-*.png
+/tray-*.png
+/chip-*.png
 /snapshot-*.md
 
 .claude/

@@ -153,6 +153,14 @@ function installSceneTreeDelegates(container) {
     if (!targetEl) return;
     const target = targetEl.__dropTarget;
     const callbacks = getCallbacks(container);
+    const isFileDrag = Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    if (isFileDrag) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "copy";
+      targetEl.classList.add("drop-target-active");
+      return;
+    }
     if (callbacks.dropWouldBeNoop?.(target)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
@@ -170,6 +178,20 @@ function installSceneTreeDelegates(container) {
     if (!targetEl) return;
     const target = targetEl.__dropTarget;
     const callbacks = getCallbacks(container);
+
+    // OS file drop on a tree row preempts the intra-tree layer drag path so
+    // the document-level drop listener doesn't also fire.
+    const isFileDrag = Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    if (isFileDrag) {
+      event.preventDefault();
+      event.stopPropagation();
+      targetEl.classList.remove("drop-target-active");
+      // Stash files before any await — DataTransfer entries don't survive past this tick.
+      const files = Array.from(event.dataTransfer.files ?? []);
+      await callbacks.dropFilesOnTarget?.(target, files, event);
+      return;
+    }
+
     if (callbacks.dropWouldBeNoop?.(target)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -225,6 +247,10 @@ function handleSceneAction(container, el, event) {
     case "remove-layer":
       event.stopPropagation();
       callbacks.removeLayer?.(ctx);
+      break;
+    case "open-floor-picker":
+      event.stopPropagation();
+      callbacks.openLayerFloorPicker?.(ctx, event);
       break;
   }
 }
@@ -479,6 +505,8 @@ function buildLayerRow({ building, buildingIndex, layer }, { flat, callbacks, se
   row.appendChild(swatch);
   appendText(row, "span", "shp-tree-name", layer.name);
 
+  row.appendChild(buildLayerFloorChip(layer, building, buildingIndex, callbacks));
+
   const removeBtn = document.createElement("button");
   removeBtn.className = "shp-tree-remove-btn";
   removeBtn.textContent = translate(callbacks, "generic.removeX");
@@ -492,6 +520,28 @@ function buildLayerRow({ building, buildingIndex, layer }, { flat, callbacks, se
   setContext(row, "layer", { buildingIndex, layer });
   setDragLayer(row, layer, fromBi);
   return row;
+}
+
+function buildLayerFloorChip(layer, building, buildingIndex, callbacks) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "layer-floor-chip";
+  let label;
+  if (!building) {
+    label = translate(callbacks, "chip.unassigned");
+    chip.classList.add("unassigned");
+    chip.title = translate(callbacks, "chip.titleUnassigned");
+  } else if (layer.levelKey == null) {
+    label = translate(callbacks, "chip.allFloors");
+    chip.title = translate(callbacks, "chip.title");
+  } else {
+    const lvl = building.levels?.find((l) => (l.key ?? "") === layer.levelKey);
+    label = lvl?.name ?? translate(callbacks, "chip.allFloors");
+    chip.title = translate(callbacks, "chip.title");
+  }
+  chip.textContent = label;
+  setAction(chip, "open-floor-picker", { buildingIndex, layer });
+  return chip;
 }
 
 function appendChevron(row, expanded, action, context = {}) {
