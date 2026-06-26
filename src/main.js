@@ -1,15 +1,10 @@
 import {
   Viewer,
   Ion,
-  IonResource,
   IonImageryProvider,
   OpenStreetMapImageryProvider,
   ArcGisMapServerImageryProvider,
-  UrlTemplateImageryProvider,
   EllipsoidTerrainProvider,
-  CesiumTerrainProvider,
-  CustomHeightmapTerrainProvider,
-  WebMercatorTilingScheme,
   createWorldTerrainAsync,
   Cartographic,
   Cartesian2,
@@ -22,9 +17,7 @@ import {
   CustomDataSource,
   PolygonHierarchy,
   ConstantProperty,
-  ConstantPositionProperty,
   JulianDate,
-  ArcType,
   Color,
   ClippingPlane,
   ClippingPlaneCollection,
@@ -81,11 +74,7 @@ import {
   serializeSession,
   parseSessionJson,
   downloadSessionJson,
-  applySavedModelLevelOverrides,
   createSessionRestorePlan,
-  isValidActiveModelLevelIndex,
-  normalizeRestoredShapefileLayerData,
-  normalizeRestoredUnassignedLayerData,
 } from "./session.js";
 import { notifyUser } from "./notifications.js";
 import {
@@ -120,6 +109,22 @@ import {
   findLayerParent as findLayerParentImpl,
 } from "./sceneTreeView.js";
 import { renderSceneTree } from "./sceneTreeRenderer.js";
+import {
+  initializeTerrainProviders as initTerrainProviders,
+  switchImagery as switchImageryImpl,
+  switchTerrain as switchTerrainImpl,
+  applyUndergroundMode as applyUndergroundModeImpl,
+} from "./cesiumInit.js";
+import { restoreSession as restoreSessionImpl } from "./sessionRestore.js";
+import { exportViewerPackage } from "./venueExport.js";
+import { publishToServer } from "./venuePublish.js";
+import { openPublishLinksDialog } from "./publishLinksDialog.js";
+import { openSessionBackupsDialog, createAutoBackup } from "./sessionBackupsDialog.js";
+import { renderVenuesPanel, promptVenueName } from "./venuePanel.js";
+import {
+  applyShapefileLayerHeight as applyShapefileLayerHeightImpl,
+  applyShapefileLayerHeights as applyShapefileLayerHeightsImpl,
+} from "./shapefilePlacement.js";
 
 // -- State --
 let viewer;
@@ -147,6 +152,8 @@ const unassignedLayers = [];
 // out to each building.
 let modelLevels = []; // { floorNumber, name, elevation }
 let activeModelLevelIndex = -1; // -1 = "All floors"
+let venues = []; // [{ id, name, description, _expanded? }]
+let activeVenueFilter = null; // venue id or null
 let selectedPlateauFeature = null;
 let plateauOverridesEnabled = true;
 
@@ -194,15 +201,6 @@ const MARKER_LABEL_PIXEL_OFFSET = new Cartesian2(0, -10);
 const LABEL_MAX_DISTANCE_M = 300;
 const LABEL_DISTANCE_DISPLAY_CONDITION = new DistanceDisplayCondition(0, LABEL_MAX_DISTANCE_M);
 
-// Sit shapefile polygons 50 mm above the floor plane to avoid z-fighting with the floor mesh.
-const SHAPEFILE_FLOOR_CLEARANCE_M = 0.05;
-// Point markers are vertical primitives (a screen-space circle anchored at a
-// 3D position) so 50 mm isn't enough — depth testing clips the bottom of the
-// marker into the floor. Lift them an extra 100 mm.
-const POINT_EXTRA_HEIGHT_M = 0.25;
-// Fixture layers (_Fixture) need extra lift above the floor plane to avoid
-// overlapping with other units and the floor mesh itself.
-const FIXTURE_EXTRA_HEIGHT_M = 0.10;
 // Transient module-scope state — short-lived flags that coordinate between
 // async UI handlers. Grouped to keep their lifecycle visible at a glance.
 const transient = {
@@ -210,7 +208,7 @@ const transient = {
   shpPendingTarget: null,    // { buildingIndex } set by the building-row + button
   gdbBusy: false,            // serialize concurrent gdal3.js loads
   reloadTargetIndex: -1,
-  savedGlobeBaseColor: null, // captured when entering underground mode
+
   // Search UI state
   searchQuery: "",
   searchResults: [],
@@ -262,6 +260,10 @@ const leftSettingsPopover = document.getElementById("leftSettingsPopover");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
 const levelListEl = document.getElementById("levelList");
+const venuesSectionBody = document.getElementById("venuesSectionBody");
+const backupsBtn = document.getElementById("backupsBtn");
+const exportViewerBtn = document.getElementById("exportViewerBtn");
+const publishBtn = document.getElementById("publishBtn");
 const shpInput = document.getElementById("shpInput");
 const gdbInput = document.getElementById("gdbInput");
 const gdbDirInput = document.getElementById("gdbDirInput");
@@ -287,11 +289,10 @@ const loadingOverlaySub = document.getElementById("loadingOverlaySubmessage");
 const searchInput = document.getElementById("searchInput");
 const searchDropdown = document.getElementById("searchDropdown");
 
-let worldTerrainProvider = null;
-const DEFAULT_PLATEAU_TERRAIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
-const PLATEAU_TERRAIN_TOKEN = import.meta.env.VITE_PLATEAU_TERRAIN_TOKEN || DEFAULT_PLATEAU_TERRAIN_TOKEN;
-let plateauTerrainProvider = null;
+let terrainProviders = { worldTerrainProvider: null, plateauTerrainProvider: null };
+const savedGlobeBaseColorRef = { value: null };
 const lodFilter = new LodFilter();
+let autoBackupTimer = null;
 
 function getE2eHook() {
   const hook = window.__CESIUM_E2E__;
@@ -341,8 +342,15 @@ function init() {
 
   switchTerrain();
   initializeTerrainProviders(savedToken);
+  startAutoBackupTimer();
 
   saveSessionBtn.addEventListener("click", saveSession);
+  backupsBtn?.addEventListener("click", () => openSessionBackupsDialog({
+    getCurrentSession: buildSessionSnapshot,
+    onRestore: restoreFromBackup,
+  }));
+  exportViewerBtn?.addEventListener("click", handleExportViewerPackage);
+  publishBtn?.addEventListener("click", handlePublishToServer);
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
   sessionInput.addEventListener("change", handleLoadSession);
   applyTokenBtn.addEventListener("click", applyToken);
@@ -422,24 +430,8 @@ function init() {
 }
 
 async function initializeTerrainProviders(savedToken) {
-  if (savedToken) {
-    try {
-      worldTerrainProvider = await createWorldTerrainAsync();
-      switchTerrain();
-    } catch (e) {
-      console.warn("Failed to load Cesium World Terrain:", e);
-    }
-  }
-
-  try {
-    const plateauResource = await IonResource.fromAssetId(3258112, {
-      accessToken: PLATEAU_TERRAIN_TOKEN,
-    });
-    plateauTerrainProvider = await CesiumTerrainProvider.fromUrl(plateauResource);
-    switchTerrain();
-  } catch (e) {
-    console.warn("Failed to load PLATEAU terrain:", e);
-  }
+  terrainProviders = await initTerrainProviders(savedToken);
+  switchTerrain();
 }
 
 function initLeftPanelResizer() {
@@ -936,7 +928,7 @@ async function applyToken() {
   Ion.defaultAccessToken = token;
   localStorage.setItem("cesiumIonToken", token);
   try {
-    worldTerrainProvider = await createWorldTerrainAsync();
+    terrainProviders.worldTerrainProvider = await createWorldTerrainAsync();
   } catch (e) {
     console.warn("Failed to load terrain with new token:", e);
   }
@@ -944,164 +936,13 @@ async function applyToken() {
   switchTerrain();
 }
 
-// -- Imagery --
+// -- Imagery / terrain (shared helpers in cesiumInit.js) --
 async function switchImagery() {
-  viewer.imageryLayers.removeAll();
-  const choice = imagerySelect.value;
-  switch (choice) {
-    case "osm":
-      viewer.imageryLayers.addImageryProvider(
-        new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" })
-      );
-      break;
-    case "ion-bing-aerial":
-      try {
-        viewer.imageryLayers.addImageryProvider(await IonImageryProvider.fromAssetId(2));
-      } catch (e) {
-        console.warn("Failed to load Bing Aerial imagery:", e);
-        viewer.imageryLayers.addImageryProvider(new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }));
-      }
-      break;
-    case "ion-sentinel":
-      try {
-        viewer.imageryLayers.addImageryProvider(await IonImageryProvider.fromAssetId(3954));
-      } catch (e) {
-        console.warn("Failed to load Sentinel-2 imagery:", e);
-        viewer.imageryLayers.addImageryProvider(new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }));
-      }
-      break;
-    case "esri-street":
-      try {
-        viewer.imageryLayers.addImageryProvider(
-          await ArcGisMapServerImageryProvider.fromUrl(
-            "https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer"
-          )
-        );
-      } catch (e) {
-        console.warn("Failed to load Esri World Street Map:", e);
-        viewer.imageryLayers.addImageryProvider(new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }));
-      }
-      break;
-    case "esri-topo":
-      try {
-        viewer.imageryLayers.addImageryProvider(
-          await ArcGisMapServerImageryProvider.fromUrl(
-            "https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer"
-          )
-        );
-      } catch (e) {
-        console.warn("Failed to load Esri World Topo Map:", e);
-        viewer.imageryLayers.addImageryProvider(new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }));
-      }
-      break;
-    case "esri-imagery":
-      try {
-        viewer.imageryLayers.addImageryProvider(
-          await ArcGisMapServerImageryProvider.fromUrl(
-            "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
-          )
-        );
-      } catch (e) {
-        console.warn("Failed to load Esri World Imagery:", e);
-        viewer.imageryLayers.addImageryProvider(new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }));
-      }
-      break;
-    case "esri-light-gray":
-      try {
-        viewer.imageryLayers.addImageryProvider(
-          await ArcGisMapServerImageryProvider.fromUrl(
-            "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer"
-          )
-        );
-      } catch (e) {
-        console.warn("Failed to load Esri Light Gray Canvas:", e);
-        viewer.imageryLayers.addImageryProvider(new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }));
-      }
-      break;
-    case "carto-positron":
-      viewer.imageryLayers.addImageryProvider(
-        new UrlTemplateImageryProvider({
-          url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-          subdomains: ["a", "b", "c", "d"],
-          maximumLevel: 19,
-          credit: "© OpenStreetMap contributors © CARTO",
-        })
-      );
-      break;
-  }
-  applyUndergroundMode();
+  await switchImageryImpl(viewer, imagerySelect.value, { onAfterSwitch: applyUndergroundMode });
 }
 
-// -- Terrain --
 function switchTerrain() {
-  const choice = terrainSelect.value;
-  switch (choice) {
-    case "ellipsoid":
-      viewer.terrainProvider = new EllipsoidTerrainProvider();
-      break;
-    case "cesium-world":
-      viewer.terrainProvider = worldTerrainProvider ?? new EllipsoidTerrainProvider();
-      break;
-    case "gsi-dem5a":
-    case "gsi-dem5b":
-      viewer.terrainProvider = createGsiTerrainProvider(choice);
-      break;
-    case "plateau":
-      viewer.terrainProvider = plateauTerrainProvider ?? new EllipsoidTerrainProvider();
-      break;
-  }
-}
-
-function createGsiTerrainProvider(type) {
-  const urlTemplate =
-    type === "gsi-dem5a"
-      ? "https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png"
-      : "https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/{z}/{x}/{y}.png";
-  return new CustomHeightmapTerrainProvider({
-    tilingScheme: new WebMercatorTilingScheme(),
-    width: 256,
-    height: 256,
-    callback: async (x, y, level) => {
-      const url = urlTemplate.replace("{z}", level).replace("{x}", x).replace("{y}", y);
-      try {
-        return decodeGsiHeightmap(await loadImage(url));
-      } catch {
-        // GSI tile fetch or decode failed — return flat heightmap so terrain
-        // rendering continues without this tile's elevation data.
-        return new Float32Array(256 * 256);
-      }
-    },
-  });
-}
-
-function decodeGsiHeightmap(img) {
-  const canvas = document.createElement("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0);
-  const { data } = ctx.getImageData(0, 0, img.width, img.height);
-  const heights = new Float32Array(img.width * img.height);
-  for (let i = 0; i < heights.length; i++) {
-    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
-    if (r === 128 && g === 0 && b === 0) {
-      heights[i] = 0;
-    } else {
-      const raw = r * 65536 + g * 256 + b;
-      heights[i] = (raw < 8388608 ? raw : raw - 16777216) / 100;
-    }
-  }
-  return heights;
-}
-
-function loadImage(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
-  });
+  switchTerrainImpl(viewer, terrainSelect.value, terrainProviders);
 }
 
 // -- PLATEAU manual feature overrides --
@@ -1533,6 +1374,7 @@ function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, link
     directoryHandleId,
     _directoryFolderName: directoryFolderName,
     aliases,
+    venueId: null,
     _expanded: true,
   };
 }
@@ -2097,7 +1939,7 @@ function applyLevelClippingForAllTilesets() {
   }
 }
 
-const UNDERGROUND_BASE_COLOR = Color.fromCssColorString("#1a1a1a");
+
 
 function isUndergroundActive() {
   if (activeModelLevelIndex < 0) return false;
@@ -2111,28 +1953,11 @@ function applyLevelContextVisibility() {
 }
 
 function applyUndergroundMode() {
-  const layer = viewer.imageryLayers.get(0);
-  const globe = viewer.scene.globe;
-  if (isUndergroundActive()) {
-    if (transient.savedGlobeBaseColor === null) {
-      transient.savedGlobeBaseColor = Color.clone(globe.baseColor);
-    }
-    globe.baseColor = UNDERGROUND_BASE_COLOR;
-    if (layer) {
-      layer.alpha = 0.0;
-      layer.brightness = 1.0;
-    }
-  } else {
-    if (transient.savedGlobeBaseColor !== null) {
-      globe.baseColor = transient.savedGlobeBaseColor;
-      transient.savedGlobeBaseColor = null;
-    }
-    if (layer) {
-      layer.alpha = 1.0;
-      layer.brightness = 1.0;
-    }
-  }
-  applyContextGhostingForAllLayers();
+  applyUndergroundModeImpl(viewer, {
+    isUndergroundActive,
+    savedGlobeBaseColorRef,
+    onContextGhosting: applyContextGhostingForAllLayers,
+  });
 }
 
 function applyDataSourceContextGhosting(dataSource, ghosted, layerVisible = true) {
@@ -2354,135 +2179,12 @@ function handleLayerTypeToggle(type) {
   invalidateAndRerender();
 }
 
-function findShapefileLevel(building, layer) {
-  if (layer.levelKey == null) return null;
-  const levels = resolveShapefileLevels(building, layer);
-  const match = levels.find(l => (l.key ?? "") === layer.levelKey);
-  if (match) return match;
-  // Fall back to building.levels in case the source-specific list is missing the key
-  return building.levels.find(l => (l.key ?? "") === layer.levelKey) ?? null;
-}
-
-function shapefileLayerHeight(building, layer) {
-  const lvl = findShapefileLevel(building, layer);
-  const fixtureExtra = /_fixture/i.test(layer.name) ? FIXTURE_EXTRA_HEIGHT_M : 0;
-  return building.levelBaseElevation + (building.heightOffset ?? 0) + (lvl ? lvl.floor : 0) + SHAPEFILE_FLOOR_CLEARANCE_M + fixtureExtra + (layer.heightOffset ?? 0);
-}
-
-function shapefileLayerLocalZ(building, layer) {
-  const lvl = findShapefileLevel(building, layer);
-  const fixtureExtra = /_fixture/i.test(layer.name) ? FIXTURE_EXTRA_HEIGHT_M : 0;
-  return (lvl ? lvl.floor : 0) + SHAPEFILE_FLOOR_CLEARANCE_M + fixtureExtra + (layer.heightOffset ?? 0);
-}
-
-function shapefileWorldToLocal(building) {
-  const tileset = building?.tileset;
-  if (!tileset?.root?.transform) return null;
-
-  const localToWorld = new Matrix4();
-  Matrix4.multiplyTransformation(
-    tileset.modelMatrix ?? Matrix4.IDENTITY,
-    tileset.root.transform,
-    localToWorld
-  );
-  try {
-    return Matrix4.inverse(localToWorld, new Matrix4());
-  } catch (e) {
-    console.warn("Could not invert shapefile local transform:", e);
-    return null;
-  }
-}
-
-function solveEllipsoidHeightForLocalZ(cartographic, worldToLocal, targetLocalZ, fallbackHeight) {
-  const surface = Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, 0);
-  const oneMeterUp = Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, 1);
-  const localSurface = Matrix4.multiplyByPoint(worldToLocal, surface, new Cartesian3());
-  const localOneMeterUp = Matrix4.multiplyByPoint(worldToLocal, oneMeterUp, new Cartesian3());
-  const dzPerMeter = localOneMeterUp.z - localSurface.z;
-
-  if (!Number.isFinite(dzPerMeter) || Math.abs(dzPerMeter) < 1e-8) {
-    return fallbackHeight;
-  }
-
-  return (targetLocalZ - localSurface.z) / dzPerMeter;
-}
-
-function projectPositionToLocalZ(position, worldToLocal, targetLocalZ, fallbackHeight) {
-  const cartographic = Cartographic.fromCartesian(position);
-  if (!cartographic) return position;
-  const height = worldToLocal
-    ? solveEllipsoidHeightForLocalZ(cartographic, worldToLocal, targetLocalZ, fallbackHeight)
-    : fallbackHeight;
-  return Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, height);
-}
-
-function projectHierarchyToLocalZ(hierarchy, worldToLocal, targetLocalZ, fallbackHeight) {
-  if (!hierarchy?.positions?.length) return null;
-  return new PolygonHierarchy(
-    hierarchy.positions.map(position =>
-      projectPositionToLocalZ(position, worldToLocal, targetLocalZ, fallbackHeight)
-    ),
-    (hierarchy.holes ?? [])
-      .map(hole => projectHierarchyToLocalZ(hole, worldToLocal, targetLocalZ, fallbackHeight))
-      .filter(Boolean)
-  );
-}
-
 function applyShapefileLayerHeight(building, layer) {
-  const fallbackHeight = shapefileLayerHeight(building, layer);
-  const targetLocalZ = shapefileLayerLocalZ(building, layer);
-  const worldToLocal = shapefileWorldToLocal(building);
-  const time = viewer?.clock?.currentTime ?? JulianDate.now();
-
-  for (const entity of layer.dataSource.entities.values) {
-    if (entity.polygon) {
-      const hierarchy = entity.polygon.hierarchy?.getValue
-        ? entity.polygon.hierarchy.getValue(time)
-        : entity.polygon.hierarchy;
-      const projectedHierarchy = projectHierarchyToLocalZ(
-        hierarchy,
-        worldToLocal,
-        targetLocalZ,
-        fallbackHeight
-      );
-      if (!projectedHierarchy) continue;
-
-      entity.polygon.hierarchy = new ConstantProperty(projectedHierarchy);
-      entity.polygon.perPositionHeight = true;
-      entity.polygon.arcType = ArcType.NONE;
-      entity.polygon.height = undefined;
-    } else if (entity.polyline) {
-      const positions = entity.polyline.positions?.getValue
-        ? entity.polyline.positions.getValue(time)
-        : entity.polyline.positions;
-      if (!Array.isArray(positions)) continue;
-      const projected = positions.map((pos) =>
-        projectPositionToLocalZ(pos, worldToLocal, targetLocalZ, fallbackHeight)
-      );
-      entity.polyline.positions = new ConstantProperty(projected);
-    } else if (entity.position) {
-      // Point / MultiPoint entities. GeoJsonDataSource sets entity.position
-      // from the 2D GeoJSON coordinate (height 0), so without this branch
-      // points would render at ellipsoid 0 regardless of the layer's level.
-      // Lifted by POINT_EXTRA_HEIGHT_M above the polygon clearance so the
-      // marker isn't depth-clipped into the floor mesh.
-      const pos = entity.position.getValue
-        ? entity.position.getValue(time)
-        : entity.position;
-      if (!pos) continue;
-      const projected = projectPositionToLocalZ(
-        pos,
-        worldToLocal,
-        targetLocalZ + POINT_EXTRA_HEIGHT_M,
-        fallbackHeight + POINT_EXTRA_HEIGHT_M,
-      );
-      entity.position = new ConstantPositionProperty(projected);
-    }
-  }
+  applyShapefileLayerHeightImpl(building, layer, { viewer });
 }
 
 function applyShapefileLayerHeights(building) {
-  for (const layer of building.shapefileLayers) applyShapefileLayerHeight(building, layer);
+  applyShapefileLayerHeightsImpl(building, { viewer });
 }
 
 function detectLevelByFilename(filename, levels) {
@@ -2510,19 +2212,6 @@ function detectShapefileSource(features) {
     if (v > max) { max = v; best = k; }
   }
   return best;
-}
-
-// Pick the level list to use for a shapefile layer's placement:
-//   1. building.sourceLevelGroups[layer.source] if available (split sibling or merged
-//      with multi-link metadata)
-//   2. building.levels (global or current sibling's levels)
-function resolveShapefileLevels(building, layer) {
-  const source = layer?.source;
-  if (source != null && building?.sourceLevelGroups instanceof Map) {
-    const sourceLevels = building.sourceLevelGroups.get(source);
-    if (sourceLevels?.length) return sourceLevels;
-  }
-  return building?.levels ?? [];
 }
 
 // Module-level drag state. dataTransfer can't read its payload during
@@ -2600,10 +2289,42 @@ function invalidateAndRerender() {
 }
 
 function renderInvalidatedSurfaces() {
+  renderVenuesSection();
   renderLevelList();
   syncRemoveAllBtnAndLod();
   renderPlateauFloatingCard();
   applyLevelContextVisibility();
+}
+
+function getBuildingsForSceneTree() {
+  if (!activeVenueFilter) return buildings;
+  return buildings.filter((b) => b.venueId === activeVenueFilter);
+}
+
+function renderVenuesSection() {
+  renderVenuesPanel({
+    container: venuesSectionBody,
+    venues,
+    buildings,
+    activeVenueFilter,
+    onAddVenue: handleAddVenue,
+    onUpdateVenue: () => {
+      renderVenuesSection();
+      invalidateAndRerender();
+    },
+    onDeleteVenue: handleDeleteVenue,
+    onToggleBuildingAssignment: (building, venueId, assigned) => {
+      building.venueId = assigned ? venueId : null;
+      invalidateAndRerender();
+      renderVenuesSection();
+    },
+    onSetVenueFilter: (venueId) => {
+      activeVenueFilter = venueId;
+      renderVenuesSection();
+      invalidateAndRerender();
+    },
+    onExportViewer: handleExportViewerPackage,
+  });
 }
 
 function renderLevelList() {
@@ -2611,7 +2332,7 @@ function renderLevelList() {
 
   renderSceneTree({
     container: levelListEl,
-    buildings,
+    buildings: getBuildingsForSceneTree(),
     importedLayers,
     unassignedLayers,
     modelLevels,
@@ -3964,6 +3685,29 @@ function showBuildingContextMenu(event, building, bi) {
     });
   }, !building.tileset);
 
+  if (venues.length > 0) {
+    const assignLi = document.createElement("li");
+    assignLi.className = "menu-has-submenu";
+    assignLi.textContent = t("ctx.building.assignVenue");
+    const sub = document.createElement("ul");
+    const mkSub = (label, venueId) => {
+      const item = document.createElement("li");
+      item.textContent = label;
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        hideFloatingMenu();
+        building.venueId = venueId;
+        renderVenuesSection();
+        invalidateAndRerender();
+      });
+      sub.appendChild(item);
+    };
+    mkSub(t("venue.unassigned"), null);
+    for (const venue of venues) mkSub(venue.name, venue.id);
+    assignLi.appendChild(sub);
+    ul.appendChild(assignLi);
+  }
+
   // separator
   const sep = document.createElement("li");
   sep.className = "menu-sep";
@@ -4166,13 +3910,159 @@ function renderCityGmlList() {
 }
 
 // -- Session save / restore --
-// Serialization shape lives in src/session.js — only orchestration is here.
+function buildSessionSnapshot() {
+  return serializeSession({
+    imagery: imagerySelect.value,
+    terrain: terrainSelect.value,
+    plateauOverridesEnabled,
+    modelLevels,
+    activeModelLevelIndex,
+    venues,
+    buildings,
+    importedLayers,
+    unassignedLayers,
+    isPlateauLayer,
+    serializePlateauOverrides,
+  });
+}
+
 function saveSession() {
   if (buildings.length === 0 && importedLayers.length === 0 && unassignedLayers.length === 0) {
     notifyUser("info", "alert.nothingToSave");
     return;
   }
-  const data = serializeSession({
+  downloadSessionJson(buildSessionSnapshot());
+}
+
+function createSessionRestoreContext() {
+  return {
+    viewer,
+    buildings,
+    importedLayers,
+    unassignedLayers,
+    lodFilter,
+    modelLevels,
+    fileStatus,
+    clearBuildings: async () => handleRemoveAll(),
+    clearImportedLayers,
+    clearUnassignedLayers,
+    onCleared: () => {
+      venues.length = 0;
+      activeVenueFilter = null;
+    },
+    setPlateauOverridesEnabled: (v) => { plateauOverridesEnabled = v; },
+    setSelectedPlateauFeature: (v) => { selectedPlateauFeature = v; },
+    setImageryChoice: (v) => { imagerySelect.value = v; },
+    switchImagery: async (choice) => {
+      imagerySelect.value = choice;
+      await switchImagery();
+    },
+    setTerrainChoice: (v) => { terrainSelect.value = v; },
+    switchTerrain: (choice) => {
+      terrainSelect.value = choice;
+      switchTerrain();
+    },
+    restoreVenues: (savedVenues) => {
+      venues.length = 0;
+      for (const v of savedVenues ?? []) {
+        venues.push({
+          id: v.id,
+          name: v.name,
+          description: v.description ?? "",
+          _expanded: false,
+        });
+      }
+    },
+    onProgress: (current, total) => {
+      if (current === 0) {
+        showLoadingOverlay(t("loading.session.title"), t("loading.session.progress", { current, total }));
+      } else {
+        updateLoadingOverlay(t("loading.session.progress", { current, total }));
+      }
+    },
+    setSelectedBuildingIndex: (idx) => { selectedBuildingIndex = idx; },
+    getModelLevels: () => modelLevels,
+    rebuildModelLevels,
+    selectModelLevel,
+    bindTilesetTileLoad,
+    applyHeightOffset,
+    applyFiltersForTileset,
+    refreshLodFilterIfEnabled,
+    computePerSiblingBoundingSpheres,
+    applyEntityStyling,
+    applyShapefileLayerHeight,
+    applyShapefileLayerHeights,
+    applyLevelToShapefilesForBuilding,
+    detectShapefileSource,
+    onComplete: () => {
+      renderImportedLayersList();
+      refreshAllPlateauOverrideStyles();
+      invalidateAndRerender();
+    },
+  };
+}
+
+async function restoreSession(data) {
+  const restorePlan = createSessionRestorePlan(data);
+  showLoadingOverlay(
+    t("loading.session.title"),
+    t("loading.session.progress", { current: 0, total: restorePlan.primaryItemCount }),
+  );
+  try {
+    await restoreSessionImpl(data, createSessionRestoreContext());
+  } finally {
+    hideLoadingOverlay();
+  }
+}
+
+async function handleLoadSession(e) {
+  const file = e.target.files[0];
+  sessionInput.value = "";
+  if (!file) return;
+  try {
+    await createAutoBackup(buildSessionSnapshot, t("backup.beforeLoad", { name: file.name }));
+    const data = parseSessionJson(await file.text());
+    await restoreSession(data);
+  } catch (err) {
+    notifyUser("error", "alert.failedSession", { message: err.message });
+  } finally {
+    hideLoadingOverlay();
+  }
+}
+
+async function restoreFromBackup(entry) {
+  await createAutoBackup(buildSessionSnapshot, t("backup.beforeRestore"));
+  await restoreSession(entry.session);
+}
+
+function handleAddVenue() {
+  const venue = promptVenueName();
+  if (!venue) return;
+  let id = venue.id;
+  let n = 1;
+  while (venues.some((v) => v.id === id)) {
+    id = `${venue.id}-${++n}`;
+  }
+  venue.id = id;
+  venues.push(venue);
+  renderVenuesSection();
+}
+
+async function handleDeleteVenue(venue) {
+  await createAutoBackup(buildSessionSnapshot, t("backup.beforeDelete", { name: venue.name }));
+  for (const b of buildings) {
+    if (b.venueId === venue.id) b.venueId = null;
+  }
+  const idx = venues.findIndex((v) => v.id === venue.id);
+  if (idx !== -1) venues.splice(idx, 1);
+  if (activeVenueFilter === venue.id) activeVenueFilter = null;
+  renderVenuesSection();
+  invalidateAndRerender();
+}
+
+function getPublishState() {
+  return {
+    venues,
     imagery: imagerySelect.value,
     terrain: terrainSelect.value,
     plateauOverridesEnabled,
@@ -4183,243 +4073,57 @@ function saveSession() {
     unassignedLayers,
     isPlateauLayer,
     serializePlateauOverrides,
-  });
-  downloadSessionJson(data);
+  };
 }
 
-async function handleLoadSession(e) {
-  const file = e.target.files[0];
-  sessionInput.value = "";
-  if (!file) return;
+function handleExportViewerPackage() {
+  const result = exportViewerPackage({
+    ...getPublishState(),
+    baseUrl: "",
+  });
+  if (!result.ok) {
+    notifyUser("info", "venue.exportEmpty");
+    return;
+  }
+  notifyUser("info", "venue.exportDone", { count: result.venueCount });
+}
+
+async function handlePublishToServer() {
+  if (!publishBtn) return;
+  publishBtn.disabled = true;
+  showLoadingOverlay(t("publish.inProgress"), "");
   try {
-    const data = parseSessionJson(await file.text());
-    await restoreSession(data);
+    const result = await publishToServer(getPublishState(), {
+      token: import.meta.env.VITE_PUBLISH_TOKEN || "",
+    });
+    if (!result.ok) {
+      if (result.reason === "noVenuesWithBuildings") {
+        notifyUser("info", "venue.exportEmpty");
+      } else if (result.reason === "tilesetNotBundled") {
+        notifyUser("error", "publish.tilesetNotBundled", {
+          buildings: (result.buildings ?? []).join(", "),
+        });
+      } else {
+        notifyUser("error", "publish.failed", { message: result.error ?? result.reason });
+      }
+      return;
+    }
+    openPublishLinksDialog({ links: result.links, warnings: result.warnings });
+    notifyUser("info", "publish.success", { count: result.venueCount });
   } catch (err) {
-    notifyUser("error", "alert.failedSession", { message: err.message });
+    notifyUser("error", "publish.failed", { message: err.message });
   } finally {
+    publishBtn.disabled = false;
     hideLoadingOverlay();
   }
 }
 
-async function restoreSession(data) {
-  handleRemoveAll();
-  clearImportedLayers(false);
-  selectedPlateauFeature = null;
-  plateauOverridesEnabled = data.plateauOverridesEnabled ?? true;
-  if (data.imagery) { imagerySelect.value = data.imagery; switchImagery(); }
-  if (data.terrain) { terrainSelect.value = data.terrain; switchTerrain(); }
-
-  const restorePlan = createSessionRestorePlan(data);
-  let done = 0;
-  showLoadingOverlay(
-    t("loading.session.title"),
-    t("loading.session.progress", { current: 0, total: restorePlan.primaryItemCount }),
-  );
-  for (const group of restorePlan.buildingGroups) {
-    if (group.length === 1) {
-      await restoreBuilding(group[0]);
-    } else {
-      await restoreSiblingGroup(group);
-    }
-    done++;
-    updateLoadingOverlay(t("loading.session.progress", { current: done, total: restorePlan.primaryItemCount }));
-  }
-  for (const lData of restorePlan.importedLayers) {
-    try {
-      const layer = await restoreImportedLayer(viewer, loadTilesetFromUrl, lData);
-      if (layer) {
-        if (isPlateauLayer(layer)) {
-          restoreSerializedPlateauOverrides(layer, lData.plateauOverrides ?? []);
-        }
-        importedLayers.push(layer);
-      }
-    } catch (e) {
-      console.warn("Could not restore imported layer:", lData.label, e);
-    }
-    done++;
-    updateLoadingOverlay(t("loading.session.progress", { current: done, total: restorePlan.primaryItemCount }));
-  }
-  for (const u of restorePlan.unassignedLayers) {
-    try {
-      await restoreUnassignedLayer(u);
-    } catch (e) {
-      console.warn("Could not restore unassigned layer:", u?.name, e);
-    }
-  }
-  selectedBuildingIndex = buildings.length > 0 ? 0 : -1;
-  rebuildModelLevels();
-  applySavedModelLevelOverrides(modelLevels, data.modelLevels);
-  if (isValidActiveModelLevelIndex(data.activeModelLevelIndex, modelLevels)) {
-    selectModelLevel(data.activeModelLevelIndex);
-  }
-  renderImportedLayersList();
-  refreshAllPlateauOverrideStyles();
-  invalidateAndRerender();
-}
-
-async function restoreBuilding(bData) {
-  let tileset = null;
-  if (bData.sourceType === "url" && bData.sourceUrl) {
-    try {
-      tileset = await loadTilesetFromUrl(viewer, bData.sourceUrl);
-    } catch (e) {
-      console.warn("Could not restore tileset from URL:", bData.sourceUrl, e);
-    }
-  }
-  if (!tileset && bData.directoryHandleId) {
-    try {
-      const handle = await getDirectoryHandle(bData.directoryHandleId);
-      if (handle) {
-        const files = await getFilesFromDirectoryHandle(handle);
-        tileset = await loadTilesetFromFiles(viewer, files, fileStatus);
-      }
-    } catch (e) {
-      console.warn("Could not restore tileset from directory handle:", bData.directoryHandleId, e);
-    }
-  }
-  const building = {
-    name: bData.name ?? "Unnamed",
-    tileset,
-    sourceUrl: bData.sourceUrl ?? null,
-    heightOffset: bData.heightOffset ?? 0,
-    levelBaseElevation: bData.levelBaseElevation ?? 0,
-    activeLevelIndex: bData.activeLevelIndex ?? -1,
-    levels: (bData.levels ?? []).map(l => ({ name: l.name, key: l.key ?? null, floor: l.floor })),
-    sourceLevelGroups: deserializeSourceLevelGroups(bData.sourceLevelGroups),
-    shapefileLayers: [],
-    linkFilter: bData.linkFilter ?? null,
-    aliases: Array.isArray(bData.aliases) ? bData.aliases : [],
-    _tilesetMissing: !tileset,
-    directoryHandleId: bData.directoryHandleId ?? null,
-    _directoryFolderName: bData._directoryFolderName ?? null,
-  };
-  if (tileset) {
-    tileset._buildings = [building];
-    tileset._directoryHandleId = building.directoryHandleId;
-    tileset._directoryFolderName = building._directoryFolderName;
-    lodFilter.addTileset(tileset);
-    bindTilesetTileLoad(tileset);
-    if (building.heightOffset !== 0) applyHeightOffset(tileset, building.heightOffset);
-    applyFiltersForTileset(tileset);
-    refreshLodFilterIfEnabled();
-    computePerSiblingBoundingSpheres(tileset, bData.sourceUrl ?? null);
-  }
-  for (const slData of bData.shapefileLayers ?? []) {
-    await restoreShapefileLayer(building, slData);
-  }
-  buildings.push(building);
-}
-
-async function restoreSiblingGroup(group) {
-  const first = group[0];
-  let tileset = null;
-  if (first.sourceType === "url" && first.sourceUrl) {
-    try {
-      tileset = await loadTilesetFromUrl(viewer, first.sourceUrl);
-    } catch (e) {
-      console.warn("Could not restore shared tileset from URL:", first.sourceUrl, e);
-    }
-  }
-  if (!tileset && first.directoryHandleId) {
-    try {
-      const handle = await getDirectoryHandle(first.directoryHandleId);
-      if (handle) {
-        const files = await getFilesFromDirectoryHandle(handle);
-        tileset = await loadTilesetFromFiles(viewer, files, fileStatus);
-      }
-    } catch (e) {
-      console.warn("Could not restore shared tileset from directory handle:", first.directoryHandleId, e);
-    }
-  }
-  const reloadGroup = tileset ? null : {};
-  const siblings = [];
-  for (const bData of group) {
-    const b = {
-      name: bData.name ?? "Unnamed",
-      tileset,
-      sourceUrl: bData.sourceUrl ?? null,
-      heightOffset: bData.heightOffset ?? 0,
-      levelBaseElevation: bData.levelBaseElevation ?? 0,
-      activeLevelIndex: bData.activeLevelIndex ?? -1,
-      levels: (bData.levels ?? []).map(l => ({ name: l.name, key: l.key ?? null, floor: l.floor })),
-      sourceLevelGroups: deserializeSourceLevelGroups(bData.sourceLevelGroups),
-      shapefileLayers: [],
-      linkFilter: bData.linkFilter ?? null,
-      aliases: Array.isArray(bData.aliases) ? bData.aliases : [],
-      _tilesetMissing: !tileset,
-      _reloadGroup: reloadGroup,
-      directoryHandleId: bData.directoryHandleId ?? null,
-      _directoryFolderName: bData._directoryFolderName ?? null,
-    };
-    siblings.push(b);
-    buildings.push(b);
-  }
-  if (tileset) {
-    tileset._buildings = siblings;
-    tileset._directoryHandleId = first.directoryHandleId;
-    tileset._directoryFolderName = first._directoryFolderName;
-    lodFilter.addTileset(tileset);
-    bindTilesetTileLoad(tileset);
-    if (siblings[0].heightOffset !== 0) applyHeightOffset(tileset, siblings[0].heightOffset);
-    applyFiltersForTileset(tileset);
-    refreshLodFilterIfEnabled();
-    computePerSiblingBoundingSpheres(tileset, first.sourceUrl ?? null);
-  }
-  for (let i = 0; i < group.length; i++) {
-    for (const slData of group[i].shapefileLayers ?? []) {
-      await restoreShapefileLayer(siblings[i], slData);
-    }
-  }
-}
-
-async function restoreShapefileLayer(building, slData) {
-  const layerData = normalizeRestoredShapefileLayerData(slData, {
-    fallbackSource: detectShapefileSource(slData?.features),
-  });
-  if (!layerData) return;
-  const geojson = { type: "FeatureCollection", features: layerData.features };
-  const cesiumColor = Color.fromCssColorString(layerData.color);
-  const dataSource = await GeoJsonDataSource.load(geojson, {
-    fill: cesiumColor.withAlpha(1.0),
-    stroke: cesiumColor,
-    strokeWidth: 2,
-    clampToGround: false,
-  });
-  const layer = {
-    ...layerData,
-    dataSource,
-  };
-  applyEntityStyling(dataSource, layer.name, layer);
-  viewer.dataSources.add(dataSource);
-  building.shapefileLayers.push(layer);
-  applyShapefileLayerHeight(building, layer);
-  applyLevelToShapefilesForBuilding(building);
-}
-
-// Restore a saved unassigned/staging layer. Same shape as restoreShapefileLayer
-// but skips building plumbing and keeps dataSource.show = false until the user
-// drags it onto a building.
-async function restoreUnassignedLayer(u) {
-  const layerData = normalizeRestoredUnassignedLayerData(u, {
-    fallbackSource: detectShapefileSource(u?.features),
-  });
-  if (!layerData) return;
-  const geojson = { type: "FeatureCollection", features: layerData.features };
-  const cesiumColor = Color.fromCssColorString(layerData.color);
-  const dataSource = await GeoJsonDataSource.load(geojson, {
-    fill: cesiumColor.withAlpha(1.0),
-    stroke: cesiumColor,
-    strokeWidth: 2,
-    clampToGround: false,
-  });
-  const layer = {
-    ...layerData,
-    dataSource,
-  };
-  applyEntityStyling(dataSource, layer.name, layer);
-  dataSource.show = !layer._hidden;
-  viewer.dataSources.add(dataSource);
-  unassignedLayers.push(layer);
+function startAutoBackupTimer() {
+  if (autoBackupTimer) clearInterval(autoBackupTimer);
+  autoBackupTimer = setInterval(async () => {
+    if (buildings.length === 0 && importedLayers.length === 0 && unassignedLayers.length === 0) return;
+    await createAutoBackup(buildSessionSnapshot, t("backup.autoSave"));
+  }, 5 * 60 * 1000);
 }
 
 async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, dirId = null, dirName = null) {

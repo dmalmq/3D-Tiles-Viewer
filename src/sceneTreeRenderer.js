@@ -424,16 +424,20 @@ function buildBuildingRow(building, buildingIndex, selection, callbacks) {
   setAction(zoomBtn, "zoom-building", { buildingIndex });
   row.appendChild(zoomBtn);
 
-  const removeBtn = document.createElement("button");
-  removeBtn.className = "level-remove-btn";
-  removeBtn.textContent = translate(callbacks, "generic.removeX");
-  removeBtn.title = translate(callbacks, "building.removeTitle");
-  setAction(removeBtn, "remove-building", { buildingIndex });
-  row.appendChild(removeBtn);
+  if (callbacks.removeBuilding) {
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "level-remove-btn";
+    removeBtn.textContent = translate(callbacks, "generic.removeX");
+    removeBtn.title = translate(callbacks, "building.removeTitle");
+    setAction(removeBtn, "remove-building", { buildingIndex });
+    row.appendChild(removeBtn);
+  }
 
   setAction(row, "select-building", { buildingIndex });
-  setContext(row, "building", { buildingIndex });
-  setDropTarget(row, { bi: buildingIndex, levelKey: null });
+  if (callbacks.showBuildingContextMenu) setContext(row, "building", { buildingIndex });
+  if (callbacks.dropLayer || callbacks.dropFilesOnTarget) {
+    setDropTarget(row, { bi: buildingIndex, levelKey: null });
+  }
 
   if (building._tilesetMissing) {
     row.appendChild(buildReloadBanner(building, buildingIndex, callbacks));
@@ -463,7 +467,7 @@ function buildReloadBanner(building, buildingIndex, callbacks) {
   return banner;
 }
 
-function buildBuildingLevelRow(building, buildingIndex, level, levelIndex, selection) {
+function buildBuildingLevelRow(building, buildingIndex, level, levelIndex, selection, callbacks) {
   const row = document.createElement("li");
   row.className = "level-item bldg-level-row" +
     (buildingIndex === selection.selectedBuildingIndex && building.activeLevelIndex === levelIndex ? " selected" : "");
@@ -471,8 +475,12 @@ function buildBuildingLevelRow(building, buildingIndex, level, levelIndex, selec
   appendText(row, "span", "level-name-text", level.name);
   appendText(row, "span", "level-ceiling", `${Number(level.floor ?? 0).toFixed(1)} m`);
   setAction(row, "select-level", { buildingIndex, levelIndex });
-  setContext(row, "building-level", { buildingIndex, levelIndex });
-  setDropTarget(row, { bi: buildingIndex, levelKey: level.key ?? "" });
+  if (callbacks.showLevelContextMenu) {
+    setContext(row, "building-level", { buildingIndex, levelIndex });
+  }
+  if (callbacks.dropLayer || callbacks.dropFilesOnTarget) {
+    setDropTarget(row, { bi: buildingIndex, levelKey: level.key ?? "" });
+  }
   return row;
 }
 
@@ -505,20 +513,24 @@ function buildLayerRow({ building, buildingIndex, layer }, { flat, callbacks, se
   row.appendChild(swatch);
   appendText(row, "span", "shp-tree-name", layer.name);
 
-  row.appendChild(buildLayerFloorChip(layer, building, buildingIndex, callbacks));
+  if (callbacks.openLayerFloorPicker) {
+    row.appendChild(buildLayerFloorChip(layer, building, buildingIndex, callbacks));
+  }
 
-  const removeBtn = document.createElement("button");
-  removeBtn.className = "shp-tree-remove-btn";
-  removeBtn.textContent = translate(callbacks, "generic.removeX");
-  removeBtn.title = translate(callbacks, "shp.removeTitle");
-  setAction(removeBtn, "remove-layer", { buildingIndex, layer });
-  row.appendChild(removeBtn);
+  if (callbacks.removeLayer) {
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "shp-tree-remove-btn";
+    removeBtn.textContent = translate(callbacks, "generic.removeX");
+    removeBtn.title = translate(callbacks, "shp.removeTitle");
+    setAction(removeBtn, "remove-layer", { buildingIndex, layer });
+    row.appendChild(removeBtn);
+  }
 
   const fromBi = building ? buildingIndex : "unassigned";
   row.__layerRef = layer;
   setAction(row, "select-layer", { buildingIndex, layer });
-  setContext(row, "layer", { buildingIndex, layer });
-  setDragLayer(row, layer, fromBi);
+  if (callbacks.showLayerContextMenu) setContext(row, "layer", { buildingIndex, layer });
+  if (callbacks.startLayerDrag) setDragLayer(row, layer, fromBi);
   return row;
 }
 

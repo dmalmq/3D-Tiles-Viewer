@@ -3,13 +3,29 @@
 
 import { serializeSourceLevelGroups } from "./levelMetadata.js";
 
+import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
+
 // Bump when changing the JSON shape in a non-backward-compatible way. Old
 // session files that match a previously-supported version remain loadable.
-export const SESSION_SCHEMA_VERSION = 2;
-export const SUPPORTED_SESSION_VERSIONS = [1, 2];
+export const SESSION_SCHEMA_VERSION = 3;
+export const SUPPORTED_SESSION_VERSIONS = [1, 2, 3];
 
 export function isSupportedSessionVersion(v) {
   return SUPPORTED_SESSION_VERSIONS.includes(v);
+}
+
+export function shouldLoadTilesetFromUrl(bData) {
+  return typeof bData?.sourceUrl === "string" && bData.sourceUrl.length > 0;
+}
+
+/** Turn published relative paths (/tilesets/..., /sessions/...) into absolute URLs. */
+export function resolveSessionAssetUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  if (/^https?:\/\//i.test(url) || url.startsWith("blob:") || url.startsWith("data:")) return url;
+  if (url.startsWith("/") && typeof globalThis.location !== "undefined") {
+    return new URL(url, globalThis.location.origin).href;
+  }
+  return url;
 }
 
 // Serialize the live in-memory state into the JSON shape persisted to disk.
@@ -21,6 +37,7 @@ export function serializeSession({
   plateauOverridesEnabled,
   modelLevels,
   activeModelLevelIndex,
+  venues = [],
   buildings,
   importedLayers,
   unassignedLayers,
@@ -48,16 +65,30 @@ export function serializeSession({
       elevation: m.elevation,
     })),
     activeModelLevelIndex,
+    venues: serializeVenues(venues),
     buildings: buildings.map((b) => serializeBuilding(b, idFor)),
     importedLayers: importedLayers
       .filter((l) => l.sourceConfig)
       .map((l) => {
-        const saved = { label: l.label, visible: l.visible, sourceConfig: l.sourceConfig };
+        const saved = {
+          label: l.label,
+          visible: l.visible,
+          sourceConfig: l.sourceConfig,
+          venueId: l.venueId ?? null,
+        };
         if (isPlateauLayer(l)) saved.plateauOverrides = serializePlateauOverrides(l);
         return saved;
       }),
     unassignedLayers: unassignedLayers.map(serializeUnassignedLayer),
   };
+}
+
+function serializeVenues(venues) {
+  return (venues ?? []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    description: v.description ?? "",
+  }));
 }
 
 function serializeBuilding(b, idFor) {
@@ -67,6 +98,7 @@ function serializeBuilding(b, idFor) {
     sourceUrl: b.sourceUrl ?? null,
     tilesetGroupId: idFor(b.tileset),
     linkFilter: b.linkFilter ?? null,
+    venueId: b.venueId ?? null,
     heightOffset: b.heightOffset,
     levelBaseElevation: b.levelBaseElevation,
     aliases: b.aliases ?? [],
@@ -204,6 +236,75 @@ function normalizeRestoredVectorLayerData(layerData, { fallbackSource = null, in
 }
 
 // Trigger a browser download of the serialized session.
+export function deriveModelLevelsFromBuildings(buildings, preserved = []) {
+  const preservedMap = new Map(preserved.map((m) => [m.floorNumber, m]));
+  const seen = new Map();
+  for (const b of buildings ?? []) {
+    if (!b.levels) continue;
+    for (const lvl of b.levels) {
+      const fn = levelNameToNumber(lvl.name);
+      if (fn == null) continue;
+      if (!seen.has(fn)) {
+        seen.set(fn, {
+          name: shortLevelName(lvl.name),
+          elevation: (b.levelBaseElevation ?? 0) + (lvl.floor ?? 0),
+        });
+      }
+    }
+  }
+  const next = [];
+  for (const [fn, derived] of seen) {
+    const existing = preservedMap.get(fn);
+    next.push(
+      existing
+        ? { floorNumber: fn, name: existing.name, elevation: existing.elevation }
+        : { floorNumber: fn, name: derived.name, elevation: derived.elevation },
+    );
+  }
+  next.sort((a, b) => a.floorNumber - b.floorNumber);
+  return next;
+}
+
+export function filterSessionByVenue(data, venueId) {
+  if (!data || venueId == null) return data;
+  const buildings = (data.buildings ?? []).filter((b) => b.venueId === venueId);
+  const importedLayers = (data.importedLayers ?? []).filter((l) => l.venueId === venueId);
+  const modelLevels = deriveModelLevelsFromBuildings(buildings, data.modelLevels ?? []);
+  return {
+    ...data,
+    version: data.version ?? SESSION_SCHEMA_VERSION,
+    venues: (data.venues ?? []).filter((v) => v.id === venueId),
+    buildings,
+    importedLayers,
+    unassignedLayers: [],
+    modelLevels,
+    activeModelLevelIndex: -1,
+  };
+}
+
+export function buildVenueManifest(venues, { baseUrl = "", defaultVenueId = null } = {}) {
+  const normalizedBase = baseUrl ? baseUrl.replace(/\/?$/, "/") : "";
+  const entries = (venues ?? []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    sessionUrl: `${normalizedBase}${v.id}.json`,
+  }));
+  return {
+    version: 1,
+    defaultVenueId: defaultVenueId ?? entries[0]?.id ?? null,
+    venues: entries,
+  };
+}
+
+export function slugifyVenueId(name) {
+  const slug = String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "venue";
+}
+
 export function downloadSessionJson(data, filename) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
