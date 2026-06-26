@@ -247,6 +247,39 @@ html[data-theme="light"] #importModal button {
   flex-shrink: 0;
 }
 
+#viewerVenueBar {
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#viewerVenueBar select {
+  width: 100%;
+  margin-top: 4px;
+}
+
+#viewerSessionBanner {
+  position: fixed;
+  top: var(--header-height);
+  left: var(--panel-width);
+  right: 0;
+  z-index: 1050;
+  padding: 6px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#viewerSessionBanner.viewer-banner-error {
+  color: var(--danger);
+}
+
+body.left-collapsed #viewerSessionBanner {
+  left: 0;
+}
+
 #sceneFilterRow input {
   height: 28px;
   margin: 0;
@@ -3062,4 +3095,240 @@ html[data-theme="light"] .floating-card {
 
 html[data-theme="light"] .notification {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+
+/* ── Modal dialogs (backups / diff) ─────────────────────── */
+.modal-dialog {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 0;
+  max-width: min(560px, 92vw);
+  width: 100%;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.modal-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.modal-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modal-dialog-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.modal-dialog-body {
+  padding: 12px 14px 14px;
+}
+
+.backup-toolbar,
+.venue-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.backup-list,
+.venue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.backup-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.backup-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.backup-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.diff-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.diff-pickers label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.diff-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.diff-item {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 4px;
+  background: var(--bg-hover);
+}
+
+.diff-item.diff-added { border-left: 3px solid #3db84b; }
+.diff-item.diff-removed { border-left: 3px solid #e05d5d; }
+.diff-item.diff-changed,
+.diff-item.diff-renamed,
+.diff-item.diff-venueMoved,
+.diff-item.diff-descriptionChanged { border-left: 3px solid #d9a23d; }
+
+/* ── Venues panel ───────────────────────────────────────── */
+.venue-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.venue-row-title {
+  flex: 1;
+  font-size: 13px;
+}
+
+.venue-chevron,
+.venue-filter-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.venue-filter-btn.active {
+  color: var(--accent);
+}
+
+.venue-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 10px 18px;
+  font-size: 12px;
+}
+
+.venue-row-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.venue-building-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.venue-building-checklist li label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Viewer venue bar / banner ──────────────────────────── */
+#viewerVenueBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+
+#viewerVenueSelect {
+  flex: 1;
+}
+
+.viewer-session-banner {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.publish-link-block {
+  margin-bottom: 12px;
+}
+
+.publish-link-block label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+}
+
+.publish-link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.publish-link-row input {
+  flex: 1;
+  font-size: 12px;
+}
+
+.publish-venue-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.publish-venue-link-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.publish-venue-link-row input {
+  font-size: 12px;
+}
+
+.publish-tileset-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 12px;
 }

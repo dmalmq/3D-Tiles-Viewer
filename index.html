@@ -31,6 +31,9 @@
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 9.5V11.5H12V9.5M6.5 8V0.5M3.5 3.5L6.5 0.5L9.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span data-i18n="header.load">Load</span>
         </button>
+        <button id="backupsBtn" class="header-btn" type="button" data-i18n="backup.title">Backups</button>
+        <button id="exportViewerBtn" class="header-btn" type="button" data-i18n="venue.exportPackage">Export for Viewer</button>
+        <button id="publishBtn" class="header-btn primary-btn" type="button" data-i18n="publish.button">Publish to server</button>
         <input type="file" id="sessionInput" accept=".json" style="display:none" />
         <div class="header-divider"></div>
         <button id="languageToggle" class="header-btn header-icon-btn" data-i18n-title="header.lang.title" data-i18n-aria-label="header.lang.aria" title="Switch language" aria-label="Switch language">
@@ -68,6 +71,15 @@
       <input type="file" id="gdbInput" accept=".gdb.zip,.zip" style="display:none" />
       <input type="file" id="gdbDirInput" webkitdirectory style="display:none" />
       <input type="file" id="shpInput" accept=".zip" style="display:none" />
+
+      <!-- Venues -->
+      <div class="panel-section" id="venuesSection">
+        <button class="panel-section-header collapsible" type="button">
+          <span class="panel-section-chevron"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span data-i18n="section.venues">Venues</span>
+        </button>
+        <div class="section-body" id="venuesSectionBody"></div>
+      </div>
 
       <!-- Scene filter -->
       <div id="sceneFilterRow">

@@ -5,7 +5,9 @@ import {
   SESSION_SCHEMA_VERSION,
   SUPPORTED_SESSION_VERSIONS,
   applySavedModelLevelOverrides,
+  buildVenueManifest,
   createSessionRestorePlan,
+  filterSessionByVenue,
   groupSessionBuildingsByTileset,
   isSupportedSessionVersion,
   isValidActiveModelLevelIndex,
@@ -13,6 +15,9 @@ import {
   normalizeRestoredUnassignedLayerData,
   parseSessionJson,
   serializeSession,
+  slugifyVenueId,
+  resolveSessionAssetUrl,
+  shouldLoadTilesetFromUrl,
 } from "../src/session.js";
 
 const baseState = () => ({
@@ -182,10 +187,69 @@ test("normalizeRestoredUnassignedLayerData skips empty feature payloads", () => 
   assert.equal(normalizeRestoredUnassignedLayerData(null), null);
 });
 
-function makeBuilding({ name, tileset }) {
+test("serializeSession v3 includes venues and venueId", () => {
+  const state = baseState();
+  state.venues = [{ id: "east-hub", name: "East Hub", description: "notes" }];
+  state.buildings = [makeBuilding({ name: "Tower A", tileset: {}, venueId: "east-hub" })];
+  const data = serializeSession(state);
+  assert.equal(data.version, SESSION_SCHEMA_VERSION);
+  assert.deepEqual(data.venues, [{ id: "east-hub", name: "East Hub", description: "notes" }]);
+  assert.equal(data.buildings[0].venueId, "east-hub");
+});
+
+test("filterSessionByVenue keeps only matching buildings and imported layers", () => {
+  const data = {
+    version: 3,
+    venues: [
+      { id: "east-hub", name: "East Hub", description: "" },
+      { id: "west-campus", name: "West Campus", description: "" },
+    ],
+    buildings: [
+      { name: "A", venueId: "east-hub", levels: [{ name: "1F", floor: 0 }] },
+      { name: "B", venueId: "west-campus", levels: [] },
+    ],
+    importedLayers: [
+      { label: "p1", visible: true, sourceConfig: { type: "plateau" }, venueId: "east-hub" },
+      { label: "p2", visible: true, sourceConfig: { type: "plateau" }, venueId: "west-campus" },
+    ],
+    modelLevels: [],
+    activeModelLevelIndex: -1,
+  };
+  const slice = filterSessionByVenue(data, "east-hub");
+  assert.equal(slice.buildings.length, 1);
+  assert.equal(slice.buildings[0].name, "A");
+  assert.equal(slice.importedLayers.length, 1);
+  assert.equal(slice.unassignedLayers.length, 0);
+});
+
+test("buildVenueManifest maps venue ids to session URLs", () => {
+  const manifest = buildVenueManifest(
+    [{ id: "east-hub", name: "East Hub" }],
+    { baseUrl: "https://example.test/sessions/" },
+  );
+  assert.equal(manifest.venues[0].sessionUrl, "https://example.test/sessions/east-hub.json");
+});
+
+test("slugifyVenueId normalizes display names", () => {
+  assert.equal(slugifyVenueId("East Hub Area"), "east-hub-area");
+});
+
+test("resolveSessionAssetUrl leaves absolute URLs unchanged", () => {
+  assert.equal(resolveSessionAssetUrl("https://x.test/tileset.json"), "https://x.test/tileset.json");
+});
+
+test("shouldLoadTilesetFromUrl accepts sourceUrl regardless of sourceType", () => {
+  assert.equal(
+    shouldLoadTilesetFromUrl({ sourceType: "file", sourceUrl: "/tilesets/abc/tileset.json" }),
+    true,
+  );
+});
+
+function makeBuilding({ name, tileset, venueId = null }) {
   return {
     name,
     tileset,
+    venueId,
     sourceUrl: "https://example.test/tileset.json",
     heightOffset: 0,
     levelBaseElevation: 100,

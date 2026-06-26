@@ -1,5 +1,8 @@
 node_modules/
 dist/
+data/tilesets/
+data/sessions/
+terminals/
 public/tiles/*
 !public/tiles/.gitkeep
 
@@ -19,3 +22,6 @@ ui-*.png
 .claude/
 .playwright-mcp/
 test-results/
+
+CLAUDE.md
+IMPROVEMENTS.md

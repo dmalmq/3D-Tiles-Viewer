@@ -1,5 +1,5 @@
 const DB_NAME = 'cesium-app';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'directoryHandles';
 
 function openDB() {
@@ -11,6 +11,10 @@ function openDB() {
       const db = event.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
+      }
+      if (!db.objectStoreNames.contains("sessionBackups")) {
+        const store = db.createObjectStore("sessionBackups", { keyPath: "id" });
+        store.createIndex("createdAt", "createdAt");
       }
     };
   });
