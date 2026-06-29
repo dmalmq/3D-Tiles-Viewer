@@ -1397,6 +1397,11 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
   const explicitLevelsData = normalizeLevelRecords(levelsData?.levels ?? []).length
     ? levelsData
     : null;
+  // Version-2 levels.json: per-link level entries keyed by sourceLinkName.
+  // Avoids ambiguity when two linked models share the same level names.
+  const explicitLinkLevels = levelsData?.linkLevels
+    ? new Map(Object.entries(levelsData.linkLevels))
+    : null;
   let levelBaseElevation = computeLevelBaseElevation(tileset, explicitLevelsData);
   tileset._directoryHandleId = directoryHandleId;
   tileset._directoryFolderName = directoryFolderName;
@@ -1433,10 +1438,14 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
     const siblings = [];
     for (const entry of groupEntries) {
       const sourceLevels = normalizeLevelRecords(entry.levels ?? []);
-      // Filter levels.json to only those with elements in this link group.
-      const filteredLevelsData = explicitLevelsData
-        ? { ...explicitLevelsData, levels: explicitLevelsData.levels.filter(l => entry.levelNames.has(l.levelName)) }
-        : null;
+      // Prefer per-link data from levels.json v2 (exact match by sourceLinkName).
+      // Fall back to filtering the flat levels list by levelName for v1 files.
+      const linkExplicitLevels = explicitLinkLevels?.get(entry.value);
+      const filteredLevelsData = linkExplicitLevels
+        ? recordsToLevelsData(normalizeLevelRecords(linkExplicitLevels))
+        : explicitLevelsData
+          ? { ...explicitLevelsData, levels: explicitLevelsData.levels.filter(l => entry.levelNames.has(l.levelName)) }
+          : null;
       const sourceLevelsData = sourceLevels.length ? recordsToLevelsData(sourceLevels) : null;
       const levelsForBase = sourceLevelsData ?? filteredLevelsData;
       const siblingLevelBaseElevation =
