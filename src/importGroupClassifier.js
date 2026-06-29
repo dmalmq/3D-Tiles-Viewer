@@ -15,7 +15,7 @@ import { groupFeaturesByFloor } from "./floorSplit.js";
 //
 // The `needsReview` entries include the auto-match result so the tray can
 // preselect building/floor without recomputing the score.
-export function partitionForReview(featureCollections, buildings) {
+export function partitionForReview(featureCollections, buildings, buildingFootprints = null) {
   const metadataOnly = [];
   const autoImport = [];
   const needsReview = [];
@@ -30,6 +30,7 @@ export function partitionForReview(featureCollections, buildings) {
       filename: fc.fileName,
       features: fc.features ?? [],
       buildings,
+      buildingFootprints,
     });
 
     const needsFloorSplit = groupFeaturesByFloor(fc?.features ?? []).length >= 2;

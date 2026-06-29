@@ -63,18 +63,38 @@ const BILINGUAL_ALIAS_GROUPS = BILINGUAL_NAME_ALIASES.map((group) =>
 );
 const PLACEHOLDER_SOURCE_VALUES = new Set(["unknown", "unk", "none", "null", "na", "n/a"]);
 
-export function matchLayerToTarget({ filename, features, buildings }) {
+// buildingFootprints: Array<{ lat, lon, radiusMeters } | null>, parallel to buildings[].
+// Computed by the caller (importReviewTray.js) which has Cesium available to convert
+// tileset.boundingSphere.center → WGS84. Passed as null when unavailable.
+export function matchLayerToTarget({ filename, features, buildings, buildingFootprints = null }) {
   const fileText = stripExt(filename ?? "");
   const source = detectSource(features);
-  let best = { buildingIndex: -1, score: 0, text: "" };
+  const featureBbox = buildingFootprints?.length ? computeFeaturesBbox(features) : null;
+  let best = { buildingIndex: -1, score: 0, nameScore: 0, text: "" };
 
   for (let i = 0; i < (buildings ?? []).length; i++) {
     const b = buildings[i];
     const sourceScore = source ? scoreTextAgainstBuilding(source, b) * 2 : 0;
     const fileScore = fileText ? scoreTextAgainstBuilding(fileText, b) : 0;
-    const score = sourceScore + fileScore;
+    const nameScore = sourceScore + fileScore;
+
+    let spatialScore = 0;
+    const fp = buildingFootprints?.[i];
+    if (featureBbox && fp?.radiusMeters > 0) {
+      const [minLon, minLat, maxLon, maxLat] = featureBbox;
+      const dist = haversineMeters((minLat + maxLat) / 2, (minLon + maxLon) / 2, fp.lat, fp.lon);
+      const r = fp.radiusMeters;
+      spatialScore = dist < r * 0.5 ? 100 : dist < r ? 60 : dist < r * 2 ? 20 : 0;
+    }
+
+    // Spatial boosts a name match, or acts as a half-weight fallback when name gives nothing.
+    // Never lets spatial alone reach "high" confidence → avoids the "too eager" problem.
+    const score = nameScore > 0
+      ? nameScore + spatialScore * 0.3
+      : spatialScore * 0.5;
+
     if (score > best.score) {
-      best = { buildingIndex: i, score, text: [source, fileText].filter(Boolean).join(" ") };
+      best = { buildingIndex: i, score, nameScore, text: [source, fileText].filter(Boolean).join(" ") };
     }
   }
 
@@ -85,10 +105,12 @@ export function matchLayerToTarget({ filename, features, buildings }) {
   const building = buildings[best.buildingIndex];
   const levelText = [fileText, source].filter(Boolean).join(" ");
   const level = matchLevelByText(levelText, building.levels);
+  // Spatial-only matches stay "medium" — preselects the building in review but never auto-imports
+  const confidence = best.nameScore > 0 && level ? "high" : "medium";
   return {
     buildingIndex: best.buildingIndex,
     levelKey: level ? (level.key ?? "") : null,
-    confidence: level ? "high" : "medium",
+    confidence,
   };
 }
 
@@ -236,6 +258,76 @@ function readProp(row, names) {
     if (k != null && row[k] != null && row[k] !== "") return row[k];
   }
   return null;
+}
+
+// --- Spatial helpers (no Cesium dependency — pure WGS84 math) ---
+
+const DEG_TO_RAD = Math.PI / 180;
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const dlat = (lat2 - lat1) * DEG_TO_RAD;
+  const dlon = (lon2 - lon1) * DEG_TO_RAD;
+  const a =
+    Math.sin(dlat / 2) ** 2 +
+    Math.cos(lat1 * DEG_TO_RAD) * Math.cos(lat2 * DEG_TO_RAD) * Math.sin(dlon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(a));
+}
+
+function visitCoords(geom, fn) {
+  if (!geom) return;
+  const c = geom.coordinates;
+  switch (geom.type) {
+    case "Point": fn(c[0], c[1]); break;
+    case "LineString": c.forEach((p) => fn(p[0], p[1])); break;
+    case "MultiLineString": c.forEach((ls) => ls.forEach((p) => fn(p[0], p[1]))); break;
+    case "Polygon": c.forEach((ring) => ring.forEach((p) => fn(p[0], p[1]))); break;
+    case "MultiPolygon": c.forEach((poly) => poly.forEach((ring) => ring.forEach((p) => fn(p[0], p[1])))); break;
+  }
+}
+
+// Returns [minLon, minLat, maxLon, maxLat] in WGS84 degrees, or null if no coords.
+export function computeFeaturesBbox(features) {
+  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity, has = false;
+  for (const f of features ?? []) {
+    visitCoords(f?.geometry, (lon, lat) => {
+      if (lon < minLon) minLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lon > maxLon) maxLon = lon;
+      if (lat > maxLat) maxLat = lat;
+      has = true;
+    });
+  }
+  return has ? [minLon, minLat, maxLon, maxLat] : null;
+}
+
+// Split a feature collection by its features' `source` property.
+// Returns [fc] when all features share the same source (no-op).
+// Returns one sub-collection per distinct source when multiple are present,
+// so each linked model's floor plan data gets its own matching attempt.
+export function splitFeaturesBySource(fc) {
+  const features = fc?.features ?? [];
+  const groups = new Map();
+  const noSource = [];
+  for (const f of features) {
+    const raw = readProp(f?.properties ?? {}, ["source", "Source", "SOURCE"]);
+    if (!raw || isPlaceholderSource(raw)) {
+      noSource.push(f);
+      continue;
+    }
+    const key = String(raw);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+  if (groups.size <= 1) return [fc];
+
+  const result = [];
+  for (const [source, sourceFeatures] of groups) {
+    result.push({ ...fc, fileName: `${stripExt(fc.fileName)} [${source}]`, features: sourceFeatures });
+  }
+  if (noSource.length > 0) {
+    result.push({ ...fc, fileName: `${stripExt(fc.fileName)} [unknown]`, features: noSource });
+  }
+  return result;
 }
 
 function stripFcExt(name) {

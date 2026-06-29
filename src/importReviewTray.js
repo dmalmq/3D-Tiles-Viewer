@@ -43,9 +43,22 @@ export function openImportReviewTray({
 }) {
   if (activeTray) activeTray.close();
 
+  const buildingFootprints = buildings.map((b) => {
+    const sphere = b._boundingSphere ?? b?.tileset?.boundingSphere;
+    if (!sphere?.center) return null;
+    const carto = Cartographic.fromCartesian(sphere.center);
+    if (!carto) return null;
+    return {
+      lat: CesiumMath.toDegrees(carto.latitude),
+      lon: CesiumMath.toDegrees(carto.longitude),
+      radiusMeters: sphere.radius ?? 0,
+    };
+  });
+
   const { autoImport, needsReview, metadataOnly } = partitionForReview(
     featureCollections,
     buildings,
+    buildingFootprints,
   );
   void metadataOnly; // dropped silently, matches today's dialog behaviour
 
@@ -538,13 +551,25 @@ function initMapPane(mapPane, viewer, buildings, groups, { onAssignBuildingToFoc
     const lat = CesiumMath.toDegrees(carto.latitude);
     const lng = CesiumMath.toDegrees(carto.longitude);
     buildingPositions.push({ buildingIndex: i, lat, lng });
-    const marker = L.circleMarker([lat, lng], {
-      radius: 8,
-      color: "#0696D7",
-      weight: 2,
-      fillColor: "#0696D7",
-      fillOpacity: 0.35,
-    }).addTo(buildingLayer);
+    const sphere = b._boundingSphere ?? b?.tileset?.boundingSphere;
+    const radiusMeters = sphere?.radius ?? 0;
+    const marker =
+      radiusMeters > 10 && radiusMeters < 5000
+        ? L.circle([lat, lng], {
+            radius: radiusMeters,
+            color: "#0696D7",
+            weight: 2,
+            fillColor: "#0696D7",
+            fillOpacity: 0.12,
+          })
+        : L.circleMarker([lat, lng], {
+            radius: 8,
+            color: "#0696D7",
+            weight: 2,
+            fillColor: "#0696D7",
+            fillOpacity: 0.35,
+          });
+    marker.addTo(buildingLayer);
     marker.bindTooltip(b.name, { direction: "top", offset: [0, -8] });
     marker.on("click", () => onAssignBuildingToFocusedGroup?.(i));
   });

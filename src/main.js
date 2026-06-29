@@ -56,6 +56,7 @@ import { loadTilesetGlbBuffer, computePerLinkLocalAabbs, unionAabbs } from "./gl
 import { openImportDataModal, restoreImportedLayer } from "./importDataModal.js";
 import { parseCityGml } from "./cityGmlLoader.js";
 import { loadGdb } from "./gdbLoader.js";
+import { splitFeaturesBySource } from "./gdbAutoMatch.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
 import { openImportReviewTray } from "./importReviewTray.js";
 import { classifyImportFiles } from "./importPipeline.js";
@@ -2720,8 +2721,12 @@ async function runGdbLoad(input, defaults = null) {
   const { featureCollections, warnings } = parsed;
   if (warnings?.length) console.warn("[.gdb] warnings:", warnings);
   if (featureCollections?.length) {
+    // Expand any feature collections that carry data for multiple buildings
+    // (multiple distinct `source` property values) into per-source sub-collections,
+    // so each linked model's floor plan gets its own independent matching pass.
+    const expanded = featureCollections.flatMap((fc) => splitFeaturesBySource(fc));
     openImportReviewTray({
-      featureCollections,
+      featureCollections: expanded,
       buildings,
       viewer,
       mode: "import",
@@ -2730,7 +2735,7 @@ async function runGdbLoad(input, defaults = null) {
       defaultBuildingIndex: defaults?.defaultBuildingIndex ?? null,
       defaultLevelKey: defaults?.defaultLevelKey ?? null,
       onOpenClassicTable: () =>
-        openGdbImportDialog({ featureCollections, buildings, onImport: applyGdbDecisions }),
+        openGdbImportDialog({ featureCollections: expanded, buildings, onImport: applyGdbDecisions }),
     });
   }
   hideLoadingOverlay();
