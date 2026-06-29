@@ -122,7 +122,10 @@ export function rewriteSessionTilesetUrls(sessionData, urlByBuildingName) {
     if (!mapped) continue;
     b.sourceType = "url";
     b.sourceUrl = mapped;
-    b.directoryHandleId = null;
+    // directoryHandleId is intentionally preserved as a local-file fallback.
+    // If the server-side tileset URL ever becomes unavailable, sessionRestore.js
+    // will retry from the original local directory. Clearing it here would also
+    // cause re-publishes to wrongly treat the URL as "already uploaded" (skipUpload:true).
     b._directoryFolderName = null;
   }
   return data;
