@@ -92,6 +92,7 @@ export function inspectLinks(tileset, options = {}) {
     let safetyTimer = null;
     let resolved = false;
     let removeListener = () => {};
+    let removeAllLoadedListener = () => {};
 
     const finish = () => {
       if (resolved) return;
@@ -99,6 +100,7 @@ export function inspectLinks(tileset, options = {}) {
       clearTimeout(tailTimer);
       clearTimeout(safetyTimer);
       removeListener();
+      removeAllLoadedListener();
       if (collectAllProperties) {
         for (const [k, v] of allPropertyValueSamples) {
           allPropertyCounts.set(k, v.size);
@@ -129,10 +131,24 @@ export function inspectLinks(tileset, options = {}) {
       }
     });
 
+    // A tileset without batched features (e.g. plain GLB content with no
+    // metadata) never arms the tail timer — without this, such tilesets would
+    // sit on the safety timer for its full duration before the building
+    // appears in the UI. Once every requested tile is loaded and inspection
+    // still found nothing, there is nothing left to wait for.
+    if (tileset.allTilesLoaded) {
+      removeAllLoadedListener = tileset.allTilesLoaded.addEventListener(() => {
+        if (featuresInspected === 0) finish();
+      });
+    }
+
     // The synchronous walk above may already have gathered content — if so,
     // start the tail right away.
     if (featuresInspected > 0) {
       tailTimer = setTimeout(finish, tailTimeoutMs);
+    } else if (tileset.tilesLoaded) {
+      // Already fully loaded with zero features found — resolve immediately.
+      setTimeout(finish, 0);
     }
     // Safety upper bound: guarantees the promise resolves even if no tile ever loads
     safetyTimer = setTimeout(finish, safetyTimeoutMs);

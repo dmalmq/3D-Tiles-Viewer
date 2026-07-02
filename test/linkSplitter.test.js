@@ -40,6 +40,35 @@ function makeTileset(rows) {
   };
 }
 
+test("inspectLinks resolves immediately for a fully loaded tileset with no features", async () => {
+  const tileset = makeTileset([]);
+  tileset.tilesLoaded = true;
+
+  const started = Date.now();
+  const inspection = await inspectLinks(tileset, { safetyTimeoutMs: 60000 });
+  assert.ok(Date.now() - started < 1000, "should not wait for the safety timer");
+  assert.equal(inspection.groups.size, 0);
+});
+
+test("inspectLinks resolves on allTilesLoaded when no features were found", async () => {
+  const tileset = makeTileset([]);
+  let fireAllLoaded = null;
+  tileset.allTilesLoaded = {
+    addEventListener(fn) {
+      fireAllLoaded = fn;
+      return () => {};
+    },
+  };
+
+  const started = Date.now();
+  const pending = inspectLinks(tileset, { safetyTimeoutMs: 60000 });
+  assert.ok(fireAllLoaded, "listener should be registered");
+  fireAllLoaded();
+  const inspection = await pending;
+  assert.ok(Date.now() - started < 1000, "should not wait for the safety timer");
+  assert.equal(inspection.groups.size, 0);
+});
+
 test("inspectLinks keeps level metadata when sourceLinkName is absent", async () => {
   const inspection = await inspectLinks(makeTileset([
     {

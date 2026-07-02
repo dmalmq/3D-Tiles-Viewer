@@ -7,11 +7,13 @@ import {
   createSessionRestorePlan,
   applySavedModelLevelOverrides,
   isValidActiveModelLevelIndex,
+  SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M,
   normalizeRestoredShapefileLayerData,
   normalizeRestoredUnassignedLayerData,
   resolveSessionAssetUrl,
   shouldLoadTilesetFromUrl,
 } from "./session.js";
+import { featureCollectionForVectorLayerRender } from "./geojsonHeight.js";
 
 export { shouldLoadTilesetFromUrl };
 import { applyShapefileLayerHeights } from "./shapefilePlacement.js";
@@ -181,7 +183,9 @@ export async function restoreSession(data, ctx) {
   ctx.setSelectedBuildingIndex?.(ctx.buildings.length > 0 ? 0 : -1);
   ctx.rebuildModelLevels?.();
   const modelLevels = ctx.getModelLevels?.() ?? ctx.modelLevels;
-  applySavedModelLevelOverrides(modelLevels, data.modelLevels);
+  applySavedModelLevelOverrides(modelLevels, data.modelLevels, {
+    maxElevationDelta: SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M,
+  });
   if (isValidActiveModelLevelIndex(data.activeModelLevelIndex, modelLevels)) {
     ctx.selectModelLevel?.(data.activeModelLevelIndex);
   }
@@ -208,6 +212,7 @@ export async function restoreSiblingGroup(group, ctx) {
     ctx.buildings.push(b);
     return b;
   });
+  for (const sibling of siblings) sibling._siblingBuildings = siblings;
 
   await wireTileset(tileset, siblings, first, ctx, tilesetUrl);
 
@@ -222,7 +227,7 @@ export async function restoreShapefileLayer(building, slData, ctx) {
   });
   if (!layerData) return;
 
-  const geojson = { type: "FeatureCollection", features: layerData.features };
+  const geojson = featureCollectionForVectorLayerRender(layerData.features, layerData._origin);
   const cesiumColor = Color.fromCssColorString(layerData.color);
   const dataSource = await GeoJsonDataSource.load(geojson, {
     fill: cesiumColor.withAlpha(1.0),
@@ -243,7 +248,7 @@ export async function restoreUnassignedLayer(u, ctx) {
   });
   if (!layerData) return;
 
-  const geojson = { type: "FeatureCollection", features: layerData.features };
+  const geojson = featureCollectionForVectorLayerRender(layerData.features, layerData._origin);
   const cesiumColor = Color.fromCssColorString(layerData.color);
   const dataSource = await GeoJsonDataSource.load(geojson, {
     fill: cesiumColor.withAlpha(1.0),

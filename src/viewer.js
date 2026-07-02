@@ -1,7 +1,6 @@
 import {
   Viewer,
   Ion,
-  OpenStreetMapImageryProvider,
   Cartographic,
   Cartesian3,
   Cartesian2,
@@ -53,9 +52,11 @@ import { getLayerType, isSpaceLayerName, isColorConfigurableLayer, HEX_COLOR_RE 
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
 import { notifyUser } from "./notifications.js";
 import {
+  buildingLevelWorldHeight,
   applyShapefileLayerHeight,
   applyShapefileLayerHeights,
 } from "./shapefilePlacement.js";
+import { readSavedCesiumIonToken } from "./cesiumToken.js";
 
 // -- State --
 let viewer;
@@ -110,9 +111,9 @@ const viewerSessionInput = document.getElementById("viewerSessionInput");
 const viewerSessionBanner = document.getElementById("viewerSessionBanner");
 const viewerVenueBar = document.getElementById("viewerVenueBar");
 const viewerVenueSelect = document.getElementById("viewerVenueSelect");
-const viewerBuildingListEl = document.getElementById("viewerBuildingList");
+const viewerBuildingSelectEl = document.getElementById("viewerBuildingSelect");
+const viewerBuildingZoomBtn = document.getElementById("viewerBuildingZoomBtn");
 const viewerNoBuildingsMsg = document.getElementById("viewerNoBuildings");
-const viewerLevelListEl = document.getElementById("viewerLevelList");
 const viewerLayersListEl = document.getElementById("viewerLayersList");
 const viewerNoLayersMsg = document.getElementById("viewerNoLayers");
 const importedLayersListEl = document.getElementById("importedLayersList");
@@ -134,7 +135,7 @@ function init() {
   initPanelToggles();
   initSectionCollapse();
 
-  const savedToken = localStorage.getItem("cesiumIonToken") || "";
+  const savedToken = readSavedCesiumIonToken();
   if (savedToken) Ion.defaultAccessToken = savedToken;
 
   viewer = new Viewer("cesiumContainer", {
@@ -142,11 +143,12 @@ function init() {
     geocoder: false,
     animation: false,
     timeline: false,
-    imageryProvider: new OpenStreetMapImageryProvider({
-      url: "https://tile.openstreetmap.org/",
-    }),
+    // Skip the default Ion base layer (needs a token); switchImagery() below
+    // applies whatever the imagery select shows.
+    baseLayer: false,
   });
 
+  switchImagery();
   initializeTerrainProviders(savedToken).then((providers) => {
     terrainProviders = providers;
     switchTerrain();
@@ -155,6 +157,16 @@ function init() {
   viewerLoadSessionBtn.addEventListener("click", () => viewerSessionInput.click());
   viewerSessionInput.addEventListener("change", handleLoadSessionFile);
   viewerVenueSelect.addEventListener("change", () => switchVenue(viewerVenueSelect.value));
+  viewerBuildingSelectEl.addEventListener("change", () => {
+    const val = parseInt(viewerBuildingSelectEl.value, 10);
+    selectedBuildingIndex = val >= 0 ? val : -1;
+    applyBuildingSelectionFilter();
+    invalidateAndRerender();
+    if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
+  });
+  viewerBuildingZoomBtn.addEventListener("click", () => {
+    if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
+  });
   imagerySelect.addEventListener("change", () => switchImagery());
   terrainSelect.addEventListener("change", switchTerrain);
   lodFilterToggle.addEventListener("change", handleLodFilterToggle);
@@ -356,8 +368,9 @@ function buildRestoreContext() {
     setTerrainChoice: (v) => { terrainSelect.value = v; },
     switchTerrain: (v) => switchTerrain(v),
     restoreVenues: () => {},
-    setSelectedBuildingIndex: (i) => { selectedBuildingIndex = i; },
+    setSelectedBuildingIndex: () => { selectedBuildingIndex = -1; },
     rebuildModelLevels,
+    getModelLevels: () => modelLevels,
     selectModelLevel,
     bindTilesetTileLoad,
     applyHeightOffset,
@@ -449,7 +462,7 @@ function rebuildModelLevels() {
     for (const lvl of b.levels ?? []) {
       const fn = levelNameToNumber(lvl.name);
       if (fn == null || seen.has(fn)) continue;
-      seen.set(fn, { name: shortLevelName(lvl.name), elevation: (b.levelBaseElevation ?? 0) + (lvl.floor ?? 0) });
+      seen.set(fn, { name: shortLevelName(lvl.name), elevation: buildingLevelWorldHeight(b, lvl) });
     }
   }
   modelLevels = [...seen].map(([fn, derived]) => {
@@ -812,7 +825,6 @@ function invalidateAndRerender() {
   transient.invalidatedRenderFrame = requestAnimationFrame(() => {
     transient.invalidatedRenderFrame = null;
     renderViewerBuildingList();
-    renderViewerLevelList();
     renderViewerLayersList();
     renderImportedLayersList();
     applyLevelTopClipForAll();
@@ -820,6 +832,27 @@ function invalidateAndRerender() {
     applyImportedLayerContexts();
     updateLodFilterStatus();
   });
+}
+
+function applyBuildingSelectionFilter() {
+  for (let i = 0; i < buildings.length; i++) {
+    buildings[i]._hidden = selectedBuildingIndex >= 0 && i !== selectedBuildingIndex;
+  }
+  const seen = new Set();
+  for (const b of buildings) {
+    if (!b.tileset || seen.has(b.tileset)) continue;
+    seen.add(b.tileset);
+    const allHidden = (b.tileset._buildings ?? []).every(s => s._hidden);
+    b.tileset.show = !allHidden;
+    if (!allHidden) applyFiltersForTileset(b.tileset);
+  }
+  for (const b of buildings) {
+    if (b._hidden) {
+      for (const layer of b.shapefileLayers) layer.dataSource.show = false;
+    } else {
+      applyLevelToShapefilesForBuilding(b);
+    }
+  }
 }
 
 function applyLevelTopClipForAll() {
@@ -832,59 +865,20 @@ function applyLevelTopClipForAll() {
 }
 
 function renderViewerBuildingList() {
-  viewerBuildingListEl.innerHTML = "";
   viewerNoBuildingsMsg.style.display = buildings.length ? "none" : "";
+  viewerBuildingSelectEl.innerHTML = "";
+  const allOpt = document.createElement("option");
+  allOpt.value = "-1";
+  allOpt.textContent = t("viewer.allBuildings");
+  viewerBuildingSelectEl.appendChild(allOpt);
   for (let i = 0; i < buildings.length; i++) {
-    const b = buildings[i];
-    const li = document.createElement("li");
-    li.className = "level-item" + (i === selectedBuildingIndex ? " selected" : "");
-    const nameBtn = document.createElement("button");
-    nameBtn.type = "button";
-    nameBtn.className = "level-name-btn";
-    nameBtn.textContent = b.name;
-    nameBtn.addEventListener("click", () => { selectedBuildingIndex = i; invalidateAndRerender(); });
-    const zoomBtn = document.createElement("button");
-    zoomBtn.type = "button";
-    zoomBtn.className = "icon-btn zoom-btn";
-    zoomBtn.title = t("viewer.zoomBuilding");
-    zoomBtn.textContent = "⊕";
-    zoomBtn.addEventListener("click", (e) => { e.stopPropagation(); zoomToBuilding(i); });
-    li.appendChild(nameBtn);
-    li.appendChild(zoomBtn);
-    viewerBuildingListEl.appendChild(li);
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = buildings[i].name;
+    viewerBuildingSelectEl.appendChild(opt);
   }
-}
-
-function renderViewerLevelList() {
-  viewerLevelListEl.innerHTML = "";
-  const allRow = document.createElement("li");
-  allRow.className = "level-item ml-row all-floors" + (activeModelLevelIndex === -1 ? " selected" : "");
-  const allRadio = document.createElement("input");
-  allRadio.type = "radio";
-  allRadio.name = "viewerModelLevel";
-  allRadio.checked = activeModelLevelIndex === -1;
-  allRadio.addEventListener("change", () => selectModelLevel(-1));
-  const allLabel = document.createElement("span");
-  allLabel.textContent = t("level.allFloors");
-  allRow.appendChild(allRadio);
-  allRow.appendChild(allLabel);
-  viewerLevelListEl.appendChild(allRow);
-
-  for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
-    const ml = modelLevels[mli];
-    const row = document.createElement("li");
-    row.className = "level-item ml-row" + (activeModelLevelIndex === mli ? " selected" : "");
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "viewerModelLevel";
-    radio.checked = activeModelLevelIndex === mli;
-    radio.addEventListener("change", () => selectModelLevel(mli));
-    const label = document.createElement("span");
-    label.textContent = ml.name;
-    row.appendChild(radio);
-    row.appendChild(label);
-    viewerLevelListEl.appendChild(row);
-  }
+  viewerBuildingSelectEl.value = selectedBuildingIndex >= 0 ? String(selectedBuildingIndex) : "-1";
+  viewerBuildingZoomBtn.style.display = selectedBuildingIndex >= 0 ? "" : "none";
 }
 
 function getReadOnlySceneTreeCallbacks() {
@@ -921,6 +915,18 @@ function buildingsForLayersTree() {
   return selectedBuildingIndex >= 0 ? [buildings[selectedBuildingIndex]] : buildings;
 }
 
+function buildingVisibleFloorNumbers() {
+  if (selectedBuildingIndex < 0) return null;
+  const b = buildings[selectedBuildingIndex];
+  if (!b) return null;
+  const nums = new Set();
+  for (const l of b.levels ?? []) {
+    const fn = levelNameToNumber(l.name);
+    if (fn != null) nums.add(fn);
+  }
+  return nums;
+}
+
 function renderViewerLayersList() {
   const treeBuildings = buildingsForLayersTree();
   const hasLayers = treeBuildings.some((b) => b.shapefileLayers?.length) || unassignedLayers.length > 0;
@@ -930,12 +936,13 @@ function renderViewerLayersList() {
     buildings: treeBuildings,
     importedLayers: [],
     unassignedLayers,
-    modelLevels: [],
+    modelLevels,
+    visibleFloorNumbers: buildingVisibleFloorNumbers(),
     selection: {
       filterRaw: "",
       activeModelLevelIndex,
       selectedBuildingIndex: selectedBuildingIndex >= 0 ? 0 : selectedBuildingIndex,
-      selectedLayers: [],
+      selectedLayers: new Set(),
       unassignedTreeExpanded: transient.unassignedTreeExpanded,
       buildingsSectionExpanded: transient.buildingsSectionExpanded,
     },

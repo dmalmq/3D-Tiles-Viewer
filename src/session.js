@@ -4,11 +4,13 @@
 import { serializeSourceLevelGroups } from "./levelMetadata.js";
 
 import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
+import { buildingLevelWorldHeight } from "./shapefilePlacement.js";
 
 // Bump when changing the JSON shape in a non-backward-compatible way. Old
 // session files that match a previously-supported version remain loadable.
 export const SESSION_SCHEMA_VERSION = 3;
 export const SUPPORTED_SESSION_VERSIONS = [1, 2, 3];
+export const SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M = 25;
 
 export function isSupportedSessionVersion(v) {
   return SUPPORTED_SESSION_VERSIONS.includes(v);
@@ -183,16 +185,26 @@ export function createSessionRestorePlan(data) {
   };
 }
 
-export function applySavedModelLevelOverrides(modelLevels, savedModelLevels) {
+export function applySavedModelLevelOverrides(modelLevels, savedModelLevels, options = {}) {
   if (!Array.isArray(modelLevels) || !Array.isArray(savedModelLevels) || savedModelLevels.length === 0) {
     return modelLevels;
   }
+  const maxElevationDelta = options.maxElevationDelta ?? Infinity;
   const byFloorNumber = new Map(savedModelLevels.map((m) => [m.floorNumber, m]));
   for (const modelLevel of modelLevels) {
     const saved = byFloorNumber.get(modelLevel.floorNumber);
     if (!saved) continue;
     if (saved.name) modelLevel.name = saved.name;
-    if (Number.isFinite(saved.elevation)) modelLevel.elevation = saved.elevation;
+    if (
+      Number.isFinite(saved.elevation) &&
+      (
+        !Number.isFinite(modelLevel.elevation) ||
+        !Number.isFinite(maxElevationDelta) ||
+        Math.abs(saved.elevation - modelLevel.elevation) <= maxElevationDelta
+      )
+    ) {
+      modelLevel.elevation = saved.elevation;
+    }
   }
   return modelLevels;
 }
@@ -236,8 +248,7 @@ function normalizeRestoredVectorLayerData(layerData, { fallbackSource = null, in
 }
 
 // Trigger a browser download of the serialized session.
-export function deriveModelLevelsFromBuildings(buildings, preserved = []) {
-  const preservedMap = new Map(preserved.map((m) => [m.floorNumber, m]));
+export function deriveModelLevelsFromBuildings(buildings, preserved = [], options = {}) {
   const seen = new Map();
   for (const b of buildings ?? []) {
     if (!b.levels) continue;
@@ -247,21 +258,17 @@ export function deriveModelLevelsFromBuildings(buildings, preserved = []) {
       if (!seen.has(fn)) {
         seen.set(fn, {
           name: shortLevelName(lvl.name),
-          elevation: (b.levelBaseElevation ?? 0) + (lvl.floor ?? 0),
+          elevation: buildingLevelWorldHeight(b, lvl),
         });
       }
     }
   }
   const next = [];
   for (const [fn, derived] of seen) {
-    const existing = preservedMap.get(fn);
-    next.push(
-      existing
-        ? { floorNumber: fn, name: existing.name, elevation: existing.elevation }
-        : { floorNumber: fn, name: derived.name, elevation: derived.elevation },
-    );
+    next.push({ floorNumber: fn, name: derived.name, elevation: derived.elevation });
   }
   next.sort((a, b) => a.floorNumber - b.floorNumber);
+  applySavedModelLevelOverrides(next, preserved, options);
   return next;
 }
 
@@ -269,7 +276,9 @@ export function filterSessionByVenue(data, venueId) {
   if (!data || venueId == null) return data;
   const buildings = (data.buildings ?? []).filter((b) => b.venueId === venueId);
   const importedLayers = (data.importedLayers ?? []).filter((l) => l.venueId === venueId);
-  const modelLevels = deriveModelLevelsFromBuildings(buildings, data.modelLevels ?? []);
+  const modelLevels = deriveModelLevelsFromBuildings(buildings, data.modelLevels ?? [], {
+    maxElevationDelta: SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M,
+  });
   return {
     ...data,
     version: data.version ?? SESSION_SCHEMA_VERSION,
