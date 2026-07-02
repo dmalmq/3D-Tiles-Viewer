@@ -1,10 +1,6 @@
 import {
   Viewer,
   Ion,
-  IonImageryProvider,
-  OpenStreetMapImageryProvider,
-  ArcGisMapServerImageryProvider,
-  EllipsoidTerrainProvider,
   createWorldTerrainAsync,
   Cartographic,
   Cartesian2,
@@ -57,9 +53,11 @@ import { openImportDataModal, restoreImportedLayer } from "./importDataModal.js"
 import { parseCityGml } from "./cityGmlLoader.js";
 import { loadGdb } from "./gdbLoader.js";
 import { splitFeaturesBySource } from "./gdbAutoMatch.js";
+import { featureCollectionForVectorLayerRender } from "./geojsonHeight.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
 import { openImportReviewTray } from "./importReviewTray.js";
 import { classifyImportFiles } from "./importPipeline.js";
+import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
 import { openColorConfigDialog } from "./colorConfigDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
 import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber, shortLevelName } from "./floorSplit.js";
@@ -123,9 +121,14 @@ import { openPublishLinksDialog } from "./publishLinksDialog.js";
 import { openSessionBackupsDialog, createAutoBackup } from "./sessionBackupsDialog.js";
 import { renderVenuesPanel, promptVenueName } from "./venuePanel.js";
 import {
+  buildingLevelWorldHeight,
   applyShapefileLayerHeight as applyShapefileLayerHeightImpl,
   applyShapefileLayerHeights as applyShapefileLayerHeightsImpl,
 } from "./shapefilePlacement.js";
+import {
+  getStartupCesiumIonToken,
+  saveCesiumIonToken,
+} from "./cesiumToken.js";
 
 // -- State --
 let viewer;
@@ -142,6 +145,7 @@ const buildings = [];
 // Multiple buildings may share the same tileset when split by Revit link;
 // siblings are tracked via tileset._buildings (array set by the splitter).
 let selectedBuildingIndex = -1;
+let isolatedBuildingIndex = -1;
 const importedLayers = [];
 // Layers that the user imported without assigning to a building. Each entry
 // has the same shape as building.shapefileLayers[*] but with no parent
@@ -261,6 +265,9 @@ const leftSettingsPopover = document.getElementById("leftSettingsPopover");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
 const levelListEl = document.getElementById("levelList");
+const editorBuildingSelectEl = document.getElementById("editorBuildingSelect");
+const editorBuildingZoomBtn = document.getElementById("editorBuildingZoomBtn");
+const levelPillsEl = document.getElementById("levelPillsRow");
 const venuesSectionBody = document.getElementById("venuesSectionBody");
 const backupsBtn = document.getElementById("backupsBtn");
 const exportViewerBtn = document.getElementById("exportViewerBtn");
@@ -327,8 +334,7 @@ function getLinkInspectionOptions() {
 function init() {
   initLanguageToggle();
 
-  const savedToken = localStorage.getItem("cesiumIonToken") || "";
-  tokenInput.value = savedToken;
+  const savedToken = getStartupCesiumIonToken(tokenInput);
   if (savedToken) Ion.defaultAccessToken = savedToken;
 
   viewer = new Viewer("cesiumContainer", {
@@ -336,11 +342,12 @@ function init() {
     geocoder: false,
     animation: false,
     timeline: false,
-    imageryProvider: new OpenStreetMapImageryProvider({
-      url: "https://tile.openstreetmap.org/",
-    }),
+    // Skip the default Ion base layer (needs a token); switchImagery() below
+    // applies whatever the imagery select shows.
+    baseLayer: false,
   });
 
+  switchImagery();
   switchTerrain();
   initializeTerrainProviders(savedToken);
   startAutoBackupTimer();
@@ -355,6 +362,7 @@ function init() {
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
   sessionInput.addEventListener("change", handleLoadSession);
   applyTokenBtn.addEventListener("click", applyToken);
+  tokenInput.addEventListener("change", () => saveCesiumIonToken(tokenInput.value));
   imagerySelect.addEventListener("change", switchImagery);
   terrainSelect.addEventListener("change", switchTerrain);
   loadUrlBtn.addEventListener("click", handleLoadUrl);
@@ -405,6 +413,18 @@ function init() {
     if (e.key === "Escape" && clearLayerSelection()) renderLevelList();
   });
   buildingOverlapToggle.addEventListener("change", handleBuildingOverlapToggle);
+  editorBuildingSelectEl?.addEventListener("change", () => {
+    const val = parseInt(editorBuildingSelectEl.value, 10);
+    selectedBuildingIndex = val >= 0 ? val : -1;
+    isolatedBuildingIndex = selectedBuildingIndex;
+    selectModelLevel(-1);
+    applyBuildingIsolation();
+    invalidateAndRerender();
+    if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
+  });
+  editorBuildingZoomBtn?.addEventListener("click", () => {
+    if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
+  });
   importDataBtn.addEventListener("click", () =>
     openImportDataModal(viewer, loadTilesetFromUrl, (layer) => {
       importedLayers.push(layer);
@@ -428,6 +448,19 @@ function init() {
   initSceneFilter();
   initLeftPanelResizer();
   initFileDropZone();
+  initLeftPanelTabs();
+}
+
+function initLeftPanelTabs() {
+  const tabs = document.querySelectorAll("#leftPanelTabStrip .left-tab");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      tabs.forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".left-tab-panel").forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      document.getElementById(tab.dataset.panel)?.classList.add("active");
+    });
+  });
 }
 
 async function initializeTerrainProviders(savedToken) {
@@ -924,10 +957,9 @@ function hideLoadingOverlay() {
 
 // -- Token --
 async function applyToken() {
-  const token = tokenInput.value.trim();
+  const token = saveCesiumIonToken(tokenInput.value);
   if (!token) return;
   Ion.defaultAccessToken = token;
-  localStorage.setItem("cesiumIonToken", token);
   try {
     terrainProviders.worldTerrainProvider = await createWorldTerrainAsync();
   } catch (e) {
@@ -1212,7 +1244,10 @@ async function handleLoadUrl() {
   try {
     const levelsData = await detectLevelsFromUrl(url);
     tileset = await loadTilesetFromUrl(viewer, url);
-    const name = url.split("/").filter(Boolean).pop() || url;
+    // Prefer the folder segment over a generic trailing "tileset.json".
+    const segments = url.split("/").filter(Boolean);
+    const last = segments.pop() || url;
+    const name = /\.json$/i.test(last) ? segments.pop() || last : last;
     await addBuilding(tileset, name, levelsData, url);
   } catch (e) {
     cleanupUntrackedTileset(tileset);
@@ -1289,7 +1324,7 @@ async function handleReloadTilesetClick() {
 
 // -- Load from file picker --
 async function handleFileSelect(e) {
-  const files = e.target.files;
+  const files = Array.from(e.target.files ?? []);
   if (!files.length) {
     fileInput.value = "";
     return;
@@ -1628,10 +1663,16 @@ function handleRemoveBuilding(index) {
 
   if (buildings.length === 0) {
     selectedBuildingIndex = -1;
+    isolatedBuildingIndex = -1;
   } else if (selectedBuildingIndex >= buildings.length) {
     selectedBuildingIndex = buildings.length - 1;
   } else if (selectedBuildingIndex > index) {
     selectedBuildingIndex--;
+  }
+  if (isolatedBuildingIndex >= buildings.length) {
+    isolatedBuildingIndex = -1;
+  } else if (isolatedBuildingIndex > index) {
+    isolatedBuildingIndex--;
   }
   fileStatus.textContent = "";
   rebuildModelLevels();
@@ -1816,7 +1857,7 @@ function rebuildModelLevels() {
       if (!seen.has(fn)) {
         seen.set(fn, {
           name: shortLevelName(lvl.name),
-          elevation: (b.levelBaseElevation ?? 0) + (lvl.floor ?? 0),
+          elevation: buildingLevelWorldHeight(b, lvl),
         });
       }
     }
@@ -2058,6 +2099,27 @@ function applyFiltersForTileset(tileset) {
   }
   for (const b of (tileset._buildings || [])) {
     applyLevelToShapefilesForBuilding(b);
+  }
+}
+
+function applyBuildingIsolation() {
+  for (let i = 0; i < buildings.length; i++) {
+    buildings[i]._hidden = isolatedBuildingIndex >= 0 && i !== isolatedBuildingIndex;
+  }
+  const seen = new Set();
+  for (const b of buildings) {
+    if (!b.tileset || seen.has(b.tileset)) continue;
+    seen.add(b.tileset);
+    const allHidden = (b.tileset._buildings ?? []).every(s => s._hidden);
+    b.tileset.show = !allHidden;
+    if (!allHidden) applyFiltersForTileset(b.tileset);
+  }
+  for (const b of buildings) {
+    if (b._hidden) {
+      for (const layer of b.shapefileLayers) layer.dataSource.show = false;
+    } else {
+      applyLevelToShapefilesForBuilding(b);
+    }
   }
 }
 
@@ -2337,7 +2399,69 @@ function renderVenuesSection() {
   });
 }
 
+function renderEditorBuildingSelect() {
+  if (!editorBuildingSelectEl) return;
+  editorBuildingSelectEl.innerHTML = "";
+  const allOpt = document.createElement("option");
+  allOpt.value = "-1";
+  allOpt.textContent = t("viewer.allBuildings");
+  editorBuildingSelectEl.appendChild(allOpt);
+  for (let i = 0; i < buildings.length; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = buildings[i].name;
+    editorBuildingSelectEl.appendChild(opt);
+  }
+  editorBuildingSelectEl.value = selectedBuildingIndex >= 0 ? String(selectedBuildingIndex) : "-1";
+  if (editorBuildingZoomBtn) {
+    editorBuildingZoomBtn.style.display = selectedBuildingIndex >= 0 ? "" : "none";
+  }
+}
+
+function editorBuildingFloorNumbers() {
+  if (selectedBuildingIndex < 0) return null;
+  const b = buildings[selectedBuildingIndex];
+  if (!b) return null;
+  const nums = new Set();
+  for (const l of b.levels ?? []) {
+    const fn = levelNameToNumber(l.name);
+    if (fn != null) nums.add(fn);
+  }
+  return nums;
+}
+
+function renderLevelPills() {
+  if (!levelPillsEl) return;
+  levelPillsEl.innerHTML = "";
+  const visibleFns = editorBuildingFloorNumbers();
+  const pillLevels = visibleFns
+    ? modelLevels.filter(ml => visibleFns.has(ml.floorNumber))
+    : modelLevels;
+  if (pillLevels.length === 0) return;
+
+  const allPill = document.createElement("button");
+  allPill.type = "button";
+  allPill.className = "level-pill" + (activeModelLevelIndex === -1 ? " active" : "");
+  allPill.textContent = t("level.allFloors");
+  allPill.addEventListener("click", () => selectModelLevel(-1));
+  levelPillsEl.appendChild(allPill);
+
+  for (let i = pillLevels.length - 1; i >= 0; i--) {
+    const ml = pillLevels[i];
+    const mli = modelLevels.indexOf(ml);
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "level-pill" + (activeModelLevelIndex === mli ? " active" : "");
+    pill.textContent = ml.name;
+    if (ml.elevation != null) pill.title = `${ml.elevation.toFixed(1)} m`;
+    pill.addEventListener("click", () => selectModelLevel(mli));
+    levelPillsEl.appendChild(pill);
+  }
+}
+
 function renderLevelList() {
+  renderEditorBuildingSelect();
+  renderLevelPills();
   const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
 
   renderSceneTree({
@@ -2346,10 +2470,12 @@ function renderLevelList() {
     importedLayers,
     unassignedLayers,
     modelLevels,
+    showModelLevels: false,
     selection: {
       filterRaw,
       activeModelLevelIndex,
       selectedBuildingIndex,
+      isolatedBuildingIndex,
       selectedLayers: _selectedLayers,
       unassignedTreeExpanded: transient.unassignedTreeExpanded,
       buildingsSectionExpanded: transient.buildingsSectionExpanded,
@@ -2372,6 +2498,7 @@ function getSceneTreeCallbacks() {
     toggleBuildingsSection,
     toggleBuildingExpanded,
     selectBuilding,
+    isolateBuilding: handleIsolateBuilding,
     zoomBuilding: zoomToBuilding,
     removeBuilding: handleRemoveBuilding,
     reloadBuilding: handleSceneTreeReloadBuilding,
@@ -2414,6 +2541,12 @@ function toggleBuildingExpanded(buildingIndex) {
   if (!building?.levels?.length) return;
   building._expanded = !(building._expanded !== false);
   renderLevelList();
+}
+
+function handleIsolateBuilding(buildingIndex) {
+  isolatedBuildingIndex = isolatedBuildingIndex === buildingIndex ? -1 : buildingIndex;
+  applyBuildingIsolation();
+  invalidateAndRerender();
 }
 
 function handleSceneTreeReloadBuilding(buildingIndex) {
@@ -2640,10 +2773,9 @@ async function handleGdbZipSelect(e) {
 }
 
 async function handleGdbDirSelect(e) {
-  const files = e.target.files; // FileList from a webkitdirectory pick.
-  gdbDirInput.value = "";
+  const files = snapshotAndClearFileInput(e.target); // FileList from a webkitdirectory pick.
   if (!files.length) return;
-  await routeDroppedFiles({ kind: "files", files: Array.from(files) }, null);
+  await routeDroppedFiles({ kind: "files", files }, null);
 }
 
 // Drop a staged layer onto a building. If the source features carry a `floor`
@@ -2693,7 +2825,7 @@ async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
       // per-floor sub-row so the user can drag it manually. Hidden by default.
       await addUnassignedLayer(
         { fileName: nameOverride, features: g.features },
-        { nameOverride },
+        { nameOverride, origin: stagedLayer._origin ?? "gdb" },
       );
     }
   }
@@ -3030,7 +3162,7 @@ async function addFeatureCollectionLayer(building, fc, opts = {}) {
   const color = SHP_COLORS[transient.shpColorIdx++ % SHP_COLORS.length];
   const cesiumColor = Color.fromCssColorString(color);
   const dataSource = await GeoJsonDataSource.load(
-    { type: "FeatureCollection", features },
+    featureCollectionForVectorLayerRender(features, origin),
     { fill: cesiumColor.withAlpha(1.0), stroke: cesiumColor, strokeWidth: 2, clampToGround: false }
   );
   const layer = { name, dataSource, color, levelKey, source, features, heightOffset: 0, _origin: origin, colorColumn: null, colorMappings: null };
@@ -3052,13 +3184,13 @@ async function addUnassignedLayer(fc, opts = {}) {
   }
   const features = fc.features ?? [];
   const source = detectShapefileSource(features);
+  const origin = opts.origin ?? "gdb";
   const color = SHP_COLORS[transient.shpColorIdx++ % SHP_COLORS.length];
   const cesiumColor = Color.fromCssColorString(color);
   const dataSource = await GeoJsonDataSource.load(
-    { type: "FeatureCollection", features },
+    featureCollectionForVectorLayerRender(features, origin),
     { fill: cesiumColor.withAlpha(1.0), stroke: cesiumColor, strokeWidth: 2, clampToGround: false }
   );
-  const origin = opts.origin ?? "gdb";
   const layer = { name, dataSource, color, features, source, heightOffset: 0, _origin: origin, colorColumn: null, colorMappings: null };
   applyEntityStyling(dataSource, name, layer);
   viewer.dataSources.add(dataSource);
@@ -3655,6 +3787,21 @@ function showBuildingContextMenu(event, building, bi) {
     ul.appendChild(li);
   };
   mk(t("building.zoomTitle"), () => zoomToBuilding(bi), !building.tileset);
+  mk(t("ctx.building.rename"), () => {
+    openInputPopover({
+      anchor: event,
+      fields: [
+        { key: "name", label: t("popover.buildingName"), type: "text", value: building.name },
+        { key: "aliases", label: t("building.aliases.label"), type: "text", value: (building.aliases ?? []).join(", ") },
+      ],
+      onOk: ({ name, aliases }) => {
+        const trimmed = (name ?? "").trim();
+        if (trimmed) building.name = trimmed;
+        building.aliases = parseAliases(aliases);
+        invalidateAndRerender();
+      },
+    });
+  });
   mk(t("building.addShapefilesTitle"), () => handleAddShapefilesToBuilding(bi));
   mk(t("ctx.building.addLevel"), () => {
     const top = building.levels?.length

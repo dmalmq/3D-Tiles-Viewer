@@ -19,6 +19,8 @@ const EYE_VISIBLE_SVG =
   '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/></svg>';
 const EYE_HIDDEN_SVG =
   '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/><path d="M3 13L13 3" stroke-linecap="round"/></svg>';
+const ISOLATE_SVG =
+  '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/></svg>';
 
 const LAYER_TYPE_ORDER = ["space", "unit", "opening", "detail", "level"];
 
@@ -28,6 +30,8 @@ export function renderSceneTree({
   importedLayers,
   unassignedLayers,
   modelLevels,
+  visibleFloorNumbers,
+  showModelLevels = true,
   selection = {},
   callbacks = {},
   itemCountEl,
@@ -54,14 +58,17 @@ export function renderSceneTree({
     return { visibleBuildings };
   }
 
-  container.appendChild(buildModelLevelsSection({
-    buildings,
-    modelLevels,
-    unassignedLayers,
-    filterRaw,
-    selection,
-    callbacks,
-  }));
+  if (showModelLevels) {
+    container.appendChild(buildModelLevelsSection({
+      buildings,
+      modelLevels,
+      unassignedLayers,
+      filterRaw,
+      selection,
+      callbacks,
+      visibleFloorNumbers,
+    }));
+  }
 
   let showLayerTypeFilters = false;
   if (visibleBuildings.length > 0) {
@@ -226,6 +233,10 @@ function handleSceneAction(container, el, event) {
       event.stopPropagation();
       callbacks.zoomBuilding?.(ctx.buildingIndex);
       break;
+    case "isolate-building":
+      event.stopPropagation();
+      callbacks.isolateBuilding?.(ctx.buildingIndex);
+      break;
     case "remove-building":
       event.stopPropagation();
       callbacks.removeBuilding?.(ctx.buildingIndex);
@@ -274,7 +285,7 @@ function handleSceneContext(container, el, event) {
   }
 }
 
-function buildModelLevelsSection({ buildings, modelLevels, unassignedLayers, filterRaw, selection, callbacks }) {
+function buildModelLevelsSection({ buildings, modelLevels, unassignedLayers, filterRaw, selection, callbacks, visibleFloorNumbers }) {
   const section = document.createElement("li");
   section.className = "panel-section model-levels-section";
 
@@ -284,6 +295,7 @@ function buildModelLevelsSection({ buildings, modelLevels, unassignedLayers, fil
 
   for (let mli = modelLevels.length - 1; mli >= 0; mli--) {
     const ml = modelLevels[mli];
+    if (visibleFloorNumbers && !visibleFloorNumbers.has(ml.floorNumber)) continue;
     const shapefiles = shapefilesForModelLevel(buildings, ml.floorNumber, filterRaw);
     if (filterRaw && shapefiles.length === 0) continue;
     const expanded = filterRaw ? true : ml._expanded === true;
@@ -356,6 +368,9 @@ function buildUnassignedRow(expanded, callbacks) {
 }
 
 function buildBuildingsSection({ visibleBuildings, selection, callbacks }) {
+  if (selection.selectedBuildingIndex >= 0) {
+    visibleBuildings = visibleBuildings.filter(({ i }) => i === selection.selectedBuildingIndex);
+  }
   const section = document.createElement("li");
   section.className = "panel-section buildings-section" + (selection.buildingsSectionExpanded ? "" : " collapsed");
 
@@ -423,6 +438,16 @@ function buildBuildingRow(building, buildingIndex, selection, callbacks) {
   zoomBtn.innerHTML = ZOOM_SVG;
   setAction(zoomBtn, "zoom-building", { buildingIndex });
   row.appendChild(zoomBtn);
+
+  if (callbacks.isolateBuilding) {
+    const isolated = buildingIndex === selection.isolatedBuildingIndex;
+    const isolateBtn = document.createElement("button");
+    isolateBtn.className = "level-tree-zoom-btn" + (isolated ? " active" : "");
+    isolateBtn.title = translate(callbacks, isolated ? "building.unisolateTitle" : "building.isolateTitle");
+    isolateBtn.innerHTML = ISOLATE_SVG;
+    setAction(isolateBtn, "isolate-building", { buildingIndex });
+    row.appendChild(isolateBtn);
+  }
 
   if (callbacks.removeBuilding) {
     const removeBtn = document.createElement("button");

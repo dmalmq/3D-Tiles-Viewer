@@ -110,6 +110,12 @@ html, body {
   gap: 6px;
 }
 
+#headerActions .primary-btn {
+  height: 28px;
+  width: auto;
+  margin-top: 0;
+}
+
 .header-divider {
   width: 1px;
   height: 18px;
@@ -129,16 +135,24 @@ html, body {
 html[data-theme="light"] .theme-icon-light { display: block; }
 html[data-theme="light"] .theme-icon-dark  { display: none; }
 
+.theme-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 /* Light-mode element overrides */
 html[data-theme="light"] #appHeader {
   background: rgba(250, 250, 253, 0.98);
 }
 
-html[data-theme="light"] #leftPanel {
+html[data-theme="light"] #tabLayers,
+html[data-theme="light"] #tabEnvironment {
   scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
 }
 
-html[data-theme="light"] #leftPanel::-webkit-scrollbar-thumb {
+html[data-theme="light"] #tabLayers::-webkit-scrollbar-thumb,
+html[data-theme="light"] #tabEnvironment::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.12);
 }
 
@@ -181,6 +195,7 @@ html[data-theme="light"] #importModal button {
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
@@ -201,20 +216,61 @@ html[data-theme="light"] #importModal button {
   border-color: var(--border);
   border-style: solid;
   border-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   z-index: 1000;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.12) transparent;
   transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Left panel uses column flex so the scene section can grow and the
-   smaller sections below (Imported Layers, CityGML, Environment) stack
-   beneath it. Action bar and scene filter pin to the top. */
-#leftPanel {
   display: flex;
   flex-direction: column;
+}
+
+/* ── Left panel tabs ──────────────────────────────────────── */
+#leftPanelTabStrip {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-panel);
+}
+
+.left-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 7px 4px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  margin-bottom: -1px;
+}
+
+.left-tab:hover {
+  color: var(--text-primary);
+}
+
+.left-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.left-tab-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.left-tab-panel.active {
+  display: flex;
+}
+
+#tabLayers,
+#tabEnvironment {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
 }
 
 #leftActionBar {
@@ -376,9 +432,12 @@ html[data-theme="light"] .left-popover {
   background: var(--accent-dim) !important;
 }
 
-#leftPanel::-webkit-scrollbar { width: 4px; }
-#leftPanel::-webkit-scrollbar-track { background: transparent; }
-#leftPanel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+#tabLayers::-webkit-scrollbar,
+#tabEnvironment::-webkit-scrollbar { width: 4px; }
+#tabLayers::-webkit-scrollbar-track,
+#tabEnvironment::-webkit-scrollbar-track { background: transparent; }
+#tabLayers::-webkit-scrollbar-thumb,
+#tabEnvironment::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
 
 #leftPanel { left: 0; border-right-width: 1px; }
 
@@ -2170,6 +2229,11 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
   color: var(--text-primary);
 }
 
+.level-tree-zoom-btn.active {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
 /* ── Loading: spinners, progress bar, overlay ─────────────── */
 @keyframes spin-360 {
   to { transform: rotate(360deg); }
@@ -3278,6 +3342,80 @@ html[data-theme="light"] .notification {
 
 #viewerVenueSelect {
   flex: 1;
+}
+
+.viewer-building-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.viewer-building-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+#editorBuildingRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#editorBuildingRow select {
+  flex: 1;
+  min-width: 0;
+}
+
+#editorBuildingRow .icon-btn {
+  flex-shrink: 0;
+}
+
+#levelPillsRow {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 4px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  scrollbar-width: none;
+}
+
+#levelPillsRow:empty {
+  display: none;
+}
+
+#levelPillsRow::-webkit-scrollbar {
+  display: none;
+}
+
+.level-pill {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 9px;
+  background: none;
+  border: 1px solid var(--border-input);
+  border-radius: 11px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.level-pill:hover {
+  color: var(--text-primary);
+  border-color: rgba(255,255,255,0.3);
+}
+
+.level-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 500;
 }
 
 .viewer-session-banner {

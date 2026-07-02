@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   SESSION_SCHEMA_VERSION,
+  SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M,
   SUPPORTED_SESSION_VERSIONS,
   applySavedModelLevelOverrides,
   buildVenueManifest,
@@ -154,6 +155,20 @@ test("applySavedModelLevelOverrides restores user-edited names and elevations", 
   ]);
 });
 
+test("applySavedModelLevelOverrides skips stale elevations outside the restore tolerance", () => {
+  const modelLevels = [
+    { floorNumber: 1, name: "1F", elevation: 36.25 },
+  ];
+  applySavedModelLevelOverrides(modelLevels, [
+    { floorNumber: 1, name: "1FL", elevation: 120.3 },
+  ], {
+    maxElevationDelta: SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M,
+  });
+  assert.deepEqual(modelLevels, [
+    { floorNumber: 1, name: "1FL", elevation: 36.25 },
+  ]);
+});
+
 test("isValidActiveModelLevelIndex accepts all-floors and in-range indices", () => {
   const modelLevels = [{ floorNumber: 1 }, { floorNumber: 2 }];
   assert.equal(isValidActiveModelLevelIndex(-1, modelLevels), true);
@@ -220,6 +235,31 @@ test("filterSessionByVenue keeps only matching buildings and imported layers", (
   assert.equal(slice.buildings[0].name, "A");
   assert.equal(slice.importedLayers.length, 1);
   assert.equal(slice.unassignedLayers.length, 0);
+});
+
+test("filterSessionByVenue recomputes TP-derived elevations instead of preserving stale offsets", () => {
+  const data = {
+    version: 3,
+    venues: [{ id: "shinjuku", name: "Shinjuku", description: "" }],
+    buildings: [
+      {
+        name: "Shinjuku_Sta",
+        venueId: "shinjuku",
+        levelBaseElevation: 93.3,
+        levels: [
+          { key: "tp_0", name: "TP±0", floor: -9.201998710632324 },
+          { key: "1f", name: "1F_東口（TP+36,250）", floor: 27.04800033569336 },
+        ],
+      },
+    ],
+    importedLayers: [],
+    modelLevels: [{ floorNumber: 1, name: "1FL", elevation: 120.3 }],
+    activeModelLevelIndex: -1,
+  };
+
+  const slice = filterSessionByVenue(data, "shinjuku");
+  assert.equal(slice.modelLevels[0].name, "1FL");
+  assert.ok(Math.abs(slice.modelLevels[0].elevation - 36.25) < 0.001);
 });
 
 test("buildVenueManifest maps venue ids to session URLs", () => {

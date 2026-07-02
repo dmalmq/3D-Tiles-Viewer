@@ -22,6 +22,9 @@ ui-*.png
 .claude/
 .playwright-mcp/
 test-results/
+.agents/
+graphify-out/
+skills-lock.json
 
 CLAUDE.md
 IMPROVEMENTS.md

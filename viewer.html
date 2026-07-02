@@ -16,7 +16,7 @@
           <path d="M11 2L20 7V15L11 20L2 15V7L11 2Z" stroke="#0696D7" stroke-width="1.6" stroke-linejoin="round"/>
           <path d="M11 20V11M2 7L11 11L20 7" stroke="#0696D7" stroke-width="1.1" stroke-opacity="0.45" stroke-linejoin="round"/>
         </svg>
-        <span data-i18n="viewer.title">3D Tiles Viewer</span>
+        <span data-i18n="header.title">3D Tiles Viewer</span>
       </div>
       <div id="headerSearch">
         <input type="text" id="searchInput" data-i18n-placeholder="search.placeholder" placeholder="Search points…" autocomplete="off" />
@@ -25,7 +25,7 @@
       <div id="headerActions">
         <button id="viewerLoadSessionBtn" class="header-btn">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 9.5V11.5H12V9.5M6.5 8V0.5M3.5 3.5L6.5 0.5L9.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span data-i18n="viewer.load">Load</span>
+          <span data-i18n="header.load">Load</span>
         </button>
         <input type="file" id="viewerSessionInput" accept=".json" style="display:none" />
         <div class="header-divider"></div>
@@ -45,7 +45,7 @@
     <aside id="leftPanel">
 
       <div id="viewerVenueBar">
-        <label class="field-label" for="viewerVenueSelect" data-i18n="viewer.venueLabel">Venue</label>
+        <label class="field-label" for="viewerVenueSelect" data-i18n="viewer.venue">Venue</label>
         <select id="viewerVenueSelect"></select>
       </div>
 
@@ -55,18 +55,12 @@
           <span data-i18n="viewer.buildings">Buildings</span>
         </div>
         <div class="section-body">
-          <ul id="viewerBuildingList"></ul>
+          <div class="viewer-building-row">
+            <select id="viewerBuildingSelect"></select>
+            <button id="viewerBuildingZoomBtn" class="icon-btn zoom-btn" type="button"
+                    data-i18n-title="viewer.zoomBuilding" title="Zoom to building">⊕</button>
+          </div>
           <p id="viewerNoBuildings" class="empty-msg" data-i18n="viewer.noBuildings">No buildings loaded.</p>
-        </div>
-      </div>
-
-      <!-- Levels -->
-      <div class="panel-section" id="viewerLevelsSection">
-        <div class="panel-section-header">
-          <span data-i18n="viewer.levels">Levels</span>
-        </div>
-        <div class="section-body">
-          <ul id="viewerLevelList" class="ml-list"></ul>
         </div>
       </div>
 

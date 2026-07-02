@@ -55,6 +55,7 @@ const en = {
   "dnd.tooltip": "Drag to reassign — or right-click for menu",
 
   // Context menus (scene tree)
+  "ctx.building.rename": "Rename / aliases…",
   "ctx.building.addLevel": "Add level…",
   "ctx.building.setBaseElev": "Set base elevation…",
   "ctx.building.shiftTileset": "Shift tileset…",
@@ -94,6 +95,7 @@ const en = {
   "popover.ok": "OK",
   "popover.cancel": "Cancel",
   "popover.levelName": "Name",
+  "popover.buildingName": "Name",
   "popover.elevation": "Elevation (m)",
   "popover.baseElevation": "Base elevation (WGS84 m)",
   "popover.tilesetShift": "Shift tileset (m)",
@@ -250,8 +252,13 @@ const en = {
   "placement.heightOffset": "Height Offset (m)",
 
   // Building list
+  "tab.scene": "Scene",
+  "tab.layers": "Layers",
+  "tab.environment": "Environment",
   "building.removeTitle": "Remove building",
   "building.zoomTitle": "Zoom to building",
+  "building.isolateTitle": "Isolate building",
+  "building.unisolateTitle": "Show all buildings",
   "building.noModelBadge": "no model",
   "building.allBadge": "All",
   "building.chip.host": "host",
@@ -456,6 +463,8 @@ const en = {
   "viewer.allBuildings": "All Buildings",
   "viewer.allFloors": "All floors",
   "viewer.buildings": "Buildings",
+  "viewer.noBuildings": "No buildings loaded.",
+  "viewer.noLayers": "No layers.",
   "viewer.levels": "Levels",
   "viewer.layers": "Layers",
   "viewer.venue": "Venue",
@@ -538,6 +547,7 @@ const ja = {
   "dnd.tooltip": "ドラッグで再割り当て — 右クリックでメニュー",
 
   // Context menus (scene tree)
+  "ctx.building.rename": "名前・別名を変更…",
   "ctx.building.addLevel": "フロアを追加…",
   "ctx.building.setBaseElev": "基準高を設定…",
   "ctx.building.shiftTileset": "タイルセットを移動…",
@@ -576,6 +586,7 @@ const ja = {
   "popover.ok": "OK",
   "popover.cancel": "キャンセル",
   "popover.levelName": "名前",
+  "popover.buildingName": "名前",
   "popover.elevation": "高さ (m)",
   "popover.baseElevation": "基準高 (WGS84 m)",
   "popover.tilesetShift": "タイルセットの移動 (m)",
@@ -732,8 +743,13 @@ const ja = {
   "placement.heightOffset": "高さオフセット (m)",
 
   // Building list
+  "tab.scene": "シーン",
+  "tab.layers": "レイヤー",
+  "tab.environment": "環境",
   "building.removeTitle": "建物を削除",
   "building.zoomTitle": "建物にズーム",
+  "building.isolateTitle": "建物を単独表示",
+  "building.unisolateTitle": "全建物を表示",
   "building.noModelBadge": "モデルなし",
   "building.allBadge": "全フロア",
   "building.chip.host": "ホスト",
@@ -937,6 +953,8 @@ const ja = {
   "viewer.allBuildings": "すべての建物",
   "viewer.allFloors": "全フロア",
   "viewer.buildings": "建物",
+  "viewer.noBuildings": "建物が読み込まれていません。",
+  "viewer.noLayers": "レイヤがありません。",
   "viewer.levels": "フロア",
   "viewer.layers": "レイヤ",
   "viewer.venue": "会場",
