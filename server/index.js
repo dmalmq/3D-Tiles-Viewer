@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mirrorTilesetFromUrl, writeTilesetFiles } from "./tilesetMirror.js";
 import { resolvePublishOrigin } from "./publishOrigin.js";
+import { storePackage, prunePackagesForBuilding, sanitizePackageId, resolveUploadRelativePath } from "./packageStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -12,6 +13,7 @@ const DIST = path.join(ROOT, "dist");
 const DATA_ROOT = path.join(ROOT, "data");
 const SESSIONS_DIR = path.join(DATA_ROOT, "sessions");
 const TILESETS_DIR = path.join(DATA_ROOT, "tilesets");
+const PACKAGES_DIR = path.join(DATA_ROOT, "packages");
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLISH_TOKEN = process.env.PUBLISH_TOKEN || "";
@@ -24,6 +26,17 @@ const upload = multer({
     fields: 20,
     files: 50_000,
     parts: 50_000,
+  },
+});
+
+// Pushed Cesium packages carry a multi-hundred-MB content.glb — never buffer
+// those in memory; multer streams each part straight to a temp file instead.
+const packageUpload = multer({
+  storage: multer.diskStorage({}),
+  limits: {
+    fileSize: 4096 * MB,
+    files: 5_000,
+    parts: 5_000,
   },
 });
 
@@ -50,6 +63,17 @@ function readPublishMetadata(req) {
 async function ensureDirs() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
   await fs.mkdir(TILESETS_DIR, { recursive: true });
+  await fs.mkdir(PACKAGES_DIR, { recursive: true });
+}
+
+// --- Server-sent events: notify the running authoring app about new packages ---
+const sseClients = new Set();
+
+function broadcastEvent(payload) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of sseClients) {
+    res.write(data);
+  }
 }
 
 function checkPublishAuth(req, res) {
@@ -134,6 +158,82 @@ app.post("/api/publish", upload.any(), async (req, res) => {
   }
 });
 
+app.get("/api/events", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  res.write(": connected\n\n");
+  sseClients.add(res);
+
+  const keepAlive = setInterval(() => res.write(": ping\n\n"), 30_000);
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    sseClients.delete(res);
+  });
+});
+
+// Receives a RevitGeoSuite Cesium package (multipart; part names are paths
+// relative to the package root, cesium-package.json first). Stored under
+// data/packages/<packageId>/ and announced over /api/events.
+app.post("/api/import-package", packageUpload.any(), async (req, res) => {
+  if (!checkPublishAuth(req, res)) return;
+
+  const uploaded = req.files ?? [];
+  const cleanupUploads = async () => {
+    await Promise.all(uploaded.map((f) => f.path && fs.rm(f.path, { force: true }).catch(() => {})));
+  };
+
+  try {
+    const manifestUpload = uploaded.find(
+      (f) => resolveUploadRelativePath(f) === "cesium-package.json"
+    );
+    if (!manifestUpload) {
+      res.status(400).json({ error: "The upload is missing cesium-package.json" });
+      return;
+    }
+
+    const manifestText = await fs.readFile(manifestUpload.path, "utf8");
+    const manifest = JSON.parse(manifestText);
+    if (manifest?.schema !== "revitgeosuite.cesium-package") {
+      res.status(400).json({ error: `Unexpected manifest schema "${manifest?.schema}"` });
+      return;
+    }
+
+    const packageId = sanitizePackageId(manifest.packageId);
+    if (!packageId) {
+      res.status(400).json({ error: "Manifest packageId is missing or invalid" });
+      return;
+    }
+
+    const files = uploaded.map((f) => ({
+      relativePath: resolveUploadRelativePath(f),
+      sourcePath: f.path,
+    }));
+    await storePackage(PACKAGES_DIR, packageId, files);
+
+    const buildingId = manifest.building?.id ?? null;
+    if (buildingId) {
+      await prunePackagesForBuilding(PACKAGES_DIR, buildingId, 2);
+    }
+
+    const packageUrl = `/packages/${encodeURIComponent(packageId)}/`;
+    broadcastEvent({
+      type: "package-received",
+      packageId,
+      url: packageUrl,
+      building: manifest.building ?? null,
+    });
+
+    res.json({ ok: true, packageId, packageUrl, building: manifest.building ?? null });
+  } catch (err) {
+    console.error("Package import failed:", err);
+    await cleanupUploads();
+    res.status(500).json({ error: err.message || "Package import failed" });
+  }
+});
+
 app.use((err, req, res, next) => {
   if (!req.path.startsWith("/api")) {
     next(err);
@@ -146,6 +246,7 @@ app.use((err, req, res, next) => {
 
 app.use("/sessions", express.static(SESSIONS_DIR, { fallthrough: false }));
 app.use("/tilesets", express.static(TILESETS_DIR, { fallthrough: false }));
+app.use("/packages", express.static(PACKAGES_DIR, { fallthrough: false }));
 app.use(express.static(DIST));
 
 app.use((req, res) => {

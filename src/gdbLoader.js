@@ -1,9 +1,10 @@
 /**
- * Public FileGDB importer API.
+ * Public FileGDB / GeoPackage importer API.
  *
- * `loadGdb` accepts the existing UI inputs (a zip `File` or a directory
- * `FileList`) and delegates GDAL work to a module worker. The worker receives
- * explicit file descriptors so `webkitRelativePath` survives structured cloning.
+ * `loadGdb` accepts the existing UI inputs (a zip or `.gpkg` `File`, or a
+ * directory `FileList`) and delegates GDAL work to a module worker. The worker
+ * receives explicit file descriptors so `webkitRelativePath` survives
+ * structured cloning.
  */
 
 let _worker = null;
@@ -63,6 +64,10 @@ function isZipName(name) {
   return /\.zip$/i.test(name || "");
 }
 
+function isGpkgName(name) {
+  return /\.gpkg$/i.test(name || "");
+}
+
 function toFileArray(input) {
   if (isFileLike(input)) return [input];
   if (input && typeof input.length === "number") return Array.from(input);
@@ -70,18 +75,17 @@ function toFileArray(input) {
   return [];
 }
 
-function createPayload(input) {
+export function createPayload(input) {
   const files = toFileArray(input).filter(isFileLike);
   if (!files.length) {
     throw new Error("No geodatabase files were selected.");
   }
 
-  const isSingleZip =
-    files.length === 1 &&
-    isZipName(files[0].name) &&
-    !files[0].webkitRelativePath;
+  const isSingleFile = files.length === 1 && !files[0].webkitRelativePath;
+  const isSingleZip = isSingleFile && isZipName(files[0].name);
+  const isSingleGpkg = isSingleFile && isGpkgName(files[0].name);
 
-  const mode = isSingleZip ? "zip" : "directory";
+  const mode = isSingleGpkg ? "gpkg" : isSingleZip ? "zip" : "directory";
   if (mode === "zip" && !isZipName(files[0].name)) {
     throw new Error("Select a .gdb.zip file or a .zip file containing one .gdb folder.");
   }
@@ -97,8 +101,8 @@ function createPayload(input) {
 }
 
 /**
- * @param {File|FileList} input A `.gdb.zip`/`.zip` File, or a FileList from a
- *                              webkitdirectory pick of a `.gdb` folder.
+ * @param {File|FileList} input A `.gdb.zip`/`.zip`/`.gpkg` File, or a FileList
+ *                              from a webkitdirectory pick of a `.gdb` folder.
  * @returns {Promise<{ featureCollections: object[], warnings: string[] }>}
  */
 export function loadGdb(input) {

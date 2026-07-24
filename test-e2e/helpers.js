@@ -1,5 +1,7 @@
 import { expect } from "@playwright/test";
 
+export const SAMPLE_TILESET_BUILDING_NAME = "tokyo";
+
 export async function prepareCleanApp(page, { language = "en", e2eHooks = true } = {}) {
   await page.addInitScript(({ language, e2eHooks }) => {
     localStorage.clear();
@@ -26,7 +28,7 @@ export async function loadSampleTileset(page) {
   await page.locator("#urlInput").fill("/tiles/tokyo/tileset.json");
   await page.locator("#loadUrlBtn").click();
 
-  const buildingName = page.locator(".bldg-row .bldg-name").filter({ hasText: "tileset.json" }).first();
+  const buildingName = page.locator(".bldg-row .bldg-name").filter({ hasText: SAMPLE_TILESET_BUILDING_NAME }).first();
   await expect(buildingName).toBeVisible({ timeout: 45_000 });
   return buildingName;
 }
@@ -39,7 +41,7 @@ export async function waitForTilesetRenderSignal(page) {
 }
 
 export async function addAndRenameLevel(page, editedName = "1F Edited") {
-  const buildingRow = page.locator(".bldg-row").filter({ hasText: "tileset.json" }).first();
+  const buildingRow = page.locator(".bldg-row").filter({ hasText: SAMPLE_TILESET_BUILDING_NAME }).first();
   await buildingRow.click({ button: "right" });
   await page.locator("#floatingMenu li").filter({ hasText: "Add level" }).click();
 

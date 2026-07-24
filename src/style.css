@@ -206,6 +206,54 @@ html[data-theme="light"] #importModal button {
   background: var(--bg-hover);
 }
 
+@media (max-width: 760px) {
+  #appHeader {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  #appLogo {
+    min-width: 0;
+    max-width: 104px;
+    gap: 6px;
+  }
+
+  #appLogo span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #headerSearch,
+  #backupsBtn,
+  #exportViewerBtn {
+    display: none;
+  }
+
+  #headerActions {
+    flex-shrink: 0;
+    gap: 4px;
+  }
+
+  #saveSessionBtn,
+  #loadSessionBtn {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  #saveSessionBtn span,
+  #loadSessionBtn span {
+    display: none;
+  }
+
+  #publishBtn {
+    max-width: 116px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 /* ── Side panels (shared) ─────────────────────────────────── */
 #leftPanel {
   position: fixed;
@@ -312,6 +360,27 @@ html[data-theme="light"] #importModal button {
 #viewerVenueBar select {
   width: 100%;
   margin-top: 4px;
+}
+
+.network-section-body {
+  padding: 0 12px 10px;
+}
+
+.network-section-body select {
+  width: 100%;
+  margin: 4px 0 6px;
+}
+
+.network-section-body .toggle-label {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.network-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
 }
 
 #viewerSessionBanner {
@@ -1029,6 +1098,107 @@ select option {
 }
 
 /* ── Import Review Tray ───────────────────────────────────── */
+/* At-import building picker (multi-building GDB/GPKG/shapefile datasets) */
+.building-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.building-picker-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  width: 420px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 10px;
+}
+
+.building-picker-dialog h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.building-picker-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.building-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.building-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.building-picker-row:hover {
+  background: var(--bg-hover);
+}
+
+.building-picker-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.building-picker-toggle-all {
+  margin-right: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 4px;
+}
+
+.building-picker-toggle-all:hover {
+  color: var(--text-primary);
+}
+
+.building-picker-cancel,
+.building-picker-import {
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.building-picker-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.building-picker-import {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
 .import-tray {
   position: fixed;
   top: var(--header-height);
@@ -3133,6 +3303,24 @@ html[data-theme="light"] .floating-card {
   flex: 1;
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+.notification-action {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.notification-action:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .notification-close {

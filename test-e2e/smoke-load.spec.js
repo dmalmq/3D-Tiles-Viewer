@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { loadSampleTileset, prepareCleanApp, waitForTilesetRenderSignal } from "./helpers.js";
+import {
+  SAMPLE_TILESET_BUILDING_NAME,
+  loadSampleTileset,
+  prepareCleanApp,
+  waitForTilesetRenderSignal,
+} from "./helpers.js";
 
 test("app loads and registers the sample tileset", async ({ page }) => {
   test.setTimeout(120_000);
@@ -22,7 +27,7 @@ test("app loads and registers the sample tileset", async ({ page }) => {
 
   await loadSampleTileset(page);
   await expect(page.locator("#noScenePlaceholder")).toBeHidden();
-  await expect(page.locator(".bldg-row .bldg-name").filter({ hasText: "tileset.json" })).toBeVisible();
+  await expect(page.locator(".bldg-row .bldg-name").filter({ hasText: SAMPLE_TILESET_BUILDING_NAME })).toBeVisible();
   await waitForTilesetRenderSignal(page);
 
   expect(errors).toEqual([]);

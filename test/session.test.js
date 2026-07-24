@@ -212,9 +212,32 @@ test("serializeSession v3 includes venues and venueId", () => {
   assert.equal(data.buildings[0].venueId, "east-hub");
 });
 
+test("serializeSession v4 includes network datasets and authored connectors", () => {
+  const state = baseState();
+  const building = makeBuilding({ name: "Tower A", tileset: {} });
+  building.networkDatasets = [{
+    id: "network:tower",
+    name: "Tower network",
+    sourcePrefix: "Tower",
+    nodes: [{ nodeId: "1", floor: "F1", lon: 139.7, lat: 35.6 }],
+    nodesById: new Map(),
+    flatLayers: [],
+    verticalLayers: [],
+    authoredConnectors: [{ id: "authored:1", node1: "1", node2: "2" }],
+    warnings: [],
+  }];
+  state.buildings = [building];
+
+  const data = serializeSession(state);
+
+  assert.equal(data.version, SESSION_SCHEMA_VERSION);
+  assert.equal(data.buildings[0].networkDatasets.length, 1);
+  assert.equal(data.buildings[0].networkDatasets[0].authoredConnectors[0].id, "authored:1");
+});
+
 test("filterSessionByVenue keeps only matching buildings and imported layers", () => {
   const data = {
-    version: 3,
+    version: SESSION_SCHEMA_VERSION,
     venues: [
       { id: "east-hub", name: "East Hub", description: "" },
       { id: "west-campus", name: "West Campus", description: "" },

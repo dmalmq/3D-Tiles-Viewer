@@ -271,10 +271,16 @@ export function shapefileLayerLocalZ(building, layer) {
   const { lvl, absolute, base, sourceLocalLevel } = layerLevelContext(building, layer);
   const fixtureExtra = /_fixture/i.test(layer.name) ? FIXTURE_EXTRA_HEIGHT_M : 0;
   const sourceLocalZ = sourceLevelLocalZ(sourceLocalLevel);
+  // A reconciled level plane (attached by RevitGeoSuite package ingest, where
+  // levels.json floors may sit in a different frame than the tileset geometry)
+  // is already the walking surface — no geometry-bottom lift needed.
+  const planeZ = finiteNumber(lvl?.localPlaneZ);
   const localZ =
-    sourceLocalZ == null
-      ? levelLocalZ(lvl, absolute, base)
-      : sourceLocalZ + SOURCE_LEVEL_LOCAL_Z_SURFACE_LIFT_M;
+    sourceLocalZ != null
+      ? sourceLocalZ + SOURCE_LEVEL_LOCAL_Z_SURFACE_LIFT_M
+      : planeZ != null
+        ? planeZ
+        : levelLocalZ(lvl, absolute, base);
   return localZ + SHAPEFILE_FLOOR_CLEARANCE_M + fixtureExtra + (layer.heightOffset ?? 0);
 }
 
@@ -323,7 +329,7 @@ function resolveProjectedHeight(cartographic, worldToLocal, targetLocalZ, fallba
   return solvedHeight;
 }
 
-function projectPositionToLocalZ(position, worldToLocal, targetLocalZ, fallbackHeight) {
+export function projectPositionToLocalZ(position, worldToLocal, targetLocalZ, fallbackHeight) {
   const cartographic = Cartographic.fromCartesian(position);
   if (!cartographic) return position;
   const height = resolveProjectedHeight(cartographic, worldToLocal, targetLocalZ, fallbackHeight);

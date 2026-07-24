@@ -49,6 +49,19 @@ export function notifyUser(severity, keyOrOptions, params) {
   text.textContent = message;
   toast.appendChild(text);
 
+  // Optional action button (e.g. "Undo" after a package import).
+  if (opts.action?.label && typeof opts.action.onClick === "function") {
+    const action = document.createElement("button");
+    action.className = "notification-action";
+    action.type = "button";
+    action.textContent = opts.action.label;
+    action.addEventListener("click", () => {
+      removeToast(toast);
+      opts.action.onClick();
+    });
+    toast.appendChild(action);
+  }
+
   const close = document.createElement("button");
   close.className = "notification-close";
   close.type = "button";

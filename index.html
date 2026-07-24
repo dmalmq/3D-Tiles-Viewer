@@ -68,7 +68,7 @@
       <!-- Hidden file inputs (triggered by Add Data menu) -->
       <input type="file" id="fileInput" webkitdirectory style="display:none" />
       <input type="file" id="cityGmlInput" accept=".gml,.xml" style="display:none" />
-      <input type="file" id="gdbInput" accept=".gdb.zip,.zip" style="display:none" />
+      <input type="file" id="gdbInput" accept=".gdb.zip,.zip,.gpkg" style="display:none" />
       <input type="file" id="gdbDirInput" webkitdirectory style="display:none" />
       <input type="file" id="shpInput" accept=".zip" style="display:none" />
 
@@ -106,6 +106,31 @@
           <input type="search" id="sceneFilter" data-i18n-placeholder="scene.filterPlaceholder" placeholder="Filter scene…" autocomplete="off" />
         </div>
         <div id="layerTypeFilters"></div>
+
+        <div class="panel-section" id="networkSection">
+          <div class="panel-section-header">
+            <span data-i18n="network.section">Network</span>
+          </div>
+          <div class="section-body network-section-body">
+            <label class="toggle-label">
+              <input type="checkbox" id="networkVisibleToggle" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span data-i18n="network.visible">Show network</span>
+            </label>
+            <label class="field-label" for="networkPassageType" data-i18n="network.passageType">Passage type</label>
+            <select id="networkPassageType">
+              <option value="11" data-i18n="network.type.11">11 · Stairs</option>
+              <option value="21" data-i18n="network.type.21">21 · Escalator</option>
+              <option value="31" data-i18n="network.type.31">31 · Elevator</option>
+              <option value="41" data-i18n="network.type.41">41 · Slope</option>
+            </select>
+            <div class="network-actions">
+              <button id="networkConnectBtn" class="secondary-btn compact" type="button" data-i18n="network.connect">Connect floors</button>
+              <button id="networkExportBtn" class="secondary-btn compact" type="button" data-i18n="network.export">Export</button>
+            </div>
+            <p id="networkStatus" class="status-text"></p>
+          </div>
+        </div>
 
         <!-- Scene tree (always-expanded, fills remaining height) -->
         <div class="panel-section panel-section-scene">
@@ -193,7 +218,7 @@
         <li data-action="add-url" data-i18n="addData.url">Tileset URL…</li>
         <li data-action="add-folder" data-i18n="addData.folder">Tileset folder…</li>
         <li data-action="add-citygml" data-i18n="addData.cityGml">CityGML (.gml)…</li>
-        <li data-action="add-gdb-zip" data-i18n="addData.gdbZip">Geodatabase (.gdb.zip)…</li>
+        <li data-action="add-gdb-zip" data-i18n="addData.gdbZip">Geodatabase / GeoPackage (.gdb.zip, .gpkg)…</li>
         <li data-action="add-gdb-folder" data-i18n="addData.gdbFolder">Geodatabase folder…</li>
         <li data-action="add-shp" data-i18n="addData.shp">Shapefile (.zip)…</li>
         <li data-action="review-gdb" data-i18n="addData.gdbReassign">Reassign GDB layers…</li>

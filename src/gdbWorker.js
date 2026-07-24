@@ -1,6 +1,7 @@
 import * as gdalModule from "gdal3.js";
 import wasmUrl from "gdal3.js/dist/package/gdal3WebAssembly.wasm?url";
 import dataUrl from "gdal3.js/dist/package/gdal3WebAssembly.data?url";
+import { stageGpkg } from "./gpkgStaging.js";
 
 // gdal3.js installs its own `onmessage` handler whenever it is evaluated in a
 // worker. This worker has a separate protocol, so keep GDAL in-process and
@@ -389,6 +390,9 @@ async function handleLoadGdb(payload) {
     if (mode === "zip") {
       stagedPath = await stageZip(fs, importRoot, files);
       opened = await openZipDataset(Gdal, stagedPath);
+    } else if (mode === "gpkg") {
+      stagedPath = await stageGpkg(fs, importRoot, files);
+      opened = await openDataset(Gdal, stagedPath);
     } else if (mode === "directory") {
       stagedPath = await stageDirectory(fs, importRoot, files);
       opened = await openDataset(Gdal, stagedPath);
