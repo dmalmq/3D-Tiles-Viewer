@@ -6,8 +6,9 @@
 
 <p>
 A single-page web application for loading, reviewing, and publishing 3D Tiles datasets.<br />
-Supports Revit link splitting, floor-level clipping, PLATEAU integration, shapefile and GDB overlays,<br />
-venue management, and one-click tileset publishing — all running in the browser with an optional Node server.
+Supports Revit link splitting, floor-level clipping, PLATEAU integration, shapefile/GDB/GeoPackage overlays,<br />
+indoor network (stairs/escalators/elevators) authoring, venue management, and one-click tileset publishing<br />
+— all running in the browser with an optional Node server that can also receive packages pushed from RevitGeoSuite.
 </p>
 
 <p>
@@ -18,7 +19,7 @@ venue management, and one-click tileset publishing — all running in the browse
 
 <p>
   <img src="https://img.shields.io/badge/Format-3D_Tiles-0696D7?style=flat-square" />
-  <img src="https://img.shields.io/badge/Data-Revit_%7C_PLATEAU_%7C_GDB_%7C_Shapefile-0369a1?style=flat-square" />
+  <img src="https://img.shields.io/badge/Data-Revit_%7C_PLATEAU_%7C_GDB_%7C_GeoPackage_%7C_Shapefile-0369a1?style=flat-square" />
   <img src="https://img.shields.io/badge/Languages-English_%7C_Japanese-907aa9?style=flat-square" />
   <img src="https://img.shields.io/badge/Theme-Dark_%7C_Light-475569?style=flat-square" />
 </p>
@@ -58,7 +59,10 @@ Built for AEC and GIS teams working with 3D Tiles from Revit, PLATEAU CityGML, a
 - LOD filtering to suppress duplicate buildings across PLATEAU CityGML LODs
 - Per-feature "ghost" / hide overrides on PLATEAU layers with click-through picking
 - Shapefile (`.zip`) overlay rendered as flat-height polygons
-- FileGDB (`.gdb` folder or zip) import via GDAL, with heuristic auto-match to buildings and floors
+- FileGDB (`.gdb` folder or zip) and GeoPackage (`.gpkg`) import via GDAL, with heuristic auto-match to buildings and floors
+- Multi-building import picker for datasets that bundle several buildings into one GDB/GPKG/shapefile
+- Indoor network authoring: connect stairs, escalators, elevators, slopes, and moving walkways across floors with a floor-to-floor connect mode, waypoint placement along stair geometry, and GeoJSON export of authored connectors
+- RevitGeoSuite package ingestion: the server accepts pushed `cesium-package.json` bundles (3D Tiles + GIS floor plans, matched to exact levels via a level-ID map) and streams them into the open session live over SSE, with an undo for accidental overwrites
 - Venue management: create, edit, and delete named venues; assign buildings; filter scene by venue
 - Publish packages: mirror or upload tilesets + session JSON to the server; share via link
 - Session backup / restore with auto-snapshots and a visual diff between session states
@@ -113,11 +117,14 @@ npm start
 ## Tests
 
 ```bash
-# Unit tests (floor-label parsing, session diff, venue manifest, …)
+# Unit tests (floor-label parsing, session diff, venue manifest, network export, …)
 npm test
 
 # End-to-end tests (requires a running dev server)
 npm run e2e
+
+# Lint
+npm run lint
 ```
 
 ---
