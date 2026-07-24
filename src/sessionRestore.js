@@ -14,6 +14,7 @@ import {
   shouldLoadTilesetFromUrl,
 } from "./session.js";
 import { featureCollectionForVectorLayerRender } from "./geojsonHeight.js";
+import { reviveNetworkDataset } from "./networkData.js";
 
 export { shouldLoadTilesetFromUrl };
 import { applyShapefileLayerHeights } from "./shapefilePlacement.js";
@@ -72,12 +73,17 @@ function makeBuildingFromData(bData, tileset, { loadError = null, tilesetUrl = n
     heightOffset: bData.heightOffset ?? 0,
     levelBaseElevation: bData.levelBaseElevation ?? 0,
     activeLevelIndex: bData.activeLevelIndex ?? -1,
-    levels: (bData.levels ?? []).map((l) => ({ name: l.name, key: l.key ?? null, floor: l.floor })),
+    levels: (bData.levels ?? []).map((l) => ({ name: l.name, key: l.key ?? null, floor: l.floor, localPlaneZ: l.localPlaneZ ?? null })),
     sourceLevelGroups: deserializeSourceLevelGroups(bData.sourceLevelGroups),
     shapefileLayers: [],
+    networkDatasets: (bData.networkDatasets ?? [])
+      .map((dataset) => reviveNetworkDataset(dataset))
+      .filter(Boolean),
     linkFilter: bData.linkFilter ?? null,
     venueId: bData.venueId ?? null,
     aliases: Array.isArray(bData.aliases) ? bData.aliases : [],
+    packageBuildingId: bData.packageBuildingId ?? null,
+    packageContentHash: bData.packageContentHash ?? null,
     _tilesetMissing: !tileset,
     _tilesetLoadError: tileset ? null : loadError,
     _tilesetUrl: tilesetUrl ?? (bData.sourceUrl ? resolveSessionAssetUrl(bData.sourceUrl) : null),
@@ -114,6 +120,7 @@ async function restoreShapefileLayersForBuilding(building, bData, ctx) {
   if (building.shapefileLayers.length) {
     (ctx.applyShapefileLayerHeights ?? applyShapefileLayerHeights)(building, { viewer: ctx.viewer });
   }
+  ctx.restoreNetworkDatasetsForBuilding?.(building);
 }
 
 export async function clearSceneState(ctx) {

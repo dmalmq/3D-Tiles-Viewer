@@ -26,6 +26,7 @@ import {
   HorizontalOrigin,
   LabelStyle,
   DistanceDisplayCondition,
+  PolylineDashMaterialProperty,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
@@ -57,6 +58,10 @@ import { featureCollectionForVectorLayerRender } from "./geojsonHeight.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
 import { openImportReviewTray } from "./importReviewTray.js";
 import { classifyImportFiles } from "./importPipeline.js";
+import { indexPackageFiles, buildGisDecisions, parsePackageManifestText, computeLevelLocalPlanes, packageUnchanged } from "./packageIngest.js";
+import { connectPackageEvents } from "./packageEvents.js";
+import { enumerateBuildings, filterToBuildings } from "./importBuildingPicker.js";
+import { openBuildingPickerDialog } from "./importBuildingPickerDialog.js";
 import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
 import { openColorConfigDialog } from "./colorConfigDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
@@ -125,6 +130,18 @@ import {
   applyShapefileLayerHeight as applyShapefileLayerHeightImpl,
   applyShapefileLayerHeights as applyShapefileLayerHeightsImpl,
 } from "./shapefilePlacement.js";
+import {
+  buildNetworkDataset,
+  collectPassageTypeCodes,
+  isNetworkFeatureCollection,
+} from "./networkData.js";
+import {
+  createNetworkDataSource,
+  networkNodeSelectedColor,
+  updateNetworkDataSourceVisibility,
+} from "./networkPlacement.js";
+import { createAuthoredConnector } from "./networkAuthoring.js";
+import { downloadAuthoredConnectorsGeoJson } from "./networkExport.js";
 import {
   getStartupCesiumIonToken,
   saveCesiumIonToken,
@@ -231,6 +248,10 @@ const transient = {
   dragLayerCtx: null,
   lastClickedLayer: null,
   openPopoverCleanup: null,
+  networkConnectMode: false,
+  networkStartSelection: null,
+  networkWaypoints: [],
+  networkWaypointPreview: null,
 };
 
 const cityGmlLayers = [];
@@ -296,6 +317,11 @@ const loadingOverlayMessage = document.getElementById("loadingOverlayMessage");
 const loadingOverlaySub = document.getElementById("loadingOverlaySubmessage");
 const searchInput = document.getElementById("searchInput");
 const searchDropdown = document.getElementById("searchDropdown");
+const networkVisibleToggle = document.getElementById("networkVisibleToggle");
+const networkPassageTypeSelect = document.getElementById("networkPassageType");
+const networkConnectBtn = document.getElementById("networkConnectBtn");
+const networkExportBtn = document.getElementById("networkExportBtn");
+const networkStatusEl = document.getElementById("networkStatus");
 
 let terrainProviders = { worldTerrainProvider: null, plateauTerrainProvider: null };
 const savedGlobeBaseColorRef = { value: null };
@@ -445,10 +471,41 @@ function init() {
   initHighlight();
   initInfoBoxStyling();
   initLeftActionBar();
+  initNetworkControls();
   initSceneFilter();
   initLeftPanelResizer();
   initFileDropZone();
   initLeftPanelTabs();
+  initPackageEvents();
+}
+
+// Packages pushed from RevitGeoSuite (POST /api/import-package) are announced
+// over SSE and ingested straight into the scene from their served URL.
+function initPackageEvents() {
+  connectPackageEvents({
+    onPackage: async ({ packageId, url }) => {
+      if (transient.gdbBusy) {
+        notifyUser("warn", "package.noBuilding");
+        return;
+      }
+      transient.gdbBusy = true;
+      showLoadingOverlay(t("package.loading"));
+      try {
+        const manifestRes = await fetch(url.replace(/\/?$/, "/") + "cesium-package.json");
+        if (!manifestRes.ok) throw new Error(`Failed to fetch package manifest (${manifestRes.status})`);
+        const manifest = parsePackageManifestText(await manifestRes.text());
+        const pkg = { manifest, resolve: () => null, listUnder: () => [] };
+        await ingestCesiumPackage(pkg, { sourceUrl: url });
+        recordE2eEvent("packageIngested", { packageId });
+      } catch (err) {
+        console.error(err);
+        notifyUser("error", "package.failed", { message: err?.message ?? String(err) });
+      } finally {
+        hideLoadingOverlay();
+        transient.gdbBusy = false;
+      }
+    },
+  });
 }
 
 function initLeftPanelTabs() {
@@ -690,6 +747,7 @@ async function routeDroppedFiles(items, defaults) {
   const classified = classifyImportFiles(items);
   switch (classified.kind) {
     case "gdb-zip":
+    case "gpkg":
       await runGdbLoad(classified.file, defaults);
       return;
     case "gdb-dir-files":
@@ -701,11 +759,21 @@ async function routeDroppedFiles(items, defaults) {
         notifyUser("warn", "drop.emptyFolder");
         return;
       }
+      // A dropped folder may be a Cesium package rather than a .gdb —
+      // re-classify the flattened contents before assuming geodatabase.
+      const flattened = classifyImportFiles({ kind: "files", files });
+      if (flattened.kind === "cesium-package") {
+        await runCesiumPackageImport(flattened.files);
+        return;
+      }
       await runGdbLoad(files, defaults);
       return;
     }
     case "shp":
       await routeDroppedShapefile(classified.file, defaults);
+      return;
+    case "cesium-package":
+      await runCesiumPackageImport(classified.files);
       return;
     case "unsupported":
       if (classified.reason === "type") {
@@ -882,6 +950,7 @@ function initHighlight() {
     }
 
     const picked = pickThroughGhosts(click.position);
+    if (handleNetworkPick(picked, click.position)) return;
 
     const plateauLayer = findPlateauLayerForFeature(importedLayers, picked);
     if (plateauLayer) {
@@ -1394,7 +1463,7 @@ function parseAliases(text) {
   return out;
 }
 
-function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, linkFilter = null, sourceLevelGroups = null, directoryHandleId = null, directoryFolderName = null, aliases = [] }) {
+function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, linkFilter = null, sourceLevelGroups = null, directoryHandleId = null, directoryFolderName = null, aliases = [], packageBuildingId = null }) {
   return {
     name,
     tileset,
@@ -1404,6 +1473,7 @@ function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, link
     levels: [],
     activeLevelIndex: -1,
     shapefileLayers: [],
+    networkDatasets: [],
     linkFilter,
     sourceLevelGroups,
     _tilesetMissing: false,
@@ -1411,6 +1481,9 @@ function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, link
     _directoryFolderName: directoryFolderName,
     aliases,
     venueId: null,
+    // Stable id from a RevitGeoSuite cesium-package manifest; re-pushed
+    // packages with the same id replace this building instead of duplicating.
+    packageBuildingId,
     _expanded: true,
   };
 }
@@ -1644,6 +1717,7 @@ function handleRemoveBuilding(index) {
   for (const layer of b.shapefileLayers) {
     viewer.dataSources.remove(layer.dataSource, true);
   }
+  removeNetworkDataSources(b);
   const tileset = b.tileset;
   const siblings = tileset?._buildings;
   const isLastSibling = !siblings || siblings.length <= 1;
@@ -1685,6 +1759,7 @@ function handleRemoveAll() {
     for (const layer of b.shapefileLayers) {
       viewer.dataSources.remove(layer.dataSource, true);
     }
+    removeNetworkDataSources(b);
     if (b.tileset && !destroyedTilesets.has(b.tileset)) {
       destroyedTilesets.add(b.tileset);
       lodFilter.removeTileset(b.tileset);
@@ -2117,6 +2192,7 @@ function applyBuildingIsolation() {
   for (const b of buildings) {
     if (b._hidden) {
       for (const layer of b.shapefileLayers) layer.dataSource.show = false;
+      applyNetworkVisibilityForBuilding(b);
     } else {
       applyLevelToShapefilesForBuilding(b);
     }
@@ -2218,6 +2294,7 @@ function applyLevelToShapefilesForBuilding(building) {
     const fn = lvl ? levelNameToNumber(lvl.name) : null;
     layer.dataSource.show = fn === activeFn;
   }
+  applyNetworkVisibilityForBuilding(building);
 }
 
 // Apply the user-controlled hide flag for a single layer. For
@@ -2347,11 +2424,6 @@ function buildDragEntriesFromSelection() {
   return out;
 }
 
-// Re-render the four UI surfaces that need to refresh after any state change
-// touching buildings, levels, imported layers, or PLATEAU overrides. Prefer
-// this over calling the individual render functions to avoid drift between
-// call sites. requestAnimationFrame coalesces bursts from drag/drop, sliders,
-// session restore, and language changes into one paint.
 function invalidateAndRerender() {
   if (transient.invalidatedRenderFrame != null) return;
   transient.invalidatedRenderFrame = requestAnimationFrame(() => {
@@ -2366,6 +2438,7 @@ function renderInvalidatedSurfaces() {
   syncRemoveAllBtnAndLod();
   renderPlateauFloatingCard();
   applyLevelContextVisibility();
+  renderNetworkPanel();
 }
 
 function getBuildingsForSceneTree() {
@@ -2856,7 +2929,22 @@ async function runGdbLoad(input, defaults = null) {
     // Expand any feature collections that carry data for multiple buildings
     // (multiple distinct `source` property values) into per-source sub-collections,
     // so each linked model's floor plan gets its own independent matching pass.
-    const expanded = featureCollections.flatMap((fc) => splitFeaturesBySource(fc));
+    let expanded = featureCollections.flatMap((fc) => splitFeaturesBySource(fc));
+
+    // Multi-building datasets (JR-style filename prefixes or multiple sources):
+    // let the user tick which buildings to load before anything reaches the tray.
+    const buildingGroups = enumerateBuildings(expanded);
+    if (buildingGroups.length > 1) {
+      hideLoadingOverlay();
+      const selectedKeys = await openBuildingPickerDialog(buildingGroups);
+      if (!selectedKeys || selectedKeys.length === 0) {
+        transient.gdbBusy = false;
+        return;
+      }
+      expanded = filterToBuildings(expanded, selectedKeys);
+      showLoadingOverlay(t("gdb.loading"));
+    }
+
     openImportReviewTray({
       featureCollections: expanded,
       buildings,
@@ -2876,6 +2964,7 @@ async function runGdbLoad(input, defaults = null) {
 
 async function applyGdbDecisions(decisions) {
   const touchedBuildings = new Set();
+  const networkImportsByBuilding = new Map();
   let duplicateSkipped = 0;
 
   for (const { fc, target, nameOverride } of decisions ?? []) {
@@ -2890,6 +2979,14 @@ async function applyGdbDecisions(decisions) {
     if (target.kind === "building") {
       const building = buildings[target.buildingIndex];
       if (!building) continue;
+      if (isNetworkFeatureCollection(fc)) {
+        if (!networkImportsByBuilding.has(target.buildingIndex)) {
+          networkImportsByBuilding.set(target.buildingIndex, []);
+        }
+        networkImportsByBuilding.get(target.buildingIndex).push(fc);
+        touchedBuildings.add(target.buildingIndex);
+        continue;
+      }
       const layer = await addFeatureCollectionLayer(building, fc, {
         levelKeyOverride: target.levelKey,
         origin: "gdb",
@@ -2903,6 +3000,11 @@ async function applyGdbDecisions(decisions) {
     }
   }
 
+  for (const [bi, featureCollections] of networkImportsByBuilding) {
+    const building = buildings[bi];
+    if (building) upsertNetworkDatasetForBuilding(building, featureCollections);
+  }
+
   for (const bi of touchedBuildings) {
     const building = buildings[bi];
     applyLevelToShapefilesForBuilding(building);
@@ -2911,6 +3013,200 @@ async function applyGdbDecisions(decisions) {
   if (unassignedLayers.length > 0) transient.unassignedTreeExpanded = true;
   invalidateAndRerender();
   reportGdbDuplicateSkips(duplicateSkipped);
+}
+
+// -- RevitGeoSuite Cesium packages --
+// A dropped/picked package folder (cesium-package.json + tiles/ + gis/) goes
+// straight into the scene: tileset added as a building, GIS floor plans
+// attached to exact levels via the manifest's levelMap — no review tray.
+async function runCesiumPackageImport(files) {
+  if (transient.gdbBusy) return;
+  transient.gdbBusy = true;
+  showLoadingOverlay(t("package.loading"));
+  try {
+    const pkg = await indexPackageFiles(files);
+    await ingestCesiumPackage(pkg);
+  } catch (err) {
+    console.error(err);
+    notifyUser("error", "package.failed", { message: err?.message ?? String(err) });
+  } finally {
+    hideLoadingOverlay();
+    transient.gdbBusy = false;
+  }
+}
+
+// Shared by drag-drop (pkg backed by Files) and server push (pkg backed by
+// URLs via ingestCesiumPackageFromUrl). Returns the undo record.
+async function ingestCesiumPackage(pkg, { sourceUrl = null } = {}) {
+  const manifest = pkg.manifest;
+  const packageBuildingId = manifest.building?.id ?? null;
+  const buildingName = manifest.building?.name || "Building";
+
+  // Re-push of the same building: skip entirely when the payload is unchanged,
+  // otherwise carry the user's in-viewer tweaks over to the replacement.
+  let replaced = false;
+  let carryOver = null;
+  if (packageBuildingId) {
+    const existing = buildings.find((b) => b.packageBuildingId === packageBuildingId);
+    if (existing && packageUnchanged(manifest, existing)) {
+      notifyUser("info", "package.upToDate", { name: buildingName });
+      return null;
+    }
+    if (existing) {
+      carryOver = {
+        venueId: existing.venueId ?? null,
+        heightOffset: existing.heightOffset ?? 0,
+        aliases: existing.aliases ?? [],
+      };
+    }
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      if (buildings[i].packageBuildingId === packageBuildingId) {
+        handleRemoveBuilding(i);
+        replaced = true;
+      }
+    }
+  }
+
+  const undo = { tilesets: [], layers: [] };
+  let targetBuildingIndex = -1;
+
+  if (manifest.tiles?.tileset) {
+    let tileset;
+    let levelsData;
+    if (sourceUrl) {
+      const tilesetUrl = sourceUrl.replace(/\/?$/, "/") + manifest.tiles.tileset;
+      levelsData = await detectLevelsFromUrl(tilesetUrl);
+      tileset = await loadTilesetFromUrl(viewer, tilesetUrl);
+      await addBuilding(tileset, buildingName, levelsData, tilesetUrl);
+    } else {
+      const tileFiles = pkg.listUnder("tiles/");
+      levelsData = await detectLevelsFromFiles(tileFiles);
+      tileset = await loadTilesetFromFiles(viewer, tileFiles, fileStatus);
+      await addBuilding(tileset, buildingName, levelsData);
+    }
+    const manifestAliases = Array.isArray(manifest.building?.aliases) ? manifest.building.aliases : [];
+    // Reconcile level walking planes with the tile geometry frame so GIS floor
+    // plans land on the building instead of floating at the raw levels.json
+    // elevations (which can sit in a different frame than the geometry).
+    const levelRecords = Object.values(levelsData?.linkLevels ?? {}).flat()
+      .concat(levelsData?.levels ?? []);
+    const localPlanes = computeLevelLocalPlanes(levelRecords);
+    for (const sibling of tileset._buildings ?? []) {
+      sibling.packageBuildingId = packageBuildingId;
+      sibling.packageContentHash = manifest.contentHash ?? null;
+      if (manifestAliases.length) {
+        sibling.aliases = [...new Set([...(sibling.aliases ?? []), ...manifestAliases])];
+      }
+      if (carryOver) {
+        sibling.venueId = carryOver.venueId;
+        sibling.heightOffset = carryOver.heightOffset;
+        if (carryOver.aliases.length) {
+          sibling.aliases = [...new Set([...(sibling.aliases ?? []), ...carryOver.aliases])];
+        }
+      }
+      for (const lvl of sibling.levels ?? []) {
+        const plane = localPlanes.get(lvl.key);
+        if (plane != null) lvl.localPlaneZ = plane;
+      }
+    }
+    if (carryOver && carryOver.heightOffset !== 0) {
+      applyHeightOffset(tileset, carryOver.heightOffset);
+    }
+    undo.tilesets.push(tileset);
+    targetBuildingIndex = buildings.indexOf(tileset._buildings?.[0]);
+  } else if (packageBuildingId) {
+    // GIS-only package: attach to the building from an earlier tiles push.
+    targetBuildingIndex = buildings.findIndex(
+      (b) => b.packageBuildingId === packageBuildingId
+    );
+    if (targetBuildingIndex >= 0 && manifest.contentHash) {
+      buildings[targetBuildingIndex].packageContentHash = manifest.contentHash;
+    }
+  }
+
+  let unmatchedTotal = 0;
+  const gisArtifacts = manifest.gis?.artifacts ?? [];
+  for (const artifact of gisArtifacts) {
+    const input = sourceUrl
+      ? await fetchPackageArtifact(sourceUrl, artifact.path)
+      : pkg.resolve(artifact.path);
+    if (!input) {
+      notifyUser("warn", "package.artifactMissing", { path: artifact.path });
+      continue;
+    }
+
+    const parsed = await loadGdb(input);
+    if (parsed.warnings?.length) console.warn("[package] GIS warnings:", parsed.warnings);
+    const featureCollections = parsed.featureCollections ?? [];
+
+    if (targetBuildingIndex >= 0) {
+      const building = buildings[targetBuildingIndex];
+      const layersBefore = new Set(building.shapefileLayers);
+      const { decisions, unmatchedCount } = buildGisDecisions(
+        featureCollections, manifest, targetBuildingIndex);
+      unmatchedTotal += unmatchedCount;
+      await applyGdbDecisions(decisions);
+      for (const layer of building.shapefileLayers) {
+        if (!layersBefore.has(layer)) undo.layers.push({ building, layer });
+      }
+    } else {
+      // No manifest-matched building — fall back to the normal review flow.
+      notifyUser("warn", "package.noBuilding");
+      const expanded = featureCollections.flatMap((fc) => splitFeaturesBySource(fc));
+      openImportReviewTray({
+        featureCollections: expanded,
+        buildings,
+        viewer,
+        mode: "import",
+        onImport: applyGdbDecisions,
+        onSilentImport: applyGdbDecisions,
+        onOpenClassicTable: () =>
+          openGdbImportDialog({ featureCollections: expanded, buildings, onImport: applyGdbDecisions }),
+      });
+    }
+  }
+
+  if (unmatchedTotal > 0) {
+    notifyUser("info", "package.unmatched", { count: unmatchedTotal });
+  }
+
+  notifyUser("info", {
+    key: replaced ? "package.replaced" : "package.imported",
+    params: { name: buildingName },
+    timeoutMs: 12_000,
+    action: {
+      label: t("package.undo"),
+      onClick: () => undoCesiumPackageImport(undo),
+    },
+  });
+
+  return undo;
+}
+
+function undoCesiumPackageImport(undo) {
+  for (const { building, layer } of undo.layers) {
+    removeShapefileLayer(building, layer);
+  }
+  for (const tileset of undo.tilesets) {
+    for (const sibling of [...(tileset._buildings ?? [])]) {
+      const index = buildings.indexOf(sibling);
+      if (index !== -1) handleRemoveBuilding(index);
+    }
+  }
+  invalidateAndRerender();
+}
+
+async function fetchPackageArtifact(baseUrl, relativePath) {
+  try {
+    const url = baseUrl.replace(/\/?$/, "/") + relativePath;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const name = relativePath.split("/").pop() ?? "artifact";
+    return new File([blob], name);
+  } catch {
+    return null;
+  }
 }
 
 function openGdbReassignDialog() {
@@ -3009,6 +3305,424 @@ async function applyReassignDecisions(decisions) {
 
 function reportGdbDuplicateSkips(count) {
   if (count > 0) notifyUser("info", "gdb.import.duplicatesSkipped", { count });
+}
+
+function initNetworkControls() {
+  networkVisibleToggle?.addEventListener("change", () => {
+    for (const { dataset } of getNetworkEntries()) {
+      dataset.visible = networkVisibleToggle.checked;
+    }
+    refreshNetworkDataSources();
+    renderNetworkPanel();
+    invalidateAndRerender();
+  });
+  networkConnectBtn?.addEventListener("click", () => {
+    transient.networkConnectMode = !transient.networkConnectMode;
+    clearNetworkSelection();
+    renderNetworkPanel();
+    notifyUser("info", transient.networkConnectMode ? "network.connectOn" : "network.connectOff");
+  });
+  networkExportBtn?.addEventListener("click", handleNetworkExport);
+  networkPassageTypeSelect?.addEventListener("change", renderNetworkPanel);
+  // Esc cancels the in-progress selection first; a second Esc leaves connect mode.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !transient.networkConnectMode) return;
+    if (transient.networkStartSelection) {
+      clearNetworkSelection();
+      renderNetworkPanel();
+      invalidateAndRerender();
+    } else {
+      transient.networkConnectMode = false;
+      renderNetworkPanel();
+      notifyUser("info", "network.connectOff");
+    }
+  });
+  renderNetworkPanel();
+}
+
+function upsertNetworkDatasetForBuilding(building, featureCollections) {
+  const existing = building.networkDatasets?.[0] ?? null;
+  // buildNetworkDataset merges into `existing`, so nothing is lost when more
+  // network layers arrive after a session restore.
+  const dataset = buildNetworkDataset(featureCollections, {
+    id: existing?.id ?? `network:${buildings.indexOf(building)}:${building.name}`,
+    name: existing?.name ?? `${building.name} network`,
+    sourceName: existing?.sourceName ?? building.name,
+    existing,
+  });
+  if (
+    dataset.nodes.length === 0 &&
+    dataset.verticalLayers.length === 0 &&
+    dataset.flatLayers.length === 0 &&
+    dataset.authoredConnectors.length === 0
+  ) {
+    return;
+  }
+  removeNetworkDataSources(building);
+  building.networkDatasets = [dataset];
+  restoreNetworkDatasetsForBuilding(building);
+  renderNetworkPanel();
+  recordE2eEvent("networkDatasetImported", {
+    building: building.name,
+    nodes: dataset.nodes.length,
+    verticalLayers: dataset.verticalLayers.length,
+  });
+  notifyUser("info", "network.imported", { count: dataset.nodes.length });
+}
+
+function restoreNetworkDatasetsForBuilding(building) {
+  for (const dataset of building.networkDatasets ?? []) {
+    if (!dataset.nodesById) {
+      dataset.nodesById = new Map((dataset.nodes ?? []).map((node) => [node.nodeId, node]));
+    }
+    if (dataset.dataSource) viewer.dataSources.remove(dataset.dataSource, true);
+    dataset.dataSource = createNetworkDataSource(building, dataset, {
+      activeFloorNumber: activeModelFloorNumber(),
+    });
+    viewer.dataSources.add(dataset.dataSource);
+  }
+  applyNetworkVisibilityForBuilding(building);
+}
+
+function removeNetworkDataSources(building) {
+  for (const dataset of building.networkDatasets ?? []) {
+    if (dataset.dataSource) {
+      viewer.dataSources.remove(dataset.dataSource, true);
+      dataset.dataSource = null;
+    }
+  }
+}
+
+function applyNetworkVisibilityForBuilding(building) {
+  for (const dataset of building.networkDatasets ?? []) {
+    updateNetworkDataSourceVisibility(building, dataset, activeModelFloorNumber());
+  }
+}
+
+function refreshNetworkDataSources() {
+  for (const building of buildings) applyNetworkVisibilityForBuilding(building);
+}
+
+function rerenderNetworkDataSourcesForBuilding(building) {
+  removeNetworkDataSources(building);
+  restoreNetworkDatasetsForBuilding(building);
+}
+
+function getNetworkEntries() {
+  const entries = [];
+  for (let buildingIndex = 0; buildingIndex < buildings.length; buildingIndex++) {
+    const building = buildings[buildingIndex];
+    for (const dataset of building.networkDatasets ?? []) {
+      entries.push({ building, buildingIndex, dataset });
+    }
+  }
+  return entries;
+}
+
+function getPreferredNetworkEntries() {
+  const entries = getNetworkEntries();
+  if (selectedBuildingIndex >= 0) {
+    const selected = entries.filter((entry) => entry.buildingIndex === selectedBuildingIndex);
+    if (selected.length) return selected;
+  }
+  return entries;
+}
+
+function networkStats(entries = getNetworkEntries()) {
+  let nodes = 0;
+  let imported = 0;
+  let authored = 0;
+  for (const { dataset } of entries) {
+    nodes += dataset.nodes?.length ?? 0;
+    authored += dataset.authoredConnectors?.length ?? 0;
+    for (const layer of dataset.verticalLayers ?? []) imported += layer.connectors?.length ?? 0;
+  }
+  return { nodes, imported, authored };
+}
+
+function renderNetworkPanel() {
+  if (!networkStatusEl) return;
+  const entries = getPreferredNetworkEntries();
+  const stats = networkStats(entries);
+  const hasNetwork = entries.length > 0;
+  networkVisibleToggle.disabled = !hasNetwork;
+  networkVisibleToggle.checked = hasNetwork && entries.some((entry) => entry.dataset.visible !== false);
+  networkConnectBtn.disabled = stats.nodes === 0;
+  networkConnectBtn.classList.toggle("active", transient.networkConnectMode);
+  networkExportBtn.disabled = stats.authored === 0;
+  augmentPassageTypeOptions(entries);
+  const selected = transient.networkStartSelection?.node;
+  if (!hasNetwork) {
+    networkStatusEl.textContent = t("network.empty");
+  } else if (selected && transient.networkWaypoints.length > 0) {
+    networkStatusEl.textContent = t("network.selectedWaypoints", {
+      node: selected.nodeId,
+      count: transient.networkWaypoints.length,
+    });
+  } else if (selected) {
+    networkStatusEl.textContent = t("network.selected", { node: selected.nodeId, floor: selected.floor ?? "?" });
+  } else {
+    networkStatusEl.textContent = t("network.summary", {
+      nodes: stats.nodes,
+      imported: stats.imported,
+      authored: stats.authored,
+    });
+  }
+}
+
+// The static options cover the standard vertical codes; datasets can carry
+// additional site-specific codes — offer those too once observed.
+function augmentPassageTypeOptions(entries) {
+  if (!networkPassageTypeSelect) return;
+  const present = new Set([...networkPassageTypeSelect.options].map((o) => o.value));
+  for (const code of collectPassageTypeCodes(entries.map((entry) => entry.dataset))) {
+    const value = String(code);
+    if (present.has(value)) continue;
+    const option = document.createElement("option");
+    option.value = value;
+    const key = `network.type.${value}`;
+    const label = t(key);
+    option.textContent = label === key ? t("network.type.generic", { code: value }) : label;
+    networkPassageTypeSelect.appendChild(option);
+    present.add(value);
+  }
+}
+
+function handleNetworkPick(picked, screenPosition) {
+  if (!transient.networkConnectMode) return false;
+
+  const nodeRef = picked?.id?.networkNodeRef;
+  if (!nodeRef) {
+    // Clicking an authored (dashed) connector in connect mode offers deletion,
+    // so misclicks and restored connectors are removable.
+    const connectorRef = picked?.id?.networkConnectorRef;
+    if (connectorRef?.connector?.authored) {
+      openAuthoredConnectorDeletePopover(connectorRef, screenPosition);
+      return true;
+    }
+    // With a start node selected, a click on 3D geometry (stairs) drops a
+    // waypoint at the exact picked surface point.
+    if (transient.networkStartSelection && addNetworkWaypoint(screenPosition)) return true;
+    notifyUser("warn", transient.networkStartSelection ? "network.pickWaypoint" : "network.pickEndpoint");
+    return true;
+  }
+
+  const selection = findNetworkSelection(nodeRef);
+  if (!selection) {
+    notifyUser("warn", "network.pickEndpoint");
+    return true;
+  }
+  if (!transient.networkStartSelection) {
+    transient.networkStartSelection = selection;
+    transient.networkWaypoints = [];
+    setNetworkNodeHighlight(selection, true);
+    renderNetworkPanel();
+    notifyUser("info", "network.firstSelected", {
+      node: selection.node.nodeId,
+      floor: selection.node.floor ?? "?",
+    });
+    return true;
+  }
+  const start = transient.networkStartSelection;
+  if (start.dataset !== selection.dataset) {
+    notifyUser("warn", "network.sameDataset");
+    clearNetworkSelection();
+    renderNetworkPanel();
+    return true;
+  }
+  const result = createAuthoredConnector({
+    dataset: selection.dataset,
+    building: selection.building,
+    startNode: start.node,
+    endNode: selection.node,
+    passageType: networkPassageTypeSelect?.value ?? "11",
+    waypoints: transient.networkWaypoints,
+  });
+  if (!result.ok) {
+    notifyUser("warn", `network.${result.reason}`);
+    clearNetworkSelection();
+    renderNetworkPanel();
+    return true;
+  }
+  selection.dataset.authoredConnectors.push(result.connector);
+  clearNetworkSelection();
+  rerenderNetworkDataSourcesForBuilding(selection.building);
+  renderNetworkPanel();
+  invalidateAndRerender();
+  recordE2eEvent("networkConnectorAuthored", {
+    building: selection.building.name,
+    node1: result.connector.node1,
+    node2: result.connector.node2,
+    waypoints: result.connector.waypoints.length,
+  });
+  notifyUser("info", {
+    key: "network.connectorCreated",
+    params: { node1: result.connector.node1, node2: result.connector.node2 },
+    action: {
+      label: t("network.undo"),
+      onClick: () => removeAuthoredConnector(selection.dataset, result.connector.id, selection.building),
+    },
+  });
+  return true;
+}
+
+// Drop a waypoint on the picked 3D surface (stair geometry). Returns false
+// when the click hit nothing pickable so the caller can warn instead.
+function addNetworkWaypoint(screenPosition) {
+  if (!screenPosition || !viewer.scene.pickPositionSupported) return false;
+  const cartesian = viewer.scene.pickPosition(screenPosition);
+  if (!cartesian) return false;
+  const carto = Cartographic.fromCartesian(cartesian);
+  if (!carto) return false;
+  transient.networkWaypoints.push({
+    lon: CesiumMath.toDegrees(carto.longitude),
+    lat: CesiumMath.toDegrees(carto.latitude),
+    height: carto.height,
+  });
+  renderNetworkWaypointPreview();
+  renderNetworkPanel();
+  recordE2eEvent("networkWaypointAdded", { count: transient.networkWaypoints.length });
+  return true;
+}
+
+// Dashed preview polyline start-node → waypoints, plus a dot per waypoint.
+function renderNetworkWaypointPreview() {
+  removeNetworkWaypointPreview();
+  const start = transient.networkStartSelection;
+  if (!start || transient.networkWaypoints.length === 0) return;
+  const dataSource = new CustomDataSource("network-waypoint-preview");
+  const positions = [
+    Cartesian3.fromDegrees(start.node.lon, start.node.lat, previewStartHeight(start)),
+    ...transient.networkWaypoints.map((w) => Cartesian3.fromDegrees(w.lon, w.lat, w.height)),
+  ];
+  dataSource.entities.add({
+    polyline: {
+      positions: new ConstantProperty(positions),
+      width: 3,
+      material: new PolylineDashMaterialProperty({
+        color: networkNodeSelectedColor().withAlpha(0.8),
+        dashLength: 8,
+      }),
+      clampToGround: false,
+    },
+  });
+  for (const w of transient.networkWaypoints) {
+    dataSource.entities.add({
+      position: Cartesian3.fromDegrees(w.lon, w.lat, w.height),
+      point: {
+        pixelSize: 6,
+        color: networkNodeSelectedColor().withAlpha(0.9),
+        outlineColor: Color.BLACK,
+        outlineWidth: 1,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+  }
+  viewer.dataSources.add(dataSource);
+  transient.networkWaypointPreview = dataSource;
+  invalidateAndRerender();
+}
+
+function previewStartHeight(selection) {
+  if (Number.isFinite(selection.node.altitude)) return selection.node.altitude;
+  return transient.networkWaypoints[0]?.height ?? 0;
+}
+
+function removeNetworkWaypointPreview() {
+  if (transient.networkWaypointPreview) {
+    viewer.dataSources.remove(transient.networkWaypointPreview, true);
+    transient.networkWaypointPreview = null;
+  }
+}
+
+function setNetworkNodeHighlight(selection, highlighted) {
+  const dataSource = selection?.dataset?.dataSource;
+  if (!dataSource) return;
+  for (const entity of dataSource.entities.values) {
+    if (entity.networkNodeRef?.nodeId !== selection.node.nodeId) continue;
+    if (entity.point) {
+      entity.point.color = new ConstantProperty(
+        highlighted
+          ? networkNodeSelectedColor().withAlpha(0.95)
+          : Color.fromCssColorString("#56c7ff").withAlpha(0.95),
+      );
+    }
+  }
+  invalidateAndRerender();
+}
+
+function clearNetworkSelection() {
+  if (transient.networkStartSelection) {
+    setNetworkNodeHighlight(transient.networkStartSelection, false);
+  }
+  transient.networkStartSelection = null;
+  transient.networkWaypoints = [];
+  removeNetworkWaypointPreview();
+}
+
+function removeAuthoredConnector(dataset, connectorId, building) {
+  const index = (dataset.authoredConnectors ?? []).findIndex((c) => c.id === connectorId);
+  if (index < 0) return;
+  dataset.authoredConnectors.splice(index, 1);
+  rerenderNetworkDataSourcesForBuilding(building);
+  renderNetworkPanel();
+  invalidateAndRerender();
+  recordE2eEvent("networkConnectorRemoved", { id: connectorId });
+  notifyUser("info", "network.connectorRemoved");
+}
+
+function openAuthoredConnectorDeletePopover(connectorRef, screenPosition) {
+  const entry = getNetworkEntries().find((e) => e.dataset.id === connectorRef.datasetId);
+  if (!entry) return;
+  const connector = connectorRef.connector;
+  const content = document.createElement("div");
+  const label = document.createElement("p");
+  label.className = "status-text";
+  label.style.margin = "0 0 8px";
+  label.textContent = t("network.connectorLabel", {
+    node1: connector.node1 ?? "?",
+    node2: connector.node2 ?? "?",
+  });
+  content.appendChild(label);
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "secondary-btn compact";
+  deleteBtn.type = "button";
+  deleteBtn.textContent = t("network.deleteConnector");
+  deleteBtn.addEventListener("click", () => {
+    closeContextPopover();
+    removeAuthoredConnector(entry.dataset, connector.id, entry.building);
+  });
+  content.appendChild(deleteBtn);
+  // screenPosition is canvas-relative; the popover is positioned in page space.
+  const canvasRect = viewer.scene.canvas.getBoundingClientRect();
+  const event = {
+    pageX: canvasRect.left + (screenPosition?.x ?? canvasRect.width / 2),
+    pageY: canvasRect.top + (screenPosition?.y ?? canvasRect.height / 2),
+  };
+  mountContextPopover(event, content);
+}
+
+function findNetworkSelection(ref) {
+  for (const entry of getNetworkEntries()) {
+    if (entry.dataset.id !== ref.datasetId) continue;
+    const node = entry.dataset.nodesById?.get(String(ref.nodeId));
+    if (node) return { ...entry, node };
+  }
+  return null;
+}
+
+function handleNetworkExport() {
+  const datasets = getNetworkEntries()
+    .map((entry) => entry.dataset)
+    .filter((dataset) => (dataset.authoredConnectors?.length ?? 0) > 0);
+  if (!datasets.length) {
+    notifyUser("info", "network.exportEmpty");
+    return;
+  }
+  downloadAuthoredConnectorsGeoJson(datasets);
+  notifyUser("info", "network.exported", {
+    count: datasets.reduce((sum, dataset) => sum + (dataset.authoredConnectors?.length ?? 0), 0),
+  });
 }
 
 function isGdbLayer(layer) {
@@ -3115,7 +3829,18 @@ async function runShpImport(file, { buildingIndex } = {}) {
   try {
     const { default: shp } = await import("shpjs");
     const raw = await shp(await file.arrayBuffer());
-    const fcs = Array.isArray(raw) ? raw : [raw];
+    let fcs = Array.isArray(raw) ? raw : [raw];
+
+    // Same at-import building selection as the GDB/GPKG path: multi-building
+    // shapefile bundles get a picker before anything lands in the scene.
+    const expanded = fcs.flatMap((fc) => splitFeaturesBySource(fc));
+    const buildingGroups = enumerateBuildings(expanded);
+    if (buildingGroups.length > 1) {
+      const selectedKeys = await openBuildingPickerDialog(buildingGroups);
+      if (!selectedKeys || selectedKeys.length === 0) return;
+      fcs = filterToBuildings(expanded, selectedKeys);
+    }
+
     const b = typeof buildingIndex === "number" ? buildings[buildingIndex] : null;
     if (b) {
       for (const fc of fcs) await addFeatureCollectionLayer(b, fc);
@@ -4154,6 +4879,7 @@ function createSessionRestoreContext() {
     applyShapefileLayerHeight,
     applyShapefileLayerHeights,
     applyLevelToShapefilesForBuilding,
+    restoreNetworkDatasetsForBuilding,
     detectShapefileSource,
     onComplete: () => {
       renderImportedLayersList();
@@ -4324,7 +5050,10 @@ async function attachTilesetToBuilding(buildingIndex, files, dirHandle = null, d
     lodFilter.addTileset(tileset);
     bindTilesetTileLoad(tileset);
     if (siblings[0].heightOffset !== 0) applyHeightOffset(tileset, siblings[0].heightOffset);
-    for (const b of siblings) applyShapefileLayerHeights(b);
+    for (const b of siblings) {
+      applyShapefileLayerHeights(b);
+      rerenderNetworkDataSourcesForBuilding(b);
+    }
     applyFiltersForTileset(tileset);
     refreshLodFilterIfEnabled();
     invalidateAndRerender();
@@ -4343,7 +5072,10 @@ function setBuildingHeightOffset(building, value) {
   const siblings = building.tileset?._buildings || [building];
   for (const sibling of siblings) sibling.heightOffset = value;
   applyHeightOffset(building.tileset, value);
-  for (const sibling of siblings) applyShapefileLayerHeights(sibling);
+  for (const sibling of siblings) {
+    applyShapefileLayerHeights(sibling);
+    rerenderNetworkDataSourcesForBuilding(sibling);
+  }
   invalidateAndRerender();
 }
 

@@ -2,6 +2,7 @@ node_modules/
 dist/
 data/tilesets/
 data/sessions/
+data/packages/
 terminals/
 public/tiles/*
 !public/tiles/.gitkeep

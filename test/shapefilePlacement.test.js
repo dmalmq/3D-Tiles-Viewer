@@ -93,6 +93,31 @@ test("GDB/shapefile point placement trusts tileset-local Z over stale fallback b
   assert.ok(Math.abs(layerPointHeight(layer) - expected) < 0.001);
 });
 
+test("GDB/shapefile point placement prefers a level's explicit local plane (localPlaneZ)", () => {
+  // RevitGeoSuite package building: levels.json `floor` can sit in a different
+  // frame than the tileset geometry (LUMINE1: 1F floor +24.94, true local plane
+  // -13.76). Package ingest attaches the reconciled plane as localPlaneZ — it
+  // must win over the floor-based fallback.
+  const building = makeBuilding({
+    baseHeight: 90,
+    rootHeight: 90,
+    levels: [{ key: "l1", name: "1F", floor: 24.94, localPlaneZ: -13.76 }],
+  });
+  const layer = makePointLayer();
+
+  applyShapefileLayerHeight(building, layer);
+
+  const expected =
+    90 +
+    -13.76 +
+    SHAPEFILE_FLOOR_CLEARANCE_M +
+    POINT_EXTRA_HEIGHT_M;
+  assert.ok(
+    Math.abs(layerPointHeight(layer) - expected) < 0.001,
+    `expected ${expected}, got ${layerPointHeight(layer)}`
+  );
+});
+
 test("GDB/shapefile point placement uses split source-level local Z metadata", () => {
   const building = makeBuilding({
     baseHeight: 75.8,

@@ -2,14 +2,15 @@
 // orchestration lives in main.js — this module only owns the on-disk shape.
 
 import { serializeSourceLevelGroups } from "./levelMetadata.js";
+import { serializeNetworkDataset } from "./networkData.js";
 
 import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
 import { buildingLevelWorldHeight } from "./shapefilePlacement.js";
 
 // Bump when changing the JSON shape in a non-backward-compatible way. Old
 // session files that match a previously-supported version remain loadable.
-export const SESSION_SCHEMA_VERSION = 3;
-export const SUPPORTED_SESSION_VERSIONS = [1, 2, 3];
+export const SESSION_SCHEMA_VERSION = 4;
+export const SUPPORTED_SESSION_VERSIONS = [1, 2, 3, 4];
 export const SAVED_MODEL_LEVEL_ELEVATION_TOLERANCE_M = 25;
 
 export function isSupportedSessionVersion(v) {
@@ -104,10 +105,13 @@ function serializeBuilding(b, idFor) {
     heightOffset: b.heightOffset,
     levelBaseElevation: b.levelBaseElevation,
     aliases: b.aliases ?? [],
+    packageBuildingId: b.packageBuildingId ?? null,
+    packageContentHash: b.packageContentHash ?? null,
     activeLevelIndex: b.activeLevelIndex,
-    levels: b.levels.map((l) => ({ name: l.name, key: l.key ?? null, floor: l.floor })),
+    levels: b.levels.map((l) => ({ name: l.name, key: l.key ?? null, floor: l.floor, localPlaneZ: l.localPlaneZ ?? null })),
     sourceLevelGroups: serializeSourceLevelGroups(b.sourceLevelGroups),
     shapefileLayers: b.shapefileLayers.map(serializeShapefileLayer),
+    networkDatasets: (b.networkDatasets ?? []).map(serializeNetworkDataset),
     directoryHandleId: b.directoryHandleId ?? null,
     _directoryFolderName: b._directoryFolderName ?? null,
   };

@@ -56,6 +56,10 @@ import {
   applyShapefileLayerHeight,
   applyShapefileLayerHeights,
 } from "./shapefilePlacement.js";
+import {
+  createNetworkDataSource,
+  updateNetworkDataSourceVisibility,
+} from "./networkPlacement.js";
 import { readSavedCesiumIonToken } from "./cesiumToken.js";
 
 // -- State --
@@ -383,6 +387,7 @@ function buildRestoreContext() {
     applyShapefileLayerHeights: (building) =>
       applyShapefileLayerHeights(building, { viewer }),
     applyLevelToShapefilesForBuilding,
+    restoreNetworkDatasetsForBuilding,
     detectShapefileSource,
     onProgress: (done, total) => {
       loadingOverlaySub.textContent = t("loading.session.progress", { current: done, total });
@@ -401,6 +406,7 @@ async function clearBuildings() {
   const destroyed = new Set();
   for (const b of buildings) {
     for (const layer of b.shapefileLayers) viewer.dataSources.remove(layer.dataSource, true);
+    removeNetworkDataSources(b);
     if (b.tileset && !destroyed.has(b.tileset)) {
       destroyed.add(b.tileset);
       lodFilter.removeTileset(b.tileset);
@@ -583,6 +589,40 @@ function applyLevelToShapefilesForBuilding(building) {
     const lvl = building.levels.find((l) => (l.key ?? "") === layer.levelKey);
     layer.dataSource.show = levelNameToNumber(lvl?.name) === activeFn;
   }
+  applyNetworkVisibilityForBuilding(building);
+}
+
+function restoreNetworkDatasetsForBuilding(building) {
+  for (const dataset of building.networkDatasets ?? []) {
+    if (!dataset.nodesById) {
+      dataset.nodesById = new Map((dataset.nodes ?? []).map((node) => [node.nodeId, node]));
+    }
+    if (dataset.dataSource) viewer.dataSources.remove(dataset.dataSource, true);
+    dataset.dataSource = createNetworkDataSource(building, dataset, {
+      activeFloorNumber: activeModelFloorNumber(),
+    });
+    viewer.dataSources.add(dataset.dataSource);
+  }
+  applyNetworkVisibilityForBuilding(building);
+}
+
+function removeNetworkDataSources(building) {
+  for (const dataset of building.networkDatasets ?? []) {
+    if (dataset.dataSource) {
+      viewer.dataSources.remove(dataset.dataSource, true);
+      dataset.dataSource = null;
+    }
+  }
+}
+
+function applyNetworkVisibilityForBuilding(building) {
+  for (const dataset of building.networkDatasets ?? []) {
+    updateNetworkDataSourceVisibility(building, dataset, activeModelFloorNumber());
+  }
+}
+
+function activeModelFloorNumber() {
+  return activeModelLevelIndex < 0 ? null : modelLevels[activeModelLevelIndex]?.floorNumber ?? null;
 }
 
 function bindTilesetTileLoad(tileset) {
@@ -849,6 +889,7 @@ function applyBuildingSelectionFilter() {
   for (const b of buildings) {
     if (b._hidden) {
       for (const layer of b.shapefileLayers) layer.dataSource.show = false;
+      applyNetworkVisibilityForBuilding(b);
     } else {
       applyLevelToShapefilesForBuilding(b);
     }
