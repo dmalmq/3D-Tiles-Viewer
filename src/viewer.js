@@ -40,6 +40,7 @@ import {
   inferLocalTilesetName,
   isDirectoryPickerAbort,
   shouldFallbackToDirectoryInput,
+  canRestoreDatasetFromSource,
 } from "./viewerDataset.js";
 import { isFileSystemAccessSupported, getFilesFromDirectoryHandle } from "./fileSystemAccess.js";
 import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
@@ -250,20 +251,20 @@ async function bootstrapFromUrl() {
   const plan = resolveViewerDatasetFromParams(params);
   try {
     if (plan.kind === "session") {
+      await loadSessionFromUrl(plan.url);
       setDatasetKind("shared");
       viewerVenueBar.hidden = true;
-      await loadSessionFromUrl(plan.url);
       return;
     }
     if (plan.kind === "manifest") {
-      setDatasetKind("shared");
       await loadManifest(plan.url, plan.venueId);
+      setDatasetKind("shared");
       return;
     }
     if (plan.kind === "tileset") {
+      await loadTilesetUrlDataset(plan.url);
       setDatasetKind("shared");
       viewerVenueBar.hidden = true;
-      await loadTilesetUrlDataset(plan.url);
       return;
     }
     await loadSampleSession();
@@ -285,9 +286,9 @@ function setDatasetKind(kind) {
 }
 
 async function loadSampleSession() {
+  await loadSessionFromUrl(SAMPLE_SESSION_URL);
   setDatasetKind("sample");
   viewerVenueBar.hidden = true;
-  await loadSessionFromUrl(SAMPLE_SESSION_URL);
 }
 
 async function loadTilesetUrlDataset(url) {
@@ -322,11 +323,14 @@ async function handleDatasetSelectChange() {
   const value = viewerDatasetSelect.value;
   const previous = currentDatasetKind;
   if (value === "sample") {
+    const previousVenueHidden = viewerVenueBar.hidden;
     try {
       await loadSampleSession();
     } catch (err) {
       notifyUser("error", "alert.failedSession", { message: err.message });
+      await restorePreviousDataset(previous);
       setDatasetKind(previous);
+      viewerVenueBar.hidden = previousVenueHidden;
     }
     return;
   }
@@ -338,6 +342,8 @@ async function handleDatasetSelectChange() {
 
 async function restorePreviousDataset(kind) {
   try {
+    const params = new URLSearchParams(window.location.search);
+    if (!canRestoreDatasetFromSource(kind, params)) return;
     if (kind === "shared") {
       await bootstrapFromUrl();
       return;

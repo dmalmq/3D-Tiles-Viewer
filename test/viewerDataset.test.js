@@ -4,6 +4,7 @@ import { DEFAULT_MANIFEST_URL } from "../src/venueManifest.js";
 import {
   SAMPLE_SESSION_URL,
   SAMPLE_TILESET_URL,
+  canRestoreDatasetFromSource,
   inferLocalTilesetName,
   isDirectoryPickerAbort,
   isLocalDatasetUploadRequest,
@@ -59,4 +60,18 @@ test("directory picker abort does not fall through; permission errors do", () =>
   assert.equal(shouldFallbackToDirectoryInput({ name: "SecurityError" }), true);
   assert.equal(shouldFallbackToDirectoryInput({ name: "NotAllowedError" }), true);
   assert.equal(shouldFallbackToDirectoryInput({ name: "TypeError" }), false);
+});
+
+test("only sample and shared-with-query can be reloaded; local cannot", () => {
+  assert.equal(canRestoreDatasetFromSource("local", new URLSearchParams()), false);
+  assert.equal(canRestoreDatasetFromSource("sample", new URLSearchParams()), true);
+  assert.equal(canRestoreDatasetFromSource("shared", new URLSearchParams()), false);
+  assert.equal(
+    canRestoreDatasetFromSource("shared", new URLSearchParams("manifest=/sessions/venues.json")),
+    true,
+  );
+  assert.equal(
+    canRestoreDatasetFromSource("shared", new URLSearchParams("venue=east-hub")),
+    true,
+  );
 });

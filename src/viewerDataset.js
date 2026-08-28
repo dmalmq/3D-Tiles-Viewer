@@ -4,7 +4,6 @@ import { DEFAULT_MANIFEST_URL } from "./venueManifest.js";
 export const SAMPLE_TILESET_URL = "/tiles/sample-indoor/tileset.json";
 export const SAMPLE_SESSION_URL = "/tiles/sample-indoor/session.json";
 export const SAMPLE_BUILDING_NAME = "Sample House";
-export const SAMPLE_VENUE_ID = "sample-indoor";
 
 /**
  * Decide what the read-only viewer should load from the URL.
@@ -63,4 +62,13 @@ export function isDirectoryPickerAbort(error) {
 export function shouldFallbackToDirectoryInput(error) {
   const name = error?.name;
   return name === "SecurityError" || name === "NotAllowedError";
+}
+
+/** Local folders cannot be reconstructed; shared URLs need query params. */
+export function canRestoreDatasetFromSource(kind, searchParams) {
+  if (kind === "sample") return true;
+  if (kind === "shared") {
+    return resolveViewerDatasetFromParams(searchParams).kind !== "sample";
+  }
+  return false;
 }

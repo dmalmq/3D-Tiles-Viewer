@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isLocalDatasetUploadRequest } from "../src/viewerDataset.js";
 import { prepareCleanApp, waitForTilesetRenderSignal } from "./helpers.js";
 
 const SAMPLE_DIR = path.join(process.cwd(), "public", "tiles", "sample-indoor");
@@ -10,10 +11,8 @@ test("viewer.html loads the public synthetic sample without the authoring UI", a
 
   const uploads = [];
   page.on("request", (req) => {
-    const method = req.method();
-    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return;
-    if (/\/api\//.test(req.url()) || /\/packages\//.test(req.url())) {
-      uploads.push(`${method} ${req.url()}`);
+    if (isLocalDatasetUploadRequest(req.url(), req.method())) {
+      uploads.push(`${req.method()} ${req.url()}`);
     }
   });
 
@@ -74,4 +73,25 @@ test("invalid local folder does not wipe the current tileset", async ({ page }, 
   await expect(page.locator("#viewerBuildingSelect option").nth(1)).toHaveText("sample-indoor");
   await expect(page.locator("#viewerLayersList")).toContainText("1F");
   expect(await page.evaluate(() => window.__CESIUM_E2E__?.datasetKind)).toBe("local");
+});
+
+test("failed switch to public sample restores the shared session UI", async ({ page }) => {
+  test.setTimeout(120_000);
+  await prepareCleanApp(page);
+  await page.goto("/viewer.html?session=/tiles/sample-indoor/session.json");
+  await expect(page.locator("#viewerDatasetSelect")).toHaveValue("shared", { timeout: 45_000 });
+  await expect(page.locator("#viewerBuildingSelect option").nth(1)).toHaveText("Sample House");
+
+  await page.route("**/tiles/sample-indoor/session.json", (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({ status: 503, body: "unavailable" });
+    }
+    return route.continue();
+  });
+
+  await page.locator("#viewerDatasetSelect").selectOption("sample");
+  await expect(page.locator("#loadingOverlay")).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator("#viewerDatasetSelect")).toHaveValue("shared");
+  await expect(page.locator("#viewerBuildingSelect option").nth(1)).toHaveText("Sample House");
+  await expect(page.locator("#viewerVenueBar")).toBeHidden();
 });
