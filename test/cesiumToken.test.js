@@ -271,3 +271,65 @@ test("resolveProviderTokens falls back to an in-memory Carto key when storage is
   assert.equal(resolved.ion, "");
   assert.equal(resolved.arcgis, "");
 });
+
+test("getStartupCesiumIonToken returns a JWT from input when storage writes fail", () => {
+  const storage = {
+    getItem: () => {
+      throw new Error("blocked");
+    },
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  };
+  const input = { value: ` ${SAMPLE_JWT} ` };
+
+  assert.equal(getStartupCesiumIonToken(input, storage, ""), SAMPLE_JWT);
+});
+
+test("getStartupMapTokens seeds Ion, ArcGIS, and Carto in memory when storage writes fail", () => {
+  const storage = {
+    getItem: () => {
+      throw new Error("blocked");
+    },
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  };
+  const input = { value: SAMPLE_JWT };
+  const tokens = getStartupMapTokens(input, storage, {
+    ion: "",
+    carto: SAMPLE_CARTO,
+    arcgis: SAMPLE_ARCGIS,
+  });
+
+  assert.equal(tokens.ion, SAMPLE_JWT);
+  assert.equal(tokens.carto, SAMPLE_CARTO);
+  assert.equal(tokens.arcgis, SAMPLE_ARCGIS);
+
+  const Ion = { defaultAccessToken: "" };
+  const ArcGisMapService = { defaultAccessToken: "eval-token" };
+  applySavedMapAccessTokens({ Ion, ArcGisMapService, storage }, tokens);
+
+  assert.equal(Ion.defaultAccessToken, SAMPLE_JWT);
+  assert.equal(ArcGisMapService.defaultAccessToken, SAMPLE_ARCGIS);
+  assert.equal(resolveProviderTokens({ Ion, ArcGisMapService, storage }).carto, SAMPLE_CARTO);
+  assert.equal(resolveProviderTokens({ Ion, ArcGisMapService, storage }).ion, SAMPLE_JWT);
+});
+
+test("getStartupMapTokens does not send a Carto input to Ion when storage is blocked", () => {
+  const storage = {
+    getItem: () => {
+      throw new Error("blocked");
+    },
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  };
+  const tokens = getStartupMapTokens({ value: SAMPLE_CARTO }, storage, "");
+  assert.equal(tokens.ion, "");
+  assert.equal(tokens.carto, SAMPLE_CARTO);
+
+  const Ion = { defaultAccessToken: "" };
+  applySavedMapAccessTokens({ Ion, storage }, tokens);
+  assert.equal(Ion.defaultAccessToken, "");
+});

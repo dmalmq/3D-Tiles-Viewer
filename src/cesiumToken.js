@@ -155,58 +155,68 @@ function envTokensFromLegacyArg(envToken) {
   return readViteEnvTokens();
 }
 
-function persistEnvAndInput(input, storage, envTokens) {
-  const fromInput = classifyMapAccessToken(input?.value);
-  if (fromInput.kind) saveClassifiedToken(fromInput.kind, fromInput.token, storage);
-
-  const existing = {
-    ion: readSavedCesiumIonToken(storage),
-    carto: readSavedCartoApiKey(storage),
-    arcgis: readSavedArcGisApiKey(storage),
-  };
-  if (!existing.ion && isJwtAccessToken(envTokens.ion)) {
-    saveClassifiedToken("ion", envTokens.ion, storage);
-  }
-  if (!existing.carto && classifyMapAccessToken(envTokens.carto).kind === "carto") {
-    saveClassifiedToken("carto", envTokens.carto, storage);
-  }
-  if (!existing.arcgis && isArcGisApiKey(envTokens.arcgis)) {
-    saveClassifiedToken("arcgis", envTokens.arcgis, storage);
-  }
-}
-
-function displayTokenForInput(storage) {
-  const tokens = {
-    ion: readSavedCesiumIonToken(storage),
-    carto: readSavedCartoApiKey(storage),
-    arcgis: readSavedArcGisApiKey(storage),
-  };
-  const lastKind = readStorageItem(storage, MAP_API_KEY_LAST_KIND_STORAGE_KEY);
-  return tokens[lastKind] || tokens.ion || tokens.carto || tokens.arcgis || "";
-}
-
-export function getStartupCesiumIonToken(input, storage = getDefaultStorage(), envToken = readViteEnvTokens()) {
-  persistEnvAndInput(input, storage, envTokensFromLegacyArg(envToken));
-  const ion = readSavedCesiumIonToken(storage);
-  if (input && !normalizeCesiumIonToken(input.value)) input.value = displayTokenForInput(storage);
-  return ion;
-}
-
-export function getStartupMapTokens(input, storage = getDefaultStorage(), envToken = readViteEnvTokens()) {
-  persistEnvAndInput(input, storage, envTokensFromLegacyArg(envToken));
-  const tokens = {
-    ion: readSavedCesiumIonToken(storage),
-    carto: readSavedCartoApiKey(storage),
-    arcgis: readSavedArcGisApiKey(storage),
-  };
-  if (input && !normalizeCesiumIonToken(input.value)) input.value = displayTokenForInput(storage);
-  return tokens;
-}
-
 let inMemoryCartoApiKey = "";
 
 export function clearInMemoryMapAccessTokens() {
   inMemoryCartoApiKey = "";
+}
+
+function rememberClassifiedToken(kind, token, storage) {
+  const normalized = saveClassifiedToken(kind, token, storage);
+  if (kind === "carto" && normalized) inMemoryCartoApiKey = normalized;
+  return normalized;
+}
+
+function displayValueFromTokens(tokens, storage) {
+  const lastKind = readStorageItem(storage, MAP_API_KEY_LAST_KIND_STORAGE_KEY);
+  return tokens[lastKind] || tokens.ion || tokens.carto || tokens.arcgis || "";
+}
+
+/**
+ * Persist env/input keys into storage when possible, but always return the
+ * classified tokens so startup can seed Ion / ArcGIS / Carto memory even if
+ * localStorage throws. A Carto or ArcGIS value never overwrites a saved ion JWT.
+ */
+function persistEnvAndInput(input, storage, envTokens) {
+  const tokens = {
+    ion: readSavedCesiumIonToken(storage),
+    carto: readSavedCartoApiKey(storage) || inMemoryCartoApiKey,
+    arcgis: readSavedArcGisApiKey(storage),
+  };
+  if (classifyMapAccessToken(tokens.carto).kind !== "carto") tokens.carto = "";
+
+  const fromInput = classifyMapAccessToken(input?.value);
+  if (fromInput.kind) {
+    rememberClassifiedToken(fromInput.kind, fromInput.token, storage);
+    tokens[fromInput.kind] = fromInput.token;
+  }
+
+  if (!tokens.ion && isJwtAccessToken(envTokens.ion)) {
+    rememberClassifiedToken("ion", envTokens.ion, storage);
+    tokens.ion = envTokens.ion;
+  }
+  if (!tokens.carto && classifyMapAccessToken(envTokens.carto).kind === "carto") {
+    rememberClassifiedToken("carto", envTokens.carto, storage);
+    tokens.carto = envTokens.carto;
+  }
+  if (!tokens.arcgis && isArcGisApiKey(envTokens.arcgis)) {
+    rememberClassifiedToken("arcgis", envTokens.arcgis, storage);
+    tokens.arcgis = envTokens.arcgis;
+  }
+
+  return tokens;
+}
+
+export function getStartupCesiumIonToken(input, storage = getDefaultStorage(), envToken = readViteEnvTokens()) {
+  const tokens = persistEnvAndInput(input, storage, envTokensFromLegacyArg(envToken));
+  if (input && !normalizeCesiumIonToken(input.value)) input.value = displayValueFromTokens(tokens, storage);
+  return tokens.ion;
+}
+
+export function getStartupMapTokens(input, storage = getDefaultStorage(), envToken = readViteEnvTokens()) {
+  const tokens = persistEnvAndInput(input, storage, envTokensFromLegacyArg(envToken));
+  if (input && !normalizeCesiumIonToken(input.value)) input.value = displayValueFromTokens(tokens, storage);
+  return tokens;
 }
 
 /**
