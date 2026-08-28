@@ -1,8 +1,25 @@
 import { DEFAULT_MANIFEST_URL } from "./venueManifest.js";
 
+/**
+ * Join a same-origin asset path with Vite's configured `base`.
+ * BASE_URL is usually `/` or `/repo/` (trailing slash). Leading slashes on
+ * `path` are stripped so we never emit `//tiles/...` or miss a slash.
+ */
+export function withAppBase(path, base = import.meta.env?.BASE_URL ?? "/") {
+  const rawBase = base == null || base === "" ? "/" : String(base);
+  const rawPath = String(path ?? "").replace(/^\/+/, "");
+  if (!rawPath) return rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
+  if (/^https?:\/\//i.test(rawBase)) {
+    const originBase = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
+    return new URL(rawPath, originBase).href;
+  }
+  const normalizedBase = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
+  return `${normalizedBase}${rawPath}`;
+}
+
 /** Static same-origin sample — no Express publish server required. */
-export const SAMPLE_TILESET_URL = "/tiles/sample-indoor/tileset.json";
-export const SAMPLE_SESSION_URL = "/tiles/sample-indoor/session.json";
+export const SAMPLE_TILESET_URL = withAppBase("tiles/sample-indoor/tileset.json");
+export const SAMPLE_SESSION_URL = withAppBase("tiles/sample-indoor/session.json");
 export const SAMPLE_BUILDING_NAME = "Sample House";
 
 /**

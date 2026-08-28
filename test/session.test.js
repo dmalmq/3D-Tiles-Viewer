@@ -20,6 +20,7 @@ import {
   resolveSessionAssetUrl,
   shouldLoadTilesetFromUrl,
 } from "../src/session.js";
+import { withAppBase } from "../src/viewerDataset.js";
 
 const baseState = () => ({
   imagery: "carto-positron",
@@ -299,6 +300,13 @@ test("slugifyVenueId normalizes display names", () => {
 
 test("resolveSessionAssetUrl leaves absolute URLs unchanged", () => {
   assert.equal(resolveSessionAssetUrl("https://x.test/tileset.json"), "https://x.test/tileset.json");
+});
+
+test("resolveSessionAssetUrl puts leading-slash assets under the app base", () => {
+  assert.equal(
+    resolveSessionAssetUrl("/tiles/sample-indoor/tileset.json"),
+    withAppBase("/tiles/sample-indoor/tileset.json"),
+  );
 });
 
 test("shouldLoadTilesetFromUrl accepts sourceUrl regardless of sourceType", () => {

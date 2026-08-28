@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseSessionJson, shouldLoadTilesetFromUrl } from "../src/session.js";
-import { SAMPLE_BUILDING_NAME, SAMPLE_SESSION_URL, SAMPLE_TILESET_URL } from "../src/viewerDataset.js";
+import { SAMPLE_BUILDING_NAME, SAMPLE_TILESET_URL, withAppBase } from "../src/viewerDataset.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sampleDir = join(root, "public", "tiles", "sample-indoor");
@@ -30,9 +30,9 @@ test("sample tileset.json is 3D Tiles 1.1 with same-origin glb content", () => {
 
 test("sample session points the viewer at the static tileset URL", () => {
   const session = parseSessionJson(readFileSync(join(sampleDir, "session.json"), "utf8"));
-  assert.equal(SAMPLE_SESSION_URL, "/tiles/sample-indoor/session.json");
   assert.equal(session.buildings[0].name, SAMPLE_BUILDING_NAME);
-  assert.equal(session.buildings[0].sourceUrl, SAMPLE_TILESET_URL);
+  assert.equal(session.buildings[0].sourceUrl, "/tiles/sample-indoor/tileset.json");
+  assert.equal(withAppBase(session.buildings[0].sourceUrl), SAMPLE_TILESET_URL);
   assert.equal(shouldLoadTilesetFromUrl(session.buildings[0]), true);
   assert.equal(session.buildings[0].directoryHandleId, null);
   assert.ok(session.buildings[0].levels.length >= 2);

@@ -8,10 +8,12 @@ Tiny made-up indoor 3D Tiles dataset for the static read-only viewer.
 
 ## Static paths (same-origin, no Express)
 
+Paths are under Vite `base` (default `/`). On GitHub project Pages set `base: "/<repo>/"` so these are not requested from domain root.
+
 | File | URL |
 |---|---|
-| Tileset | `/tiles/sample-indoor/tileset.json` |
-| Session | `/tiles/sample-indoor/session.json` |
-| glTF content | `/tiles/sample-indoor/content.glb` |
+| Tileset | `{base}tiles/sample-indoor/tileset.json` |
+| Session | `{base}tiles/sample-indoor/session.json` |
+| glTF content | `{base}tiles/sample-indoor/content.glb` |
 
-Open in the read-only viewer: `/viewer.html` (this sample is the default) or `/viewer.html?session=/tiles/sample-indoor/session.json`.
+Open in the read-only viewer: `{base}viewer.html` (this sample is the default) or `{base}viewer.html?session={base}tiles/sample-indoor/session.json`.

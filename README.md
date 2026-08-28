@@ -119,13 +119,15 @@ npm start
 
 A tiny **synthetic indoor** 3D Tiles dataset ships in the repo. Geometry is generated in-repo (`scripts/generate-sample-tileset.js`): a few made-up rooms on two floors. It is not a real building, station, or workplace. License: CC0.
 
-| Resource | Path |
+| Resource | Path (under Vite `base`, default `/`) |
 |---|---|
-| Tileset | `/tiles/sample-indoor/tileset.json` |
-| Session | `/tiles/sample-indoor/session.json` |
-| Read-only viewer | `/viewer.html` |
+| Tileset | `{base}tiles/sample-indoor/tileset.json` |
+| Session | `{base}tiles/sample-indoor/session.json` |
+| Read-only viewer | `{base}viewer.html` |
 
-The portfolio embed (and anyone serving this app as static files) should point at **`/tiles/sample-indoor/tileset.json`** for the tileset, and open **`/viewer.html`** for the click-to-load demo. Express is not required.
+With the default Vite base `/`, those are `/tiles/sample-indoor/tileset.json` and `/viewer.html`. If `dist/` is hosted under a subpath (GitHub project Pages), set `base` in `vite.config.js` (for example `base: "/3D-Tiles-Viewer/"`) so the same files resolve as `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` and `/3D-Tiles-Viewer/viewer.html`. Express is not required.
+
+The portfolio embed should point at **`{base}tiles/sample-indoor/tileset.json`** for the tileset, and open **`{base}viewer.html`** for the click-to-load demo.
 
 ```bash
 npm run dev
