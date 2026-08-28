@@ -326,7 +326,7 @@ const networkConnectBtn = document.getElementById("networkConnectBtn");
 const networkExportBtn = document.getElementById("networkExportBtn");
 const networkStatusEl = document.getElementById("networkStatus");
 
-let terrainProviders = { worldTerrainProvider: null, plateauTerrainProvider: null };
+const terrainProviders = { worldTerrainProvider: null, plateauTerrainProvider: null };
 const savedGlobeBaseColorRef = { value: null };
 const lodFilter = new LodFilter();
 let autoBackupTimer = null;

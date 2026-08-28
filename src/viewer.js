@@ -80,7 +80,7 @@ let currentVenueId = null;
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 const lodFilter = new LodFilter();
-let terrainProviders = { worldTerrainProvider: null, plateauTerrainProvider: null };
+const terrainProviders = { worldTerrainProvider: null, plateauTerrainProvider: null };
 const savedGlobeBaseColorRef = { value: null };
 
 const transient = {
