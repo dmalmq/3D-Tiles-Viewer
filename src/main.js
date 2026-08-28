@@ -78,8 +78,12 @@ import {
   serializeSession,
   parseSessionJson,
   downloadSessionJson,
+  downloadBlob,
   createSessionRestorePlan,
 } from "./session.js";
+import { slugifyVenueId } from "./slug.js";
+import { collectWebsiteBundle } from "./websiteExport.js";
+import { createZip } from "./zipWriter.js";
 import { notifyUser } from "./notifications.js";
 import {
   chooseDefaultColorColumn,
@@ -292,6 +296,7 @@ const levelPillsEl = document.getElementById("levelPillsRow");
 const venuesSectionBody = document.getElementById("venuesSectionBody");
 const backupsBtn = document.getElementById("backupsBtn");
 const exportViewerBtn = document.getElementById("exportViewerBtn");
+const exportWebsiteBtn = document.getElementById("exportWebsiteBtn");
 const publishBtn = document.getElementById("publishBtn");
 const shpInput = document.getElementById("shpInput");
 const gdbInput = document.getElementById("gdbInput");
@@ -384,6 +389,7 @@ function init() {
     onRestore: restoreFromBackup,
   }));
   exportViewerBtn?.addEventListener("click", handleExportViewerPackage);
+  exportWebsiteBtn?.addEventListener("click", handleExportWebsiteBundle);
   publishBtn?.addEventListener("click", handlePublishToServer);
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
   sessionInput.addEventListener("change", handleLoadSession);
@@ -2469,6 +2475,7 @@ function renderVenuesSection() {
       invalidateAndRerender();
     },
     onExportViewer: handleExportViewerPackage,
+    onExportWebsite: handleExportWebsiteBundle,
   });
 }
 
@@ -4973,6 +4980,41 @@ function handleExportViewerPackage() {
     return;
   }
   notifyUser("info", "venue.exportDone", { count: result.venueCount });
+}
+
+async function handleExportWebsiteBundle() {
+  if (exportWebsiteBtn) exportWebsiteBtn.disabled = true;
+  showLoadingOverlay(t("venue.exportWebsiteBusy"), "");
+  try {
+    const result = await collectWebsiteBundle(getPublishState());
+    if (!result.ok) {
+      notifyUser("info", "venue.exportEmpty");
+      return;
+    }
+    const zip = createZip(result.files);
+    downloadBlob(
+      new Blob([zip], { type: "application/zip" }),
+      `${slugifyVenueId(result.venue.id ?? result.venue.name)}-web.zip`,
+    );
+    notifyUser("info", "venue.exportWebsiteDone", {
+      name: result.venue.name,
+      count: result.files.length,
+    });
+    if (result.warnings.some((w) => w.reason === "noLocalTiles")) {
+      notifyUser("error", "venue.exportWebsiteNoTiles");
+    } else if (result.warnings.length > 0) {
+      notifyUser("error", "venue.exportWebsitePartial", {
+        detail: result.warnings
+          .map((w) => (w.detail ? `${w.reason} (${w.detail})` : w.reason))
+          .join(", "),
+      });
+    }
+  } catch (err) {
+    notifyUser("error", "venue.exportWebsitePartial", { detail: err.message });
+  } finally {
+    hideLoadingOverlay();
+    if (exportWebsiteBtn) exportWebsiteBtn.disabled = false;
+  }
 }
 
 async function handlePublishToServer() {
