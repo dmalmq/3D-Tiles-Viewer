@@ -261,7 +261,7 @@ function contentUriKey(content) {
  * Collect every file an offline copy of the tileset needs.
  *
  * @param {{read: (relPath: string) => Promise<Uint8Array|null>, label?: string}} source
- * @param {{maxEntries?: number, sidecars?: string[]}} [options]
+ * @param {{maxEntries?: number, sidecars?: string[], maxSubtreeNodes?: number}} [options]
  * @returns {Promise<{entries: Array<{path: string, data: Uint8Array}>,
  *                    warnings: Array<{reason: string, path: string, detail?: string}>,
  *                    totalBytes: number, label: string}>}
@@ -269,6 +269,7 @@ function contentUriKey(content) {
 export async function buildTilesetPack(source, options = {}) {
   const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const sidecars = options.sidecars ?? PACK_SIDECAR_PATHS;
+  const maxSubtreeNodes = options.maxSubtreeNodes;
 
   const entries = [];
   const warnings = [];
@@ -326,7 +327,14 @@ export async function buildTilesetPack(source, options = {}) {
       emit(item.path, walkGltfJson(bytes, item.path, { enqueue, warnings }));
     } else if (item.kind === "subtree") {
       emit(item.path, bytes);
-      await walkSubtree(bytes, item, { source, read, enqueue, emit, warnings });
+      await walkSubtree(bytes, item, {
+        source,
+        read,
+        enqueue,
+        emit,
+        warnings,
+        maxSubtreeNodes,
+      });
     } else if (item.kind === "content") {
       emit(item.path, bytes);
       walkContentBinary(bytes, item.path, { enqueue, warnings });
@@ -379,18 +387,35 @@ function walkTilesetJson(bytes, path, { enqueue, warnings }) {
     }
   };
 
+  /**
+   * Implicit URI templates resolve against the tileset that declares them.
+   * Absolute templates (`https://cdn/tiles/{level}/{x}/{y}.subtree`) cannot be
+   * packed at all, and substituting one would forge a bogus relative path such
+   * as `https:/cdn/tiles/0/0/0.subtree`, so they are reported once here and the
+   * template is dropped instead of walked.
+   */
+  const checkTemplate = (template, reasonPrefix) => {
+    if (typeof template !== "string" || template.length === 0) return false;
+    if (/[?#]/.test(template)) addWarning(warnings, "implicitTemplateQuery", path, template);
+    if (isAbsoluteUri(template)) {
+      addWarning(warnings, `${reasonPrefix}Absolute`, path, template);
+      return false;
+    }
+    return true;
+  };
+
   const linkImplicit = (tile, implicit) => {
     const subtreeTemplate = implicit?.subtrees?.uri;
     if (typeof subtreeTemplate !== "string" || !subtreeTemplate) {
       addWarning(warnings, "implicitSubtreesMissing", path, JSON.stringify(implicit ?? null));
       return;
     }
-    const contentTemplates = tileContents(tile).map((content) => content[contentUriKey(content)]);
-    for (const template of [subtreeTemplate, ...contentTemplates]) {
-      if (typeof template === "string" && /[?#]/.test(template)) {
-        addWarning(warnings, "implicitTemplateQuery", path, template);
-      }
-    }
+    const subtreeUsable = checkTemplate(subtreeTemplate, "subtree");
+    const contentTemplates = tileContents(tile).map((content) => {
+      const template = content[contentUriKey(content)];
+      return checkTemplate(template, "content") ? template : null;
+    });
+    if (!subtreeUsable) return;
     const plan = {
       tilesetPath: path,
       tilesetDir: fromDir,
@@ -400,11 +425,13 @@ function walkTilesetJson(bytes, path, { enqueue, warnings }) {
       contentTemplates,
     };
     const root = { level: 0, x: 0, y: 0, z: 0 };
-    const rootPath = resolvePackPath(fromDir, substituteTemplate(subtreeTemplate, root));
-    if (!rootPath) {
-      addWarning(warnings, "subtreeOutsidePack", path, subtreeTemplate);
-      return;
-    }
+    const rootPath = resolveReference(
+      substituteTemplate(subtreeTemplate, root),
+      path,
+      warnings,
+      "subtree",
+    );
+    if (!rootPath) return;
     enqueue({ kind: "subtree", path: rootPath, fromPath: path, plan, root });
   };
 
@@ -508,7 +535,7 @@ function queueGlbResources(bytes, path, { enqueue, warnings }) {
  * Expand one implicit subtree: pack its external buffers, then queue the tile
  * content and child subtrees its availability bitstreams mark as present.
  */
-async function walkSubtree(bytes, item, { read, enqueue, emit, warnings }) {
+async function walkSubtree(bytes, item, { read, enqueue, emit, warnings, maxSubtreeNodes }) {
   const { plan, root, path } = item;
   let parsed;
   try {
@@ -548,6 +575,7 @@ async function walkSubtree(bytes, item, { read, enqueue, emit, warnings }) {
       subdivisionScheme: plan.subdivisionScheme,
       subtreeLevels: plan.subtreeLevels,
       root,
+      maxNodes: maxSubtreeNodes,
     });
   } catch (err) {
     addWarning(warnings, "subtreeExpandFailed", path, err?.message ?? String(err));
@@ -555,25 +583,29 @@ async function walkSubtree(bytes, item, { read, enqueue, emit, warnings }) {
   }
 
   for (const tile of expanded.contentTiles) {
-    const template = plan.contentTemplates[tile.contentIndex] ?? plan.contentTemplates[0];
+    const template =
+      tile.contentIndex < plan.contentTemplates.length
+        ? plan.contentTemplates[tile.contentIndex]
+        : plan.contentTemplates[0];
     if (typeof template !== "string" || !template) continue;
-    const contentPath = resolvePackPath(plan.tilesetDir, substituteTemplate(template, tile));
-    if (!contentPath) {
-      addWarning(warnings, "contentOutsidePack", plan.tilesetPath, template);
-      continue;
-    }
+    const contentPath = resolveReference(
+      substituteTemplate(template, tile),
+      plan.tilesetPath,
+      warnings,
+      "content",
+    );
+    if (!contentPath) continue;
     enqueue({ kind: contentKindFor(contentPath), path: contentPath, fromPath: path });
   }
 
   for (const childRoot of expanded.childSubtreeRoots) {
-    const childPath = resolvePackPath(
-      plan.tilesetDir,
+    const childPath = resolveReference(
       substituteTemplate(plan.subtreeTemplate, childRoot),
+      plan.tilesetPath,
+      warnings,
+      "subtree",
     );
-    if (!childPath) {
-      addWarning(warnings, "subtreeOutsidePack", plan.tilesetPath, plan.subtreeTemplate);
-      continue;
-    }
+    if (!childPath) continue;
     enqueue({ kind: "subtree", path: childPath, fromPath: path, plan, root: childRoot });
   }
 }

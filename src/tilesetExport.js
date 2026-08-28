@@ -22,6 +22,13 @@ const SKIPPED_REASONS = new Set([
   "subtreeBufferMissing",
   "implicitSubtreesMissing",
   "implicitTemplateQuery",
+  // Parse/expansion failures mean the walker never followed that file's own
+  // references, so nested content is silently absent from the pack.
+  "tilesetParseFailed",
+  "gltfParseFailed",
+  "glbParseFailed",
+  "subtreeParseFailed",
+  "subtreeExpandFailed",
 ]);
 
 export function countSkippedReferences(warnings) {
@@ -80,8 +87,19 @@ export async function buildTilesetPackZip(source, options = {}) {
   };
 }
 
-/** Trigger a browser download for the packed bytes. */
-export function downloadPackZip(zipBytes, fileName) {
+/**
+ * How long the download's object URL stays alive. Revoking on the next tick
+ * races the browser's own fetch of the blob (Safari and Firefox both drop the
+ * download); several seconds is long enough for the transfer to start.
+ */
+export const OBJECT_URL_TTL_MS = 10_000;
+
+/**
+ * Trigger a browser download for the packed bytes. The returned `revoke()`
+ * releases the blob immediately and cancels the pending timer.
+ */
+export function downloadPackZip(zipBytes, fileName, options = {}) {
+  const ttl = Number.isFinite(options.revokeAfterMs) ? options.revokeAfterMs : OBJECT_URL_TTL_MS;
   const blob = new Blob([zipBytes], { type: "application/zip" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -90,7 +108,17 @@ export function downloadPackZip(zipBytes, fileName) {
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
-  // Revoke after the click has been dispatched; Safari needs the tick.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-  return { fileName, byteLength: zipBytes.length };
+
+  let revoked = false;
+  const timer = setTimeout(() => {
+    revoked = true;
+    URL.revokeObjectURL(url);
+  }, ttl);
+  const revoke = () => {
+    clearTimeout(timer);
+    if (revoked) return;
+    revoked = true;
+    URL.revokeObjectURL(url);
+  };
+  return { fileName, byteLength: zipBytes.length, objectUrl: url, revokeAfterMs: ttl, revoke };
 }

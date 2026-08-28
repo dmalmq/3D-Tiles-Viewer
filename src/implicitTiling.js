@@ -11,6 +11,14 @@
 const SUBTREE_MAGIC = "subt";
 const SUBTREE_HEADER_BYTES = 24;
 
+/**
+ * Upper bound on the tiles one subtree may describe. A malformed or hostile
+ * `subtreeLevels` (say 40 levels of octree) would otherwise ask the walker to
+ * visit 2^120 nodes and hang the tab; such a subtree fails with a warning
+ * instead.
+ */
+export const MAX_SUBTREE_NODES = 1_000_000;
+
 /** Children per tile for each subdivision scheme. */
 export function branchingFactor(subdivisionScheme) {
   return String(subdivisionScheme).toUpperCase() === "OCTREE" ? 8 : 4;
@@ -144,13 +152,31 @@ function contentAvailabilityList(subtreeJson) {
  * @param {string} args.subdivisionScheme QUADTREE | OCTREE
  * @param {number} args.subtreeLevels levels covered by this subtree
  * @param {{level: number, x: number, y: number, z?: number}} args.root subtree root coordinate
+ * @param {number} [args.maxNodes] node-visit cap for this subtree
  * @returns {{contentTiles: Array<{level:number,x:number,y:number,z:number,contentIndex:number}>,
  *            childSubtreeRoots: Array<{level:number,x:number,y:number,z:number}>}}
  */
-export function enumerateSubtree({ subtreeJson, buffers, subdivisionScheme, subtreeLevels, root }) {
+export function enumerateSubtree({
+  subtreeJson,
+  buffers,
+  subdivisionScheme,
+  subtreeLevels,
+  root,
+  maxNodes = MAX_SUBTREE_NODES,
+}) {
   const factor = branchingFactor(subdivisionScheme);
   const dims = dimensions(subdivisionScheme);
-  const levels = Math.max(1, subtreeLevels | 0);
+  const levels = Number.isFinite(subtreeLevels) ? Math.max(1, Math.floor(subtreeLevels)) : 1;
+  const cap = Number.isFinite(maxNodes) && maxNodes > 0 ? Math.floor(maxNodes) : MAX_SUBTREE_NODES;
+  // Tiles inside the subtree plus the child-subtree ring below it.
+  const nodeCount = nodesInLevels(levels, factor) + Math.pow(factor, levels);
+  if (!(nodeCount <= cap)) {
+    throw new Error(
+      `Subtree spans ${levels} ${factor === 8 ? "OCTREE" : "QUADTREE"} levels ` +
+        `(${nodeCount} nodes), ` +
+        `over the ${cap}-node cap`,
+    );
+  }
   const rootZ = root.z ?? 0;
 
   const contentReaders = contentAvailabilityList(subtreeJson).map((availability) =>

@@ -14,7 +14,13 @@ import {
   relativePackPath,
   splitComposite,
 } from "../src/tilesetPack.js";
-import { mortonDecode, parseSubtree, substituteTemplate } from "../src/implicitTiling.js";
+import {
+  enumerateSubtree,
+  MAX_SUBTREE_NODES,
+  mortonDecode,
+  parseSubtree,
+  substituteTemplate,
+} from "../src/implicitTiling.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SAMPLE_DIR = path.join(root, "public", "tiles", "sample-indoor");
@@ -496,4 +502,180 @@ test("maxEntries stops runaway packs", async () => {
     "b.glb": glb({ asset: { version: "2.0" } }),
   });
   await assert.rejects(() => buildTilesetPack(source, { maxEntries: 2 }), /exceeds 2 files/);
+});
+
+// ── implicit templates and subtree size limits ──────────────────────────────
+
+test("absolute implicit templates are skipped, not forged into relative paths", async () => {
+  const source = memorySource({
+    "tileset.json": {
+      root: {
+        content: { uri: "https://cdn.test/tiles/content/{level}/{x}/{y}.glb" },
+        implicitTiling: {
+          subdivisionScheme: "QUADTREE",
+          subtreeLevels: 2,
+          subtrees: { uri: "https://cdn.test/tiles/subtrees/{level}/{x}/{y}.subtree" },
+        },
+      },
+    },
+  });
+
+  const pack = await buildTilesetPack(source);
+  assert.deepEqual(pathsOf(pack), ["tileset.json"]);
+  assert.deepEqual(
+    pack.warnings.map((w) => w.reason).sort(),
+    ["contentAbsolute", "subtreeAbsolute"],
+  );
+  // The substituted template must never become a pack path like "https:/cdn.test/…".
+  assert.ok(!source.reads.some((read) => /cdn\.test|https/.test(read)));
+});
+
+test("an absolute implicit content template warns once, not per available tile", async () => {
+  const source = memorySource({
+    "tileset.json": {
+      root: {
+        content: { uri: "https://cdn.test/c/{level}/{x}/{y}.glb" },
+        implicitTiling: {
+          subdivisionScheme: "QUADTREE",
+          subtreeLevels: 2,
+          subtrees: { uri: "subtrees/{level}/{x}/{y}.subtree" },
+        },
+      },
+    },
+    "subtrees/0/0/0.subtree": subtreeFile({
+      tileAvailability: { constant: 1 },
+      contentAvailability: [{ constant: 1 }],
+      childSubtreeAvailability: { constant: 0 },
+    }),
+  });
+
+  const pack = await buildTilesetPack(source);
+  assert.deepEqual(pathsOf(pack), ["subtrees/0/0/0.subtree", "tileset.json"]);
+  assert.deepEqual(pack.warnings, [
+    {
+      reason: "contentAbsolute",
+      path: "tileset.json",
+      detail: "https://cdn.test/c/{level}/{x}/{y}.glb",
+    },
+  ]);
+  assert.ok(!source.reads.some((read) => /cdn\.test|https/.test(read)));
+});
+
+test("implicit templates that climb out of the pack are still reported per tile", async () => {
+  const source = memorySource({
+    "sub/tileset.json": {
+      root: {
+        content: { uri: "../../escape/{level}/{x}/{y}.glb" },
+        implicitTiling: {
+          subdivisionScheme: "QUADTREE",
+          subtreeLevels: 1,
+          subtrees: { uri: "s/{level}/{x}/{y}.subtree" },
+        },
+      },
+    },
+    "tileset.json": { root: { content: { uri: "sub/tileset.json" } } },
+    "sub/s/0/0/0.subtree": subtreeFile({
+      tileAvailability: { constant: 1 },
+      contentAvailability: [{ constant: 1 }],
+      childSubtreeAvailability: { constant: 0 },
+    }),
+  });
+
+  const pack = await buildTilesetPack(source);
+  assert.deepEqual(pathsOf(pack), ["sub/s/0/0/0.subtree", "sub/tileset.json", "tileset.json"]);
+  assert.deepEqual(pack.warnings, [
+    { reason: "contentOutsidePack", path: "sub/tileset.json", detail: "../../escape/0/0/0.glb" },
+  ]);
+});
+
+test("enumerateSubtree caps how many nodes one subtree may describe", () => {
+  const subtreeJson = {
+    tileAvailability: { constant: 1 },
+    contentAvailability: [{ constant: 1 }],
+    childSubtreeAvailability: { constant: 0 },
+  };
+  const args = {
+    subtreeJson,
+    buffers: [],
+    subdivisionScheme: "OCTREE",
+    root: { level: 0, x: 0, y: 0, z: 0 },
+  };
+
+  assert.equal(MAX_SUBTREE_NODES, 1_000_000);
+  assert.throws(
+    () => enumerateSubtree({ ...args, subtreeLevels: 40 }),
+    /Subtree spans 40 OCTREE levels .* over the 1000000-node cap/,
+  );
+  assert.throws(
+    () => enumerateSubtree({ ...args, subtreeLevels: 3, maxNodes: 10 }),
+    /over the 10-node cap/,
+  );
+  // A sane subtree is unaffected: 1 + 4 + 16 tiles, 64 child-subtree slots.
+  const expanded = enumerateSubtree({
+    ...args,
+    subdivisionScheme: "QUADTREE",
+    subtreeLevels: 3,
+  });
+  assert.equal(expanded.contentTiles.length, 21);
+  assert.equal(expanded.childSubtreeRoots.length, 0);
+});
+
+test("a subtree with absurd subtreeLevels fails with a warning instead of hanging", async () => {
+  const source = memorySource({
+    "tileset.json": {
+      root: {
+        content: { uri: "c/{level}/{x}/{y}.glb" },
+        implicitTiling: {
+          subdivisionScheme: "OCTREE",
+          subtreeLevels: 40,
+          availableLevels: 40,
+          subtrees: { uri: "s/{level}/{x}/{y}.subtree" },
+        },
+      },
+    },
+    "s/0/0/0.subtree": subtreeFile({
+      tileAvailability: { constant: 1 },
+      contentAvailability: [{ constant: 1 }],
+      childSubtreeAvailability: { constant: 1 },
+    }),
+  });
+
+  const startedAt = Date.now();
+  const pack = await buildTilesetPack(source);
+  assert.ok(Date.now() - startedAt < 5_000, "expansion must fail fast, not grind");
+  assert.deepEqual(pathsOf(pack), ["s/0/0/0.subtree", "tileset.json"]);
+  assert.deepEqual(
+    pack.warnings.map((w) => w.reason),
+    ["subtreeExpandFailed"],
+  );
+  assert.match(pack.warnings[0].detail, /node cap/);
+  assert.ok(!source.reads.some((read) => read.startsWith("c/")));
+});
+
+test("maxSubtreeNodes tightens the cap for a single pack", async () => {
+  const source = memorySource({
+    "tileset.json": {
+      root: {
+        content: { uri: "c/{level}/{x}/{y}.glb" },
+        implicitTiling: {
+          subdivisionScheme: "QUADTREE",
+          subtreeLevels: 4,
+          subtrees: { uri: "s/{level}/{x}/{y}.subtree" },
+        },
+      },
+    },
+    "s/0/0/0.subtree": subtreeFile({
+      tileAvailability: { constant: 1 },
+      contentAvailability: [{ constant: 1 }],
+      childSubtreeAvailability: { constant: 0 },
+    }),
+    "c/0/0/0.glb": glb({ asset: { version: "2.0" } }),
+  });
+
+  const pack = await buildTilesetPack(source, { maxSubtreeNodes: 8 });
+  assert.deepEqual(pathsOf(pack), ["s/0/0/0.subtree", "tileset.json"]);
+  assert.deepEqual(
+    pack.warnings.map((w) => w.reason),
+    ["subtreeExpandFailed"],
+  );
 });
