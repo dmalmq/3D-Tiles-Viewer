@@ -5,6 +5,7 @@
 import { normalizeLevelRecords } from "./levelMetadata.js";
 import { slugifyVenueId } from "./slug.js";
 
+import { featuresForWebsiteLayer } from "./websiteLayerExport.js";
 export const WEBSITE_BUNDLE_VERSION = 1;
 
 export const WEBSITE_BUNDLE_README = `# venue-web bundle
@@ -113,11 +114,18 @@ export function buildWebsiteManifest(state, options = {}) {
 
   for (const building of venueBuildings) {
     for (const source of building.shapefileLayers ?? []) {
-      const features = source.features ?? [];
+      const exportedLayer = featuresForWebsiteLayer(source);
+      const features = exportedLayer.features;
       if (features.length === 0) continue;
       const slug = layerSlug(source.name, usedSlugs);
       const levelKey =
         source.levelKey != null && levelKeys.has(source.levelKey) ? source.levelKey : null;
+      if (!exportedLayer.placed) {
+        warnings.push({
+          reason: "layerNotPlaced",
+          detail: source.name ?? slug,
+        });
+      }
 
       const exported = features.map((feature) => {
         const properties = { ...(feature.properties ?? {}) };
@@ -138,7 +146,7 @@ export function buildWebsiteManifest(state, options = {}) {
         id: slug,
         name: source.name ?? slug,
         uri: `layers/${slug}.geojson`,
-        geometry: geometryKind(features),
+        geometry: geometryKind(exported),
         color: source.color ?? null,
         defaultVisible: !source._hidden,
       });
