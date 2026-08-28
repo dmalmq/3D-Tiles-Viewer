@@ -294,11 +294,15 @@ async function loadTilesetUrlDataset(url) {
   showLoadingOverlay(t("viewer.loadingSession"), "");
   try {
     await clearSceneState(ctx);
-    const tileset = await loadTilesetFromUrl(ctx.viewer, url, { zoom: false });
+    const [tileset, levels] = await Promise.all([
+      loadTilesetFromUrl(ctx.viewer, url, { zoom: false }),
+      levelsFromUrl(url),
+    ]);
     const stem = url.replace(/\/tileset\.json$/i, "").split("/").filter(Boolean).pop();
     await restoreLoadedTileset(tileset, {
       name: stem || SAMPLE_BUILDING_NAME,
       sourceUrl: url,
+      levels,
     }, ctx);
     currentVenueId = null;
     ctx.onComplete?.();
@@ -380,17 +384,33 @@ async function handleTilesetFolderInput(e) {
   }
 }
 
+function buildingLevelsFromRecords(data) {
+  return normalizeLevelRecords(data?.levels ?? []).map((l) => ({
+    name: l.name,
+    key: l.key,
+    floor: l.floor,
+    localPlaneZ: l.maxZMeters ?? null,
+  }));
+}
+
 async function levelsFromFiles(files) {
   const file = files.find((f) => f.name.toLowerCase() === "levels.json");
   if (!file) return [];
   try {
-    const data = JSON.parse(await file.text());
-    return normalizeLevelRecords(data?.levels ?? []).map((l) => ({
-      name: l.name,
-      key: l.key,
-      floor: l.floor,
-      localPlaneZ: l.maxZMeters ?? null,
-    }));
+    return buildingLevelsFromRecords(JSON.parse(await file.text()));
+  } catch {
+    return [];
+  }
+}
+
+async function levelsFromUrl(tilesetUrl) {
+  const base = /tileset\.json$/i.test(tilesetUrl)
+    ? tilesetUrl.slice(0, -"tileset.json".length)
+    : String(tilesetUrl).replace(/\/?$/, "/");
+  try {
+    const res = await fetch(`${base}levels.json`);
+    if (!res.ok) return [];
+    return buildingLevelsFromRecords(await res.json());
   } catch {
     return [];
   }

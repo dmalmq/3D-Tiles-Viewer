@@ -42,3 +42,13 @@ test("viewer.html loads the public synthetic sample without the authoring UI", a
 
   expect(uploads).toEqual([]);
 });
+
+test("viewer.html ?tileset= loads the static sample and rebuilds floors", async ({ page }) => {
+  test.setTimeout(120_000);
+  await prepareCleanApp(page);
+  await page.goto("/viewer.html?tileset=/tiles/sample-indoor/tileset.json");
+  await expect(page.locator("#viewerBuildingSelect option").nth(1)).toHaveText("sample-indoor", { timeout: 45_000 });
+  await waitForTilesetRenderSignal(page);
+  await expect(page.locator("#viewerLayersList")).toContainText("1F");
+  await expect(page.locator("#viewerLayersList")).toContainText("2F");
+});
