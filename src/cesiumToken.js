@@ -23,14 +23,17 @@ function readStorageItem(storage, key) {
 
 function writeStorageItem(storage, key, value) {
   const normalized = normalizeCesiumIonToken(value);
-  if (!normalized) return "";
+  if (!normalized) return { token: "", persisted: false };
   try {
-    storage?.setItem?.(key, normalized);
+    if (typeof storage?.setItem !== "function") return { token: normalized, persisted: false };
+    storage.setItem(key, normalized);
+    return { token: normalized, persisted: true };
   } catch {
-    // Saving the token is a convenience. A blocked storage write should not
-    // prevent the current token from being applied for this session.
+    // Saving the token is a convenience: a blocked write must not prevent the
+    // token from being applied. It does mean storage is now stale for this key,
+    // so the caller has to keep the value in session memory instead.
+    return { token: normalized, persisted: false };
   }
-  return normalized;
 }
 
 function readViteEnvTokens() {
@@ -80,15 +83,14 @@ function storageKeyForKind(kind) {
 function saveClassifiedToken(kind, token, storage) {
   const key = storageKeyForKind(kind);
   if (!key) return "";
-  const saved = writeStorageItem(storage, key, token);
-  if (saved) {
-    try {
-      storage?.setItem?.(MAP_API_KEY_LAST_KIND_STORAGE_KEY, kind);
-    } catch {
-      // Display-only hint for the paste field.
-    }
+  const { token: normalized, persisted } = writeStorageItem(storage, key, token);
+  if (!normalized) return "";
+  try {
+    storage?.setItem?.(MAP_API_KEY_LAST_KIND_STORAGE_KEY, kind);
+  } catch {
+    // Display-only hint for the paste field.
   }
-  return saved;
+  return rememberSessionToken(kind, normalized, persisted);
 }
 
 function migrateLegacyIonSlot(storage) {
@@ -155,20 +157,69 @@ function envTokensFromLegacyArg(envToken) {
   return readViteEnvTokens();
 }
 
-let inMemoryCartoApiKey = "";
+const sessionTokens = { ion: "", carto: "", arcgis: "" };
+const sessionWriteFailed = { ion: false, carto: false, arcgis: false };
+let sessionLastKind = "";
 
 export function clearInMemoryMapAccessTokens() {
-  inMemoryCartoApiKey = "";
+  sessionTokens.ion = "";
+  sessionTokens.carto = "";
+  sessionTokens.arcgis = "";
+  sessionWriteFailed.ion = false;
+  sessionWriteFailed.carto = false;
+  sessionWriteFailed.arcgis = false;
+  sessionLastKind = "";
 }
 
-function rememberClassifiedToken(kind, token, storage) {
-  const normalized = saveClassifiedToken(kind, token, storage);
-  if (kind === "carto" && normalized) inMemoryCartoApiKey = normalized;
-  return normalized;
+/**
+ * Hold a just-applied token for this session. `persisted === false` means the
+ * localStorage write was refused (quota, privacy mode, SecurityError), so the
+ * session value has to outrank the older value still sitting in storage.
+ */
+function rememberSessionToken(kind, token, persisted) {
+  if (!token || !(kind in sessionTokens)) return "";
+  sessionTokens[kind] = token;
+  sessionWriteFailed[kind] = !persisted;
+  sessionLastKind = kind;
+  return token;
+}
+
+/** Seed session memory from an already-trusted value without claiming a failed write. */
+function holdSessionToken(kind, token) {
+  if (!(kind in sessionTokens)) return;
+  if (token && classifyMapAccessToken(token).kind === kind) sessionTokens[kind] = token;
+}
+
+function sessionTokenForKind(kind) {
+  const token = sessionTokens[kind] || "";
+  return classifyMapAccessToken(token).kind === kind ? token : "";
+}
+
+function readSavedTokenForKind(kind, storage) {
+  if (kind === "ion") return readSavedCesiumIonToken(storage);
+  if (kind === "carto") return readSavedCartoApiKey(storage);
+  if (kind === "arcgis") return readSavedArcGisApiKey(storage);
+  return "";
+}
+
+/**
+ * Storage stays the source of truth while its writes succeed. Once a write for
+ * this kind failed, the session token wins so a stale localStorage value cannot
+ * replace the key that was just applied.
+ */
+function effectiveTokenForKind(kind, storage, fallback = "") {
+  const session = sessionTokenForKind(kind);
+  if (session && sessionWriteFailed[kind]) return session;
+  return readSavedTokenForKind(kind, storage) || session || fallback;
+}
+
+function lastAppliedKind(storage) {
+  if (sessionLastKind && sessionWriteFailed[sessionLastKind]) return sessionLastKind;
+  return readStorageItem(storage, MAP_API_KEY_LAST_KIND_STORAGE_KEY) || sessionLastKind;
 }
 
 function displayValueFromTokens(tokens, storage) {
-  const lastKind = readStorageItem(storage, MAP_API_KEY_LAST_KIND_STORAGE_KEY);
+  const lastKind = lastAppliedKind(storage);
   return tokens[lastKind] || tokens.ion || tokens.carto || tokens.arcgis || "";
 }
 
@@ -179,29 +230,25 @@ function displayValueFromTokens(tokens, storage) {
  */
 function persistEnvAndInput(input, storage, envTokens) {
   const tokens = {
-    ion: readSavedCesiumIonToken(storage),
-    carto: readSavedCartoApiKey(storage) || inMemoryCartoApiKey,
-    arcgis: readSavedArcGisApiKey(storage),
+    ion: effectiveTokenForKind("ion", storage),
+    carto: effectiveTokenForKind("carto", storage),
+    arcgis: effectiveTokenForKind("arcgis", storage),
   };
-  if (classifyMapAccessToken(tokens.carto).kind !== "carto") tokens.carto = "";
 
   const fromInput = classifyMapAccessToken(input?.value);
   if (fromInput.kind) {
-    rememberClassifiedToken(fromInput.kind, fromInput.token, storage);
+    saveClassifiedToken(fromInput.kind, fromInput.token, storage);
     tokens[fromInput.kind] = fromInput.token;
   }
 
   if (!tokens.ion && isJwtAccessToken(envTokens.ion)) {
-    rememberClassifiedToken("ion", envTokens.ion, storage);
-    tokens.ion = envTokens.ion;
+    tokens.ion = saveClassifiedToken("ion", envTokens.ion, storage);
   }
   if (!tokens.carto && classifyMapAccessToken(envTokens.carto).kind === "carto") {
-    rememberClassifiedToken("carto", envTokens.carto, storage);
-    tokens.carto = envTokens.carto;
+    tokens.carto = saveClassifiedToken("carto", envTokens.carto, storage);
   }
   if (!tokens.arcgis && isArcGisApiKey(envTokens.arcgis)) {
-    rememberClassifiedToken("arcgis", envTokens.arcgis, storage);
-    tokens.arcgis = envTokens.arcgis;
+    tokens.arcgis = saveClassifiedToken("arcgis", envTokens.arcgis, storage);
   }
 
   return tokens;
@@ -232,7 +279,6 @@ export function applyMapAccessToken(token, { Ion, ArcGisMapService, storage = ge
 
   if (kind === "ion" && Ion) Ion.defaultAccessToken = normalized;
   if (kind === "arcgis" && ArcGisMapService) ArcGisMapService.defaultAccessToken = normalized;
-  if (kind === "carto") inMemoryCartoApiKey = normalized;
 
   return { kind, token: normalized };
 }
@@ -241,14 +287,12 @@ export function applySavedMapAccessTokens(
   { Ion, ArcGisMapService, storage = getDefaultStorage() } = {},
   tokens,
 ) {
-  const resolved = tokens ?? {
-    ion: readSavedCesiumIonToken(storage),
-    carto: readSavedCartoApiKey(storage),
-    arcgis: readSavedArcGisApiKey(storage),
-  };
+  const resolved = tokens ?? resolveProviderTokens({ Ion, ArcGisMapService, storage });
   if (resolved.ion && Ion) Ion.defaultAccessToken = resolved.ion;
   if (resolved.arcgis && ArcGisMapService) ArcGisMapService.defaultAccessToken = resolved.arcgis;
-  if (resolved.carto) inMemoryCartoApiKey = resolved.carto;
+  holdSessionToken("ion", resolved.ion);
+  holdSessionToken("carto", resolved.carto);
+  holdSessionToken("arcgis", resolved.arcgis);
   return resolved;
 }
 
@@ -274,14 +318,10 @@ export function resolveProviderTokens({ Ion, ArcGisMapService, storage = getDefa
   const arcgisFromGlobal = isArcGisApiKey(ArcGisMapService?.defaultAccessToken)
     ? normalizeCesiumIonToken(ArcGisMapService.defaultAccessToken)
     : "";
-  const cartoFromMemory =
-    classifyMapAccessToken(inMemoryCartoApiKey).kind === "carto"
-      ? normalizeCesiumIonToken(inMemoryCartoApiKey)
-      : "";
   return {
-    ion: readSavedCesiumIonToken(storage) || ionFromGlobal,
-    carto: readSavedCartoApiKey(storage) || cartoFromMemory,
-    arcgis: readSavedArcGisApiKey(storage) || arcgisFromGlobal,
+    ion: effectiveTokenForKind("ion", storage, ionFromGlobal),
+    carto: effectiveTokenForKind("carto", storage),
+    arcgis: effectiveTokenForKind("arcgis", storage, arcgisFromGlobal),
   };
 }
 

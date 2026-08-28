@@ -37,6 +37,23 @@ function createStorage(seed = {}) {
   };
 }
 
+const STALE_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJzdGFsZSJ9.signature";
+const STALE_ARCGIS = "AAPTstalestalestalestalestale00000";
+const STALE_CARTO = "carto-dummy-stale-key-not-real";
+
+// Readable localStorage that refuses every write: quota, privacy mode, SecurityError.
+function createReadOnlyStorage(seed = {}) {
+  const values = new Map(Object.entries(seed));
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: () => {
+      throw new Error("QuotaExceededError");
+    },
+    removeItem: (key) => values.delete(key),
+    values,
+  };
+}
+
 afterEach(() => {
   clearInMemoryMapAccessTokens();
 });
@@ -332,4 +349,124 @@ test("getStartupMapTokens does not send a Carto input to Ion when storage is blo
   const Ion = { defaultAccessToken: "" };
   applySavedMapAccessTokens({ Ion, storage }, tokens);
   assert.equal(Ion.defaultAccessToken, "");
+});
+
+test("a failed setItem keeps the new ion JWT ahead of a stale saved JWT", () => {
+  const storage = createReadOnlyStorage({ [CESIUM_ION_TOKEN_STORAGE_KEY]: STALE_JWT });
+  const Ion = { defaultAccessToken: STALE_JWT };
+
+  assert.equal(applyMapAccessToken(SAMPLE_JWT, { Ion, storage }).kind, "ion");
+  assert.equal(storage.values.get(CESIUM_ION_TOKEN_STORAGE_KEY), STALE_JWT);
+
+  assert.equal(resolveProviderTokens({ Ion, storage }).ion, SAMPLE_JWT);
+  // The session slot wins over stale storage even without the Cesium globals.
+  assert.equal(resolveProviderTokens({ storage }).ion, SAMPLE_JWT);
+  assert.deepEqual(ionProviderOptions(resolveProviderTokens({ storage }).ion), {
+    accessToken: SAMPLE_JWT,
+  });
+
+  const target = { defaultAccessToken: STALE_JWT };
+  applySavedMapAccessTokens({ Ion: target, storage });
+  assert.equal(target.defaultAccessToken, SAMPLE_JWT);
+  assert.equal(getStartupMapTokens({ value: "" }, storage, "").ion, SAMPLE_JWT);
+});
+
+test("a failed setItem keeps the new Carto key ahead of a stale saved key", () => {
+  const storage = createReadOnlyStorage({ [CARTO_API_KEY_STORAGE_KEY]: STALE_CARTO });
+
+  assert.equal(applyMapAccessToken(SAMPLE_CARTO, { storage }).kind, "carto");
+  assert.equal(storage.values.get(CARTO_API_KEY_STORAGE_KEY), STALE_CARTO);
+
+  const resolved = resolveProviderTokens({ storage });
+  assert.equal(resolved.carto, SAMPLE_CARTO);
+  assert.equal(
+    cartoBasemapUrl(resolved.carto),
+    `https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=${SAMPLE_CARTO}`,
+  );
+  assert.equal(applySavedMapAccessTokens({ storage }).carto, SAMPLE_CARTO);
+  assert.equal(getStartupMapTokens({ value: "" }, storage, "").carto, SAMPLE_CARTO);
+});
+
+test("a failed setItem keeps the new ArcGIS key ahead of a stale saved key", () => {
+  const storage = createReadOnlyStorage({ [ARCGIS_API_KEY_STORAGE_KEY]: STALE_ARCGIS });
+  const ArcGisMapService = { defaultAccessToken: STALE_ARCGIS };
+
+  assert.equal(applyMapAccessToken(SAMPLE_ARCGIS, { ArcGisMapService, storage }).kind, "arcgis");
+  assert.equal(storage.values.get(ARCGIS_API_KEY_STORAGE_KEY), STALE_ARCGIS);
+
+  assert.equal(resolveProviderTokens({ storage }).arcgis, SAMPLE_ARCGIS);
+  assert.deepEqual(arcGisProviderOptions(resolveProviderTokens({ storage }).arcgis), {
+    token: SAMPLE_ARCGIS,
+  });
+
+  const target = { defaultAccessToken: STALE_ARCGIS };
+  applySavedMapAccessTokens({ ArcGisMapService: target, storage });
+  assert.equal(target.defaultAccessToken, SAMPLE_ARCGIS);
+  assert.equal(getStartupMapTokens({ value: "" }, storage, "").arcgis, SAMPLE_ARCGIS);
+});
+
+test("session tokens stay on their own provider slot when writes fail", () => {
+  const storage = createReadOnlyStorage({
+    [CESIUM_ION_TOKEN_STORAGE_KEY]: STALE_JWT,
+    [CARTO_API_KEY_STORAGE_KEY]: STALE_CARTO,
+    [ARCGIS_API_KEY_STORAGE_KEY]: STALE_ARCGIS,
+  });
+  const Ion = { defaultAccessToken: STALE_JWT };
+  const ArcGisMapService = { defaultAccessToken: "eval-token" };
+
+  applyMapAccessToken(SAMPLE_JWT, { Ion, ArcGisMapService, storage });
+  applyMapAccessToken(SAMPLE_CARTO, { Ion, ArcGisMapService, storage });
+  const lastApplied = applyMapAccessToken(SAMPLE_ARCGIS, { Ion, ArcGisMapService, storage });
+
+  assert.equal(Ion.defaultAccessToken, SAMPLE_JWT);
+  assert.equal(ArcGisMapService.defaultAccessToken, SAMPLE_ARCGIS);
+  assert.equal(shouldReloadWorldTerrain(lastApplied), false);
+  assert.deepEqual(resolveProviderTokens({ Ion, ArcGisMapService, storage }), {
+    ion: SAMPLE_JWT,
+    carto: SAMPLE_CARTO,
+    arcgis: SAMPLE_ARCGIS,
+  });
+
+  const input = { value: "" };
+  getStartupMapTokens(input, storage, "");
+  assert.equal(input.value, SAMPLE_ARCGIS);
+});
+
+test("a successful setItem leaves storage as the source of truth", () => {
+  const storage = createStorage();
+
+  assert.equal(applyMapAccessToken(SAMPLE_JWT, { storage }).token, SAMPLE_JWT);
+  assert.equal(storage.values.get(CESIUM_ION_TOKEN_STORAGE_KEY), SAMPLE_JWT);
+
+  // Another tab rewrites the saved keys; no session slot outranks them.
+  storage.values.set(CESIUM_ION_TOKEN_STORAGE_KEY, STALE_JWT);
+  storage.values.set(CARTO_API_KEY_STORAGE_KEY, STALE_CARTO);
+  assert.deepEqual(resolveProviderTokens({ storage }), {
+    ion: STALE_JWT,
+    carto: STALE_CARTO,
+    arcgis: "",
+  });
+});
+
+test("a later successful write hands authority back to storage", () => {
+  const values = new Map([[CESIUM_ION_TOKEN_STORAGE_KEY, STALE_JWT]]);
+  let writesAllowed = false;
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      if (!writesAllowed) throw new Error("QuotaExceededError");
+      values.set(key, String(value));
+    },
+    removeItem: (key) => values.delete(key),
+  };
+
+  applyMapAccessToken(SAMPLE_JWT, { storage });
+  assert.equal(resolveProviderTokens({ storage }).ion, SAMPLE_JWT);
+
+  writesAllowed = true;
+  applyMapAccessToken(SAMPLE_JWT, { storage });
+  assert.equal(values.get(CESIUM_ION_TOKEN_STORAGE_KEY), SAMPLE_JWT);
+
+  values.set(CESIUM_ION_TOKEN_STORAGE_KEY, STALE_JWT);
+  assert.equal(resolveProviderTokens({ storage }).ion, STALE_JWT);
 });
