@@ -1,6 +1,8 @@
 import {
   Viewer,
   Ion,
+  ArcGisMapService,
+  createWorldTerrainAsync,
   Cartographic,
   Cartesian3,
   Cartesian2,
@@ -60,7 +62,7 @@ import {
   createNetworkDataSource,
   updateNetworkDataSourceVisibility,
 } from "./networkPlacement.js";
-import { readSavedCesiumIonToken } from "./cesiumToken.js";
+import { getStartupCesiumIonToken, applyMapAccessToken } from "./cesiumToken.js";
 
 // -- State --
 let viewer;
@@ -124,6 +126,8 @@ const importedLayersListEl = document.getElementById("importedLayersList");
 const noImportedLayersMsg = document.getElementById("noImportedLayersMsg");
 const imagerySelect = document.getElementById("imagerySelect");
 const terrainSelect = document.getElementById("terrainSelect");
+const tokenInput = document.getElementById("tokenInput");
+const applyTokenBtn = document.getElementById("applyTokenBtn");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
 const searchInput = document.getElementById("searchInput");
@@ -139,8 +143,8 @@ function init() {
   initPanelToggles();
   initSectionCollapse();
 
-  const savedToken = readSavedCesiumIonToken();
-  if (savedToken) Ion.defaultAccessToken = savedToken;
+  const savedToken = getStartupCesiumIonToken(tokenInput);
+  applyMapAccessToken(savedToken, { Ion, ArcGisMapService });
 
   viewer = new Viewer("cesiumContainer", {
     baseLayerPicker: false,
@@ -173,6 +177,14 @@ function init() {
   });
   imagerySelect.addEventListener("change", () => switchImagery());
   terrainSelect.addEventListener("change", switchTerrain);
+  applyTokenBtn?.addEventListener("click", applyToken);
+  tokenInput?.addEventListener("change", applyToken);
+  tokenInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyToken();
+    }
+  });
   lodFilterToggle.addEventListener("change", handleLodFilterToggle);
   initSearch();
   onLanguageChange(() => invalidateAndRerender());
@@ -438,6 +450,18 @@ function clearUnassignedLayers(rerender = true) {
 }
 
 // -- Basemap --
+async function applyToken() {
+  const token = applyMapAccessToken(tokenInput?.value, { Ion, ArcGisMapService });
+  if (!token) return;
+  try {
+    terrainProviders.worldTerrainProvider = await createWorldTerrainAsync();
+  } catch (e) {
+    console.warn("Failed to load terrain with new token:", e);
+  }
+  await switchImagery();
+  switchTerrain();
+}
+
 async function switchImagery(choice = imagerySelect.value) {
   await switchImageryProvider(viewer, choice, { onAfterSwitch: applyUndergroundMode });
 }

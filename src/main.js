@@ -1,6 +1,7 @@
 import {
   Viewer,
   Ion,
+  ArcGisMapService,
   createWorldTerrainAsync,
   Cartographic,
   Cartesian2,
@@ -144,7 +145,7 @@ import { createAuthoredConnector } from "./networkAuthoring.js";
 import { downloadAuthoredConnectorsGeoJson } from "./networkExport.js";
 import {
   getStartupCesiumIonToken,
-  saveCesiumIonToken,
+  applyMapAccessToken,
 } from "./cesiumToken.js";
 
 // -- State --
@@ -282,7 +283,6 @@ const addDataBtn = document.getElementById("addDataBtn");
 const leftAddDataMenu = document.getElementById("leftAddDataMenu");
 const urlLoadPopover = document.getElementById("urlLoadPopover");
 const leftSettingsBtn = document.getElementById("leftSettingsBtn");
-const leftSettingsPopover = document.getElementById("leftSettingsPopover");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
 const levelListEl = document.getElementById("levelList");
@@ -361,7 +361,7 @@ function init() {
   initLanguageToggle();
 
   const savedToken = getStartupCesiumIonToken(tokenInput);
-  if (savedToken) Ion.defaultAccessToken = savedToken;
+  applyMapAccessToken(savedToken, { Ion, ArcGisMapService });
 
   viewer = new Viewer("cesiumContainer", {
     baseLayerPicker: false,
@@ -387,8 +387,14 @@ function init() {
   publishBtn?.addEventListener("click", handlePublishToServer);
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
   sessionInput.addEventListener("change", handleLoadSession);
-  applyTokenBtn.addEventListener("click", applyToken);
-  tokenInput.addEventListener("change", () => saveCesiumIonToken(tokenInput.value));
+  applyTokenBtn?.addEventListener("click", applyToken);
+  tokenInput?.addEventListener("change", applyToken);
+  tokenInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyToken();
+    }
+  });
   imagerySelect.addEventListener("change", switchImagery);
   terrainSelect.addEventListener("change", switchTerrain);
   loadUrlBtn.addEventListener("click", handleLoadUrl);
@@ -567,8 +573,7 @@ function initLeftPanelResizer() {
 }
 
 // Wires the left panel's action bar: + Add Data dropdown + settings gear.
-// Each Add Data menu item dispatches to an existing handler (file input
-// click or button click) — no new import logic is added here.
+// The gear reveals the Environment tab map-token field.
 function initLeftActionBar() {
   if (!addDataBtn || !leftAddDataMenu) return;
 
@@ -581,7 +586,6 @@ function initLeftActionBar() {
   const closeAllLeftPopovers = () => {
     leftAddDataMenu.style.display = "none";
     if (urlLoadPopover) urlLoadPopover.style.display = "none";
-    if (leftSettingsPopover) leftSettingsPopover.style.display = "none";
   };
 
   addDataBtn.addEventListener("click", (e) => {
@@ -630,18 +634,16 @@ function initLeftActionBar() {
     });
   });
 
-  if (leftSettingsBtn && leftSettingsPopover) {
+  if (leftSettingsBtn) {
     leftSettingsBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const open = leftSettingsPopover.style.display !== "none";
       closeAllLeftPopovers();
-      if (open) return;
-      // Right-align to the gear so the popover doesn't overflow the panel.
-      const rect = leftSettingsBtn.getBoundingClientRect();
-      leftSettingsPopover.style.top = `${rect.bottom + 4}px`;
-      // Defer to measure width.
-      leftSettingsPopover.style.display = "";
-      leftSettingsPopover.style.left = `${Math.max(8, rect.right - leftSettingsPopover.offsetWidth)}px`;
+      document.querySelectorAll("#leftPanelTabStrip .left-tab").forEach((tab) => tab.classList.remove("active"));
+      document.querySelectorAll(".left-tab-panel").forEach((panel) => panel.classList.remove("active"));
+      document.querySelector('#leftPanelTabStrip .left-tab[data-panel="tabEnvironment"]')?.classList.add("active");
+      document.getElementById("tabEnvironment")?.classList.add("active");
+      tokenInput?.focus();
+      tokenInput?.select();
     });
   }
 
@@ -650,7 +652,6 @@ function initLeftActionBar() {
     if (
       leftAddDataMenu.contains(e.target) ||
       (urlLoadPopover && urlLoadPopover.contains(e.target)) ||
-      (leftSettingsPopover && leftSettingsPopover.contains(e.target)) ||
       addDataBtn.contains(e.target) ||
       (leftSettingsBtn && leftSettingsBtn.contains(e.target))
     ) {
@@ -1026,15 +1027,14 @@ function hideLoadingOverlay() {
 
 // -- Token --
 async function applyToken() {
-  const token = saveCesiumIonToken(tokenInput.value);
+  const token = applyMapAccessToken(tokenInput?.value, { Ion, ArcGisMapService });
   if (!token) return;
-  Ion.defaultAccessToken = token;
   try {
     terrainProviders.worldTerrainProvider = await createWorldTerrainAsync();
   } catch (e) {
     console.warn("Failed to load terrain with new token:", e);
   }
-  switchImagery();
+  await switchImagery();
   switchTerrain();
 }
 

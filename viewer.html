@@ -95,6 +95,11 @@
           <span data-i18n="section.environment">Environment</span>
         </button>
         <div class="section-body">
+          <label class="field-label" for="tokenInput" data-i18n="basemap.tokenLabel">Cesium Ion Token</label>
+          <div class="input-row">
+            <input type="text" id="tokenInput" placeholder="Paste token here…" data-i18n-placeholder="basemap.tokenPlaceholder" autocomplete="off" spellcheck="false" />
+            <button id="applyTokenBtn" class="secondary-btn compact" type="button" data-i18n="basemap.applyToken">Apply</button>
+          </div>
           <label class="field-label" for="imagerySelect" data-i18n="basemap.imageryLabel">Imagery</label>
           <select id="imagerySelect">
             <option value="osm" data-i18n="imagery.osm">OpenStreetMap</option>

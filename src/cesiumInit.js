@@ -10,7 +10,14 @@ import {
   createWorldTerrainAsync,
   IonResource,
   Color,
+  Ion,
+  ArcGisMapService,
 } from "cesium";
+import {
+  arcGisProviderOptions,
+  ionProviderOptions,
+  resolveActiveMapToken,
+} from "./cesiumToken.js";
 
 const DEFAULT_PLATEAU_TERRAIN_TOKEN =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
@@ -46,8 +53,13 @@ export async function initializeTerrainProviders(savedToken) {
   return providers;
 }
 
+function activeMapToken() {
+  return resolveActiveMapToken({ Ion, ArcGisMapService });
+}
+
 export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
   viewer.imageryLayers.removeAll();
+  const mapToken = activeMapToken();
   const osmFallback = () =>
     viewer.imageryLayers.addImageryProvider(
       new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }),
@@ -59,7 +71,9 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
       break;
     case "ion-bing-aerial":
       try {
-        viewer.imageryLayers.addImageryProvider(await IonImageryProvider.fromAssetId(2));
+        viewer.imageryLayers.addImageryProvider(
+          await IonImageryProvider.fromAssetId(2, ionProviderOptions(mapToken)),
+        );
       } catch (e) {
         console.warn("Failed to load Bing Aerial imagery:", e);
         osmFallback();
@@ -67,7 +81,9 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
       break;
     case "ion-sentinel":
       try {
-        viewer.imageryLayers.addImageryProvider(await IonImageryProvider.fromAssetId(3954));
+        viewer.imageryLayers.addImageryProvider(
+          await IonImageryProvider.fromAssetId(3954, ionProviderOptions(mapToken)),
+        );
       } catch (e) {
         console.warn("Failed to load Sentinel-2 imagery:", e);
         osmFallback();
@@ -78,6 +94,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer",
+            arcGisProviderOptions(mapToken),
           ),
         );
       } catch (e) {
@@ -90,6 +107,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer",
+            arcGisProviderOptions(mapToken),
           ),
         );
       } catch (e) {
@@ -102,6 +120,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer",
+            arcGisProviderOptions(mapToken),
           ),
         );
       } catch (e) {
@@ -114,6 +133,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer",
+            arcGisProviderOptions(mapToken),
           ),
         );
       } catch (e) {
