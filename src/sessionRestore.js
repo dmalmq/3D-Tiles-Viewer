@@ -208,6 +208,14 @@ export async function restoreBuilding(bData, ctx) {
   ctx.buildings.push(building);
 }
 
+/** Attach an already-loaded tileset (URL or local files) as a building. */
+export async function restoreLoadedTileset(tileset, bData, ctx) {
+  const building = makeBuildingFromData(bData, tileset);
+  await wireTileset(tileset, building, bData, ctx, bData.sourceUrl ?? null);
+  ctx.buildings.push(building);
+  return building;
+}
+
 export async function restoreSiblingGroup(group, ctx) {
   const first = group[0];
   const { tileset, tilesetUrl, loadError } = await loadTilesetForBuildingData(first, ctx);

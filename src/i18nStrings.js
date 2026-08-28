@@ -527,6 +527,13 @@ const en = {
   "viewer.noSessionUrl": "No session URL for this venue.",
   "viewer.loadingVenue": "Loading {name}…",
   "viewer.zoomBuilding": "Zoom to building",
+  "viewer.dataset": "Dataset",
+  "viewer.dataset.sample": "Public sample",
+  "viewer.dataset.shared": "Loaded from URL",
+  "viewer.dataset.local": "This device…",
+  "viewer.dataset.chooseFolder": "Choose folder",
+  "viewer.dataset.localNote": "Local folders stay on this device. Nothing is uploaded.",
+  "viewer.loadingLocal": "Loading local tileset…",
 
   // Publish to server
   "publish.button": "Publish to server",
@@ -1064,6 +1071,13 @@ const ja = {
   "viewer.noSessionUrl": "この会場のセッションURLがありません。",
   "viewer.loadingVenue": "{name} を読み込み中…",
   "viewer.zoomBuilding": "建物にズーム",
+  "viewer.dataset": "データセット",
+  "viewer.dataset.sample": "公開サンプル",
+  "viewer.dataset.shared": "URL から読み込み",
+  "viewer.dataset.local": "この端末…",
+  "viewer.dataset.chooseFolder": "フォルダを選択",
+  "viewer.dataset.localNote": "端末上のフォルダはこの端末内だけです。アップロードしません。",
+  "viewer.loadingLocal": "ローカルのタイルセットを読み込み中…",
 
   "publish.button": "サーバーに公開",
   "publish.title": "公開済み — 共有リンク",

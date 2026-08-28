@@ -26,15 +26,22 @@ import {
   switchTerrain as switchTerrainProvider,
   applyUndergroundMode as applyUndergroundModeImpl,
 } from "./cesiumInit.js";
-import { restoreSession, clearSceneState } from "./sessionRestore.js";
+import { restoreSession, clearSceneState, restoreLoadedTileset } from "./sessionRestore.js";
 import { parseSessionJson } from "./session.js";
 import {
   parseVenueManifest,
   getDefaultVenueId,
   resolveVenueSessionUrl,
-  resolveVenueIdFromParams,
-  DEFAULT_MANIFEST_URL,
 } from "./venueManifest.js";
+import {
+  SAMPLE_SESSION_URL,
+  SAMPLE_BUILDING_NAME,
+  resolveViewerDatasetFromParams,
+  inferLocalTilesetName,
+} from "./viewerDataset.js";
+import { isFileSystemAccessSupported, getFilesFromDirectoryHandle } from "./fileSystemAccess.js";
+import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
+import { normalizeLevelRecords } from "./levelMetadata.js";
 import { renderSceneTree } from "./sceneTreeRenderer.js";
 import { LodFilter } from "./lodFilter.js";
 import {
@@ -43,7 +50,7 @@ import {
 } from "./plateauOverrides.js";
 import { resolveTilesetTopClipLocalZ } from "./levelClipping.js";
 import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
-import { removeCurrentTileset } from "./tilesetLoader.js";
+import { loadTilesetFromUrl, loadTilesetFromFiles, removeCurrentTileset } from "./tilesetLoader.js";
 import { zoomToBuilding as flyToBuilding, zoomToScene } from "./sceneZoom.js";
 import { resolveSessionAssetUrl } from "./session.js";
 import { loadTilesetGlbBuffer, computePerLinkLocalAabbs, unionAabbs } from "./glbBoundsExtractor.js";
@@ -74,6 +81,8 @@ let plateauOverridesEnabled = true;
 let manifest = null;
 let venues = [];
 let currentVenueId = null;
+let currentDatasetKind = "sample";
+let datasetSelectGuard = false;
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 const lodFilter = new LodFilter();
@@ -112,7 +121,10 @@ const LABEL_DISTANCE_DISPLAY_CONDITION = new DistanceDisplayCondition(0, 300);
 // -- DOM --
 const viewerLoadSessionBtn = document.getElementById("viewerLoadSessionBtn");
 const viewerSessionInput = document.getElementById("viewerSessionInput");
+const viewerTilesetFolderInput = document.getElementById("viewerTilesetFolderInput");
 const viewerSessionBanner = document.getElementById("viewerSessionBanner");
+const viewerDatasetSelect = document.getElementById("viewerDatasetSelect");
+const viewerOpenFolderBtn = document.getElementById("viewerOpenFolderBtn");
 const viewerVenueBar = document.getElementById("viewerVenueBar");
 const viewerVenueSelect = document.getElementById("viewerVenueSelect");
 const viewerBuildingSelectEl = document.getElementById("viewerBuildingSelect");
@@ -160,6 +172,9 @@ function init() {
 
   viewerLoadSessionBtn.addEventListener("click", () => viewerSessionInput.click());
   viewerSessionInput.addEventListener("change", handleLoadSessionFile);
+  viewerTilesetFolderInput.addEventListener("change", handleTilesetFolderInput);
+  viewerOpenFolderBtn.addEventListener("click", () => void openLocalTilesetFolder());
+  viewerDatasetSelect.addEventListener("change", () => void handleDatasetSelectChange());
   viewerVenueSelect.addEventListener("change", () => switchVenue(viewerVenueSelect.value));
   viewerBuildingSelectEl.addEventListener("change", () => {
     const val = parseInt(viewerBuildingSelectEl.value, 10);
@@ -229,39 +244,161 @@ function initSectionCollapse() {
 // -- Venue / session bootstrap --
 async function bootstrapFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const manifestUrl = params.get("manifest");
-  const sessionUrl = params.get("session");
-  const venueId = resolveVenueIdFromParams(params);
+  const plan = resolveViewerDatasetFromParams(params);
   try {
-    if (sessionUrl) {
+    if (plan.kind === "session") {
+      setDatasetKind("shared");
       viewerVenueBar.hidden = true;
-      await loadSessionFromUrl(sessionUrl);
+      await loadSessionFromUrl(plan.url);
       return;
     }
-    if (manifestUrl) {
-      await loadManifest(manifestUrl, venueId);
+    if (plan.kind === "manifest") {
+      setDatasetKind("shared");
+      await loadManifest(plan.url, plan.venueId);
       return;
     }
-    if (venueId) {
-      await loadManifest(DEFAULT_MANIFEST_URL, venueId);
+    if (plan.kind === "tileset") {
+      setDatasetKind("shared");
+      viewerVenueBar.hidden = true;
+      await loadTilesetUrlDataset(plan.url);
       return;
     }
-    await tryLoadDefaultManifest();
+    await loadSampleSession();
   } catch (err) {
     showBanner(t("viewer.loadFailed", { message: err.message }), true);
     notifyUser("error", "alert.failedSession", { message: err.message });
   }
 }
 
-async function tryLoadDefaultManifest() {
+function setDatasetKind(kind) {
+  currentDatasetKind = kind;
+  const hook = globalThis.window?.__CESIUM_E2E__;
+  if (hook) hook.datasetKind = kind;
+  const sharedOpt = viewerDatasetSelect.querySelector('option[value="shared"]');
+  if (sharedOpt) sharedOpt.hidden = kind !== "shared";
+  datasetSelectGuard = true;
+  viewerDatasetSelect.value = kind === "local" ? "local" : kind === "shared" ? "shared" : "sample";
+  datasetSelectGuard = false;
+}
+
+async function loadSampleSession() {
+  setDatasetKind("sample");
+  viewerVenueBar.hidden = true;
+  await loadSessionFromUrl(SAMPLE_SESSION_URL);
+}
+
+async function loadTilesetUrlDataset(url) {
+  const ctx = buildRestoreContext();
+  showBanner(t("viewer.loadingSession"));
+  showLoadingOverlay(t("viewer.loadingSession"), "");
   try {
-    const res = await fetch(DEFAULT_MANIFEST_URL);
-    if (res.status === 404) return;
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await loadManifest(DEFAULT_MANIFEST_URL);
+    await clearSceneState(ctx);
+    const tileset = await loadTilesetFromUrl(ctx.viewer, url, { zoom: false });
+    const stem = url.replace(/\/tileset\.json$/i, "").split("/").filter(Boolean).pop();
+    await restoreLoadedTileset(tileset, {
+      name: stem || SAMPLE_BUILDING_NAME,
+      sourceUrl: url,
+    }, ctx);
+    currentVenueId = null;
+    ctx.onComplete?.();
+    hideBanner();
   } catch (err) {
-    if (err.message?.includes("404")) return;
+    showBanner(t("viewer.loadFailed", { message: err.message }), true);
     throw err;
+  } finally {
+    hideLoadingOverlay();
+  }
+}
+
+async function handleDatasetSelectChange() {
+  if (datasetSelectGuard) return;
+  const value = viewerDatasetSelect.value;
+  const previous = currentDatasetKind;
+  if (value === "sample") {
+    try {
+      await loadSampleSession();
+    } catch (err) {
+      notifyUser("error", "alert.failedSession", { message: err.message });
+      setDatasetKind(previous);
+    }
+    return;
+  }
+  if (value === "local") {
+    const opened = await openLocalTilesetFolder();
+    if (!opened) setDatasetKind(previous);
+  }
+}
+
+async function openLocalTilesetFolder() {
+  if (isFileSystemAccessSupported() && !globalThis.window?.__CESIUM_E2E__) {
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: "read" });
+      const files = await getFilesFromDirectoryHandle(dirHandle);
+      await loadLocalTilesetFiles(files, dirHandle.name || inferLocalTilesetName(files));
+      return true;
+    } catch (e) {
+      if (e?.name === "AbortError") return false;
+      console.warn("showDirectoryPicker error:", e);
+    }
+  }
+  viewerTilesetFolderInput.click();
+  return true;
+}
+
+async function handleTilesetFolderInput(e) {
+  const files = snapshotAndClearFileInput(e.target);
+  if (!files.length) {
+    if (currentDatasetKind !== "local") setDatasetKind(currentDatasetKind);
+    return;
+  }
+  try {
+    await loadLocalTilesetFiles(files, inferLocalTilesetName(files));
+  } catch (err) {
+    notifyUser("error", "alert.failedSession", { message: err.message });
+    try { await loadSampleSession(); } catch { /* keep empty scene */ }
+  }
+}
+
+async function levelsFromFiles(files) {
+  const file = files.find((f) => f.name.toLowerCase() === "levels.json");
+  if (!file) return [];
+  try {
+    const data = JSON.parse(await file.text());
+    return normalizeLevelRecords(data?.levels ?? []).map((l) => ({
+      name: l.name,
+      key: l.key,
+      floor: l.floor,
+      localPlaneZ: l.maxZMeters ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function loadLocalTilesetFiles(files, name) {
+  const ctx = buildRestoreContext();
+  showLoadingOverlay(t("viewer.loadingLocal"), "");
+  try {
+    await clearSceneState(ctx);
+    const levels = await levelsFromFiles(files);
+    const tileset = await loadTilesetFromFiles(ctx.viewer, files, null);
+    await restoreLoadedTileset(tileset, {
+      name: name || inferLocalTilesetName(files),
+      sourceUrl: null,
+      levels,
+    }, ctx);
+    currentVenueId = null;
+    manifest = null;
+    venues = [];
+    setDatasetKind("local");
+    viewerVenueBar.hidden = true;
+    ctx.onComplete?.();
+    hideBanner();
+  } catch (err) {
+    showBanner(t("viewer.loadFailed", { message: err.message }), true);
+    throw err;
+  } finally {
+    hideLoadingOverlay();
   }
 }
 
@@ -323,6 +460,7 @@ async function handleLoadSessionFile(e) {
     showLoadingOverlay(t("loading.session.title"), "");
     await restoreSession(parseSessionJson(await file.text()), buildRestoreContext());
     currentVenueId = null;
+    setDatasetKind("shared");
     hideBanner();
   } catch (err) {
     notifyUser("error", "alert.failedSession", { message: err.message });

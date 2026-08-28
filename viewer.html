@@ -28,6 +28,7 @@
           <span data-i18n="header.load">Load</span>
         </button>
         <input type="file" id="viewerSessionInput" accept=".json" style="display:none" />
+        <input type="file" id="viewerTilesetFolderInput" webkitdirectory directory multiple style="display:none" />
         <div class="header-divider"></div>
         <button id="languageToggle" class="header-btn header-icon-btn" data-i18n-title="header.lang.title" data-i18n-aria-label="header.lang.aria" title="Switch language" aria-label="Switch language">
           <span id="languageToggleLabel">あ</span>
@@ -43,6 +44,17 @@
 
     <!-- ── Left panel ──────────────────────────────────────── -->
     <aside id="leftPanel">
+
+      <div id="viewerDatasetBar">
+        <label class="field-label" for="viewerDatasetSelect" data-i18n="viewer.dataset">Dataset</label>
+        <select id="viewerDatasetSelect">
+          <option value="sample" data-i18n="viewer.dataset.sample">Public sample</option>
+          <option value="shared" hidden data-i18n="viewer.dataset.shared">Loaded from URL</option>
+          <option value="local" data-i18n="viewer.dataset.local">This device…</option>
+        </select>
+        <button id="viewerOpenFolderBtn" class="secondary-btn compact" type="button" data-i18n="viewer.dataset.chooseFolder">Choose folder</button>
+        <p id="viewerDatasetNote" class="status-text" data-i18n="viewer.dataset.localNote">Local folders stay on this device. Nothing is uploaded.</p>
+      </div>
 
       <div id="viewerVenueBar">
         <label class="field-label" for="viewerVenueSelect" data-i18n="viewer.venue">Venue</label>

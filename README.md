@@ -68,6 +68,7 @@ Built for AEC and GIS teams working with 3D Tiles from Revit, PLATEAU CityGML, a
 - Session backup / restore with auto-snapshots and a visual diff between session states
 - Bilingual UI (English / Japanese) and dark / light themes
 - Playwright end-to-end tests alongside Node.js unit tests
+- Static public sample: a tiny synthetic indoor tileset that `viewer.html` can load without Express
 
 ---
 
@@ -111,6 +112,31 @@ npm start
 | `PUBLISH_TOKEN` | `""` | Optional bearer token to guard publish endpoints |
 | `VITE_PLATEAU_TERRAIN_TOKEN` | bundled | Override the public PLATEAU terrain token |
 | `VITE_DEV_ALLOW_CORS` | `true` | Set to `false` to disable permissive CORS on the dev server |
+
+---
+
+## Public sample (static, no Express)
+
+A tiny **synthetic indoor** 3D Tiles dataset ships in the repo. Geometry is generated in-repo (`scripts/generate-sample-tileset.js`): a few made-up rooms on two floors. It is not a real building, station, or workplace. License: CC0.
+
+| Resource | Path |
+|---|---|
+| Tileset | `/tiles/sample-indoor/tileset.json` |
+| Session | `/tiles/sample-indoor/session.json` |
+| Read-only viewer | `/viewer.html` |
+
+The portfolio embed (and anyone serving this app as static files) should point at **`/tiles/sample-indoor/tileset.json`** for the tileset, and open **`/viewer.html`** for the click-to-load demo. Express is not required.
+
+```bash
+npm run dev
+# then open http://localhost:5173/viewer.html
+```
+
+Or `npm run build` and serve `dist/` with any static file server (`vite preview`, nginx, GitHub Pages, …).
+
+`viewer.html` loads the public sample by default. Use the **Dataset** selector to switch back to the sample, or choose **This device…** / **Choose folder** to open a local 3D Tiles folder (File System Access, with a directory-picker fallback). Local files are read in the browser as blob URLs — nothing is uploaded, published, or copied to a CDN.
+
+Published venue links still work via query params, e.g. `/viewer.html?venue=<id>` or `/viewer.html?session=/sessions/<id>.json`.
 
 ---
 
