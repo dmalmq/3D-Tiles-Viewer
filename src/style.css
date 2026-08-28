@@ -3518,7 +3518,23 @@ html[data-theme="light"] .notification {
   gap: 6px;
 }
 
-/* ── Viewer venue bar / banner ──────────────────────────── */
+/* ── Viewer dataset / venue bar / banner ──────────────────────────── */
+#viewerDatasetBar {
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#viewerDatasetBar select {
+  width: 100%;
+  margin-top: 4px;
+}
+
+#viewerOpenFolderBtn {
+  width: 100%;
+  margin-top: 8px;
+}
+
 #viewerVenueBar {
   display: flex;
   align-items: center;
@@ -3526,6 +3542,10 @@ html[data-theme="light"] .notification {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 12px;
+}
+
+#viewerVenueBar[hidden] {
+  display: none;
 }
 
 #viewerVenueSelect {

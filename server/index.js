@@ -141,7 +141,7 @@ app.post("/api/publish", upload.any(), async (req, res) => {
     const origin = resolvePublishOrigin(req, metadata);
     const tilesets = Object.fromEntries(urlByKey);
     const links = {
-      viewer: `${origin}/viewer.html`,
+      viewer: `${origin}/viewer.html?manifest=/sessions/venues.json`,
       venues: manifest.venues.map((v) => ({
         id: v.id,
         name: v.name,

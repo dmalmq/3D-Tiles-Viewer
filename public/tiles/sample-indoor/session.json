@@ -1,0 +1,63 @@
+{
+  "version": 4,
+  "imagery": "osm",
+  "terrain": "ellipsoid",
+  "plateauOverridesEnabled": true,
+  "modelLevels": [
+    {
+      "floorNumber": 1,
+      "name": "1F",
+      "elevation": 40
+    },
+    {
+      "floorNumber": 2,
+      "name": "2F",
+      "elevation": 43.2
+    }
+  ],
+  "activeModelLevelIndex": -1,
+  "venues": [
+    {
+      "id": "sample-indoor",
+      "name": "Synthetic Indoor",
+      "description": "Public synthetic indoor sample. Made-up rooms and floors; not a real site."
+    }
+  ],
+  "buildings": [
+    {
+      "name": "Sample House",
+      "sourceType": "url",
+      "sourceUrl": "/tiles/sample-indoor/tileset.json",
+      "tilesetGroupId": 1,
+      "linkFilter": null,
+      "venueId": "sample-indoor",
+      "heightOffset": 0,
+      "levelBaseElevation": 40,
+      "aliases": [],
+      "packageBuildingId": null,
+      "packageContentHash": null,
+      "activeLevelIndex": -1,
+      "levels": [
+        {
+          "name": "1F",
+          "key": "1f",
+          "floor": 0,
+          "localPlaneZ": 3.2
+        },
+        {
+          "name": "2F",
+          "key": "2f",
+          "floor": 3.2,
+          "localPlaneZ": 6.4
+        }
+      ],
+      "sourceLevelGroups": [],
+      "shapefileLayers": [],
+      "networkDatasets": [],
+      "directoryHandleId": null,
+      "_directoryFolderName": null
+    }
+  ],
+  "importedLayers": [],
+  "unassignedLayers": []
+}

@@ -20,6 +20,7 @@ import {
   resolveSessionAssetUrl,
   shouldLoadTilesetFromUrl,
 } from "../src/session.js";
+import { withAppBase } from "../src/viewerDataset.js";
 
 const baseState = () => ({
   imagery: "carto-positron",
@@ -299,6 +300,37 @@ test("slugifyVenueId normalizes display names", () => {
 
 test("resolveSessionAssetUrl leaves absolute URLs unchanged", () => {
   assert.equal(resolveSessionAssetUrl("https://x.test/tileset.json"), "https://x.test/tileset.json");
+});
+
+test("resolveSessionAssetUrl puts leading-slash assets under the app base", () => {
+  assert.equal(
+    resolveSessionAssetUrl("/tiles/sample-indoor/tileset.json"),
+    withAppBase("/tiles/sample-indoor/tileset.json"),
+  );
+});
+
+test("resolveSessionAssetUrl is idempotent under a GH Pages subpath with location.href", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { href: "https://example.test/3D-Tiles-Viewer/viewer.html" },
+  });
+  try {
+    const sub = "/3D-Tiles-Viewer/";
+    const expected = "https://example.test/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json";
+    assert.equal(resolveSessionAssetUrl("/tiles/sample-indoor/tileset.json", sub), expected);
+    assert.equal(
+      resolveSessionAssetUrl("/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json", sub),
+      expected,
+    );
+    assert.equal(
+      resolveSessionAssetUrl("/sessions/east-hub.json", sub),
+      "https://example.test/sessions/east-hub.json",
+    );
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "location", descriptor);
+    else delete globalThis.location;
+  }
 });
 
 test("shouldLoadTilesetFromUrl accepts sourceUrl regardless of sourceType", () => {

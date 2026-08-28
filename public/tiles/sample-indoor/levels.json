@@ -1,0 +1,18 @@
+{
+  "levels": [
+    {
+      "name": "1F",
+      "key": "1f",
+      "floor": 0,
+      "minZMeters": 0,
+      "maxZMeters": 3.2
+    },
+    {
+      "name": "2F",
+      "key": "2f",
+      "floor": 3.2,
+      "minZMeters": 3.2,
+      "maxZMeters": 6.4
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "asset": {
+    "version": "1.1",
+    "tilesetVersion": "synthetic-indoor-1",
+    "extras": {
+      "attribution": "Synthetic indoor sample generated in-repo. Not a real building.",
+      "license": "CC0-1.0"
+    }
+  },
+  "geometricError": 80,
+  "root": {
+    "boundingVolume": {
+      "box": [
+        7,
+        -6,
+        3.200000047683716,
+        7,
+        0,
+        0,
+        0,
+        6,
+        0,
+        0,
+        0,
+        3.200000047683716
+      ]
+    },
+    "geometricError": 0,
+    "refine": "ADD",
+    "transform": [
+      -0.6467471830666691,
+      -0.762704452062087,
+      0,
+      0,
+      0.444652104576533,
+      -0.3770497147381654,
+      0.8124764725895317,
+      0,
+      -0.6196794228397361,
+      0.5254668699552234,
+      0.582993980662298,
+      0,
+      -3956929.176220393,
+      3355340.055241387,
+      3697755.431375929,
+      1
+    ],
+    "content": {
+      "uri": "content.glb"
+    }
+  }
+}

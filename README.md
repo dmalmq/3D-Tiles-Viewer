@@ -68,6 +68,7 @@ Built for AEC and GIS teams working with 3D Tiles from Revit, PLATEAU CityGML, a
 - Session backup / restore with auto-snapshots and a visual diff between session states
 - Bilingual UI (English / Japanese) and dark / light themes
 - Playwright end-to-end tests alongside Node.js unit tests
+- Static public sample: a tiny synthetic indoor tileset that `viewer.html` can load without Express
 
 ---
 
@@ -111,6 +112,44 @@ npm start
 | `PUBLISH_TOKEN` | `""` | Optional bearer token to guard publish endpoints |
 | `VITE_PLATEAU_TERRAIN_TOKEN` | bundled | Override the public PLATEAU terrain token |
 | `VITE_DEV_ALLOW_CORS` | `true` | Set to `false` to disable permissive CORS on the dev server |
+
+---
+
+## Public sample (static, no Express)
+
+A tiny **synthetic indoor** 3D Tiles dataset ships in the repo. Geometry is generated in-repo (`scripts/generate-sample-tileset.js`): a few made-up rooms on two floors. It is not a real building, station, or workplace. License: CC0.
+
+| Resource | Path (under Vite `base`, default `/`) |
+|---|---|
+| Tileset | `{base}tiles/sample-indoor/tileset.json` |
+| Session | `{base}tiles/sample-indoor/session.json` |
+| Read-only viewer | `{base}viewer.html` |
+
+With the default Vite base `/`, those are `/tiles/sample-indoor/tileset.json` and `/viewer.html`. If `dist/` is hosted under a subpath (GitHub project Pages), set `base` in `vite.config.js` (for example `base: "/3D-Tiles-Viewer/"`) so the same files resolve as `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` and `/3D-Tiles-Viewer/viewer.html`. Express is not required.
+
+Query-param paths that start with `/tiles/` are joined the same way (once). Express `/sessions`, `/tilesets`, `/packages`, and `/api` stay at the domain root.
+
+| | `base: "/"` | `base: "/3D-Tiles-Viewer/"` |
+|---|---|---|
+| Viewer | `/viewer.html` | `/3D-Tiles-Viewer/viewer.html` |
+| Sample tileset | `/tiles/sample-indoor/tileset.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` |
+| Sample session | `/tiles/sample-indoor/session.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/session.json` |
+| `?tileset=/tiles/sample-indoor/tileset.json` | `/tiles/sample-indoor/tileset.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` |
+| `?session=/tiles/sample-indoor/session.json` | `/tiles/sample-indoor/session.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/session.json` |
+| Already-based SAMPLE tileset URL | `/tiles/sample-indoor/tileset.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` (not doubled) |
+
+The portfolio embed should point at **`{base}tiles/sample-indoor/tileset.json`** for the tileset, and open **`{base}viewer.html`** for the click-to-load demo.
+
+```bash
+npm run dev
+# then open http://localhost:5173/viewer.html
+```
+
+Or `npm run build` and serve `dist/` with any static file server (`vite preview`, nginx, GitHub Pages, …).
+
+`viewer.html` loads the public sample by default. Use the **Dataset** selector to switch back to the sample, or choose **This device…** / **Choose folder** to open a local 3D Tiles folder (File System Access, with a directory-picker fallback). Local files are read in the browser as blob URLs — nothing is uploaded, published, or copied to a CDN.
+
+Published venue links still work via query params, e.g. `/viewer.html?venue=<id>` or `/viewer.html?session=/sessions/<id>.json`.
 
 ---
 
