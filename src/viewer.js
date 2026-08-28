@@ -54,6 +54,12 @@ import {
 import { resolveTilesetTopClipLocalZ } from "./levelClipping.js";
 import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
 import { loadTilesetFromUrl, loadTilesetFromFiles, removeCurrentTileset } from "./tilesetLoader.js";
+import {
+  buildTilesetPackZip,
+  createPackSource,
+  downloadPackZip,
+  formatByteSize,
+} from "./tilesetExport.js";
 import { zoomToBuilding as flyToBuilding, zoomToScene } from "./sceneZoom.js";
 import { resolveSessionAssetUrl } from "./session.js";
 import { loadTilesetGlbBuffer, computePerLinkLocalAabbs, unionAabbs } from "./glbBoundsExtractor.js";
@@ -86,6 +92,10 @@ let venues = [];
 let currentVenueId = null;
 let currentDatasetKind = "sample";
 let datasetSelectGuard = false;
+// Files of the last picked local folder, kept so "Export tileset" can repack
+// them offline. Cleared whenever the scene is torn down.
+let localTilesetFiles = null;
+let exportInFlight = false;
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 const lodFilter = new LodFilter();
@@ -128,6 +138,8 @@ const viewerTilesetFolderInput = document.getElementById("viewerTilesetFolderInp
 const viewerSessionBanner = document.getElementById("viewerSessionBanner");
 const viewerDatasetSelect = document.getElementById("viewerDatasetSelect");
 const viewerOpenFolderBtn = document.getElementById("viewerOpenFolderBtn");
+const viewerExportTilesetBtn = document.getElementById("viewerExportTilesetBtn");
+const viewerExportStatus = document.getElementById("viewerExportStatus");
 const viewerVenueBar = document.getElementById("viewerVenueBar");
 const viewerVenueSelect = document.getElementById("viewerVenueSelect");
 const viewerBuildingSelectEl = document.getElementById("viewerBuildingSelect");
@@ -178,6 +190,7 @@ function init() {
   viewerSessionInput.addEventListener("change", handleLoadSessionFile);
   viewerTilesetFolderInput.addEventListener("change", handleTilesetFolderInput);
   viewerOpenFolderBtn.addEventListener("click", () => void openLocalTilesetFolder());
+  viewerExportTilesetBtn.addEventListener("click", () => void handleExportTilesetPack());
   viewerDatasetSelect.addEventListener("change", () => void handleDatasetSelectChange());
   viewerVenueSelect.addEventListener("change", () => switchVenue(viewerVenueSelect.value));
   viewerBuildingSelectEl.addEventListener("change", () => {
@@ -440,6 +453,7 @@ async function loadLocalTilesetFiles(files, name) {
       sourceUrl: null,
       levels,
     }, ctx);
+    localTilesetFiles = files;
     currentVenueId = null;
     manifest = null;
     venues = [];
@@ -453,6 +467,75 @@ async function loadLocalTilesetFiles(files, name) {
     throw err;
   } finally {
     hideLoadingOverlay();
+  }
+}
+
+// -- Offline tileset pack export --
+
+/**
+ * What "Export tileset" would pack right now. A picked local folder wins over a
+ * URL-loaded tileset because those files are already on this device.
+ */
+function currentExportTarget() {
+  if (localTilesetFiles?.length) return { files: localTilesetFiles };
+  const building = buildings.find((b) => b.tileset && b._tilesetUrl);
+  return building ? { tilesetUrl: building._tilesetUrl } : null;
+}
+
+function updateExportControl() {
+  if (!viewerExportTilesetBtn) return;
+  viewerExportTilesetBtn.disabled = exportInFlight || currentExportTarget() === null;
+}
+
+function setExportStatus(message) {
+  if (!viewerExportStatus) return;
+  viewerExportStatus.textContent = message ?? "";
+  viewerExportStatus.hidden = !message;
+}
+
+async function handleExportTilesetPack() {
+  if (exportInFlight) return;
+  const target = currentExportTarget();
+  if (!target) {
+    notifyUser("warn", "viewer.export.none");
+    updateExportControl();
+    return;
+  }
+
+  exportInFlight = true;
+  updateExportControl();
+  setExportStatus(t("viewer.export.working"));
+  try {
+    const pack = await buildTilesetPackZip(createPackSource(target));
+    downloadPackZip(pack.zipBytes, pack.fileName);
+
+    const params = {
+      file: pack.fileName,
+      count: pack.fileCount,
+      size: formatByteSize(pack.zipBytes.length),
+      skipped: pack.skippedCount,
+    };
+    const key = pack.skippedCount > 0 ? "viewer.export.partial" : "viewer.export.done";
+    setExportStatus(t(key, params));
+    notifyUser(pack.skippedCount > 0 ? "warn" : "info", key, params);
+    if (pack.warnings.length) console.warn("Tileset pack warnings:", pack.warnings);
+
+    const hook = globalThis.window?.__CESIUM_E2E__;
+    if (hook) {
+      hook.lastTilesetExport = {
+        fileName: pack.fileName,
+        fileCount: pack.fileCount,
+        byteLength: pack.zipBytes.length,
+        paths: pack.entries.map((e) => e.path),
+        warnings: pack.warnings,
+      };
+    }
+  } catch (err) {
+    setExportStatus(t("viewer.export.failed", { message: err.message }));
+    notifyUser("error", "viewer.export.failed", { message: err.message });
+  } finally {
+    exportInFlight = false;
+    updateExportControl();
   }
 }
 
@@ -588,9 +671,13 @@ function buildRestoreContext() {
       refreshPlateauStyles();
       showMissingTilesetWarnings();
       zoomToScene(viewer, buildings);
+      updateExportControl();
       invalidateAndRerender();
     },
-    onCleared: () => invalidateAndRerender(),
+    onCleared: () => {
+      updateExportControl();
+      invalidateAndRerender();
+    },
   };
 }
 
@@ -606,6 +693,8 @@ async function clearBuildings() {
     }
   }
   buildings.length = 0;
+  localTilesetFiles = null;
+  setExportStatus("");
   selectedBuildingIndex = -1;
   activeModelLevelIndex = -1;
   rebuildModelLevels();

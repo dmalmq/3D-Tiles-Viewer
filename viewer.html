@@ -53,7 +53,11 @@
           <option value="local" data-i18n="viewer.dataset.local">This device…</option>
         </select>
         <button id="viewerOpenFolderBtn" class="secondary-btn compact" type="button" data-i18n="viewer.dataset.chooseFolder">Choose folder</button>
+        <button id="viewerExportTilesetBtn" class="secondary-btn compact" type="button" disabled
+                data-i18n="viewer.export.button" data-i18n-title="viewer.export.title"
+                title="Download the loaded tileset as a self-contained offline pack (.zip)">Export tileset</button>
         <p id="viewerDatasetNote" class="status-text" data-i18n="viewer.dataset.localNote">Local folders stay on this device. Nothing is uploaded.</p>
+        <p id="viewerExportStatus" class="status-text" hidden></p>
       </div>
 
       <div id="viewerVenueBar" hidden>

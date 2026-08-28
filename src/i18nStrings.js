@@ -535,6 +535,15 @@ const en = {
   "viewer.dataset.localNote": "Local folders stay on this device. Nothing is uploaded.",
   "viewer.loadingLocal": "Loading local tileset…",
 
+  // Offline tileset pack export
+  "viewer.export.button": "Export tileset",
+  "viewer.export.title": "Download the loaded tileset as a self-contained offline pack (.zip)",
+  "viewer.export.working": "Packing tileset for offline use…",
+  "viewer.export.done": "Saved {file} — {count} files, {size}.",
+  "viewer.export.partial": "Saved {file} — {count} files, {size}. {skipped} reference(s) could not be bundled.",
+  "viewer.export.none": "No tileset loaded to export.",
+  "viewer.export.failed": "Tileset export failed: {message}",
+
   // Publish to server
   "publish.button": "Publish to server",
   "publish.title": "Published — share these links",
@@ -1078,6 +1087,14 @@ const ja = {
   "viewer.dataset.chooseFolder": "フォルダを選択",
   "viewer.dataset.localNote": "端末上のフォルダはこの端末内だけです。アップロードしません。",
   "viewer.loadingLocal": "ローカルのタイルセットを読み込み中…",
+
+  "viewer.export.button": "タイルセットを書き出し",
+  "viewer.export.title": "読み込み済みタイルセットをオフライン用パック (.zip) としてダウンロード",
+  "viewer.export.working": "オフライン用にタイルセットをパック中…",
+  "viewer.export.done": "{file} を保存しました — {count} ファイル、{size}。",
+  "viewer.export.partial": "{file} を保存しました — {count} ファイル、{size}。{skipped} 件の参照はパックできませんでした。",
+  "viewer.export.none": "書き出せるタイルセットが読み込まれていません。",
+  "viewer.export.failed": "タイルセットの書き出しに失敗しました: {message}",
 
   "publish.button": "サーバーに公開",
   "publish.title": "公開済み — 共有リンク",

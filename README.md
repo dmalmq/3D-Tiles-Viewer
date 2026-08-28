@@ -151,6 +151,21 @@ Or `npm run build` and serve `dist/` with any static file server (`vite preview`
 
 Published venue links still work via query params, e.g. `/viewer.html?venue=<id>` or `/viewer.html?session=/sessions/<id>.json`.
 
+### Export an offline tileset pack
+
+Next to the **Dataset** selector, **Export tileset** downloads whatever tileset is currently loaded as a self-contained `.zip` (`<name>-offline-<date>.zip`). The pack is built in the browser and never uploaded.
+
+The builder walks the live graph the way a local-folder picker does — `tileset.json` → children → external tilesets → implicit `.subtree` files and the content they mark available → glTF/GLB buffers and images — and writes every file at a path relative to the pack root:
+
+```
+tileset.json
+levels.json           (when present next to tileset.json)
+content/…             (b3dm / i3dm / cmpt / glb / gltf and their buffers + images)
+subtrees/…            (implicit tiling subtree files and external availability buffers)
+```
+
+Unzip it anywhere and re-open the folder with **This device… → Choose folder**. Only relative, same-origin files at or below the `tileset.json` directory are bundled: URIs that were already absolute (`https://…`) are left untouched in the JSON and reported as skipped references in the status line, and nothing outside the tileset folder is fetched.
+
 ---
 
 ## Tests
