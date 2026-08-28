@@ -226,7 +226,8 @@ html[data-theme="light"] #importModal button {
 
   #headerSearch,
   #backupsBtn,
-  #exportViewerBtn {
+  #exportViewerBtn,
+  #exportWebsiteBtn {
     display: none;
   }
 

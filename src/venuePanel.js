@@ -12,6 +12,7 @@ export function renderVenuesPanel({
   onToggleBuildingAssignment,
   onSetVenueFilter,
   onExportViewer,
+  onExportWebsite,
 }) {
   if (!container) return;
   container.innerHTML = "";
@@ -29,7 +30,13 @@ export function renderVenuesPanel({
   exportBtn.textContent = t("venue.exportPackage");
   exportBtn.disabled = venues.length === 0;
   exportBtn.addEventListener("click", onExportViewer);
-  toolbar.append(addBtn, exportBtn);
+  const websiteBtn = document.createElement("button");
+  websiteBtn.type = "button";
+  websiteBtn.className = "secondary-btn";
+  websiteBtn.textContent = t("venue.exportWebsite");
+  websiteBtn.disabled = venues.length === 0;
+  websiteBtn.addEventListener("click", onExportWebsite);
+  toolbar.append(addBtn, exportBtn, websiteBtn);
   container.appendChild(toolbar);
 
   if (venues.length === 0) {
