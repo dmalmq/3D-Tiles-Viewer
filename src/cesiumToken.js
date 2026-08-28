@@ -203,6 +203,12 @@ export function getStartupMapTokens(input, storage = getDefaultStorage(), envTok
   return tokens;
 }
 
+let inMemoryCartoApiKey = "";
+
+export function clearInMemoryMapAccessTokens() {
+  inMemoryCartoApiKey = "";
+}
+
 /**
  * Persist the paste into the matching provider slot only.
  * JWTs go to Cesium ion, AAPK/AAPT keys to ArcGIS, everything else to Carto.
@@ -216,6 +222,7 @@ export function applyMapAccessToken(token, { Ion, ArcGisMapService, storage = ge
 
   if (kind === "ion" && Ion) Ion.defaultAccessToken = normalized;
   if (kind === "arcgis" && ArcGisMapService) ArcGisMapService.defaultAccessToken = normalized;
+  if (kind === "carto") inMemoryCartoApiKey = normalized;
 
   return { kind, token: normalized };
 }
@@ -231,6 +238,7 @@ export function applySavedMapAccessTokens(
   };
   if (resolved.ion && Ion) Ion.defaultAccessToken = resolved.ion;
   if (resolved.arcgis && ArcGisMapService) ArcGisMapService.defaultAccessToken = resolved.arcgis;
+  if (resolved.carto) inMemoryCartoApiKey = resolved.carto;
   return resolved;
 }
 
@@ -256,9 +264,13 @@ export function resolveProviderTokens({ Ion, ArcGisMapService, storage = getDefa
   const arcgisFromGlobal = isArcGisApiKey(ArcGisMapService?.defaultAccessToken)
     ? normalizeCesiumIonToken(ArcGisMapService.defaultAccessToken)
     : "";
+  const cartoFromMemory =
+    classifyMapAccessToken(inMemoryCartoApiKey).kind === "carto"
+      ? normalizeCesiumIonToken(inMemoryCartoApiKey)
+      : "";
   return {
     ion: readSavedCesiumIonToken(storage) || ionFromGlobal,
-    carto: readSavedCartoApiKey(storage),
+    carto: readSavedCartoApiKey(storage) || cartoFromMemory,
     arcgis: readSavedArcGisApiKey(storage) || arcgisFromGlobal,
   };
 }

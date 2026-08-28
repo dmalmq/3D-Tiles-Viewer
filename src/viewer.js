@@ -28,6 +28,7 @@ import {
   switchTerrain as switchTerrainProvider,
   applyUndergroundMode as applyUndergroundModeImpl,
 } from "./cesiumInit.js";
+import { mergeTerrainProviders } from "./terrainProviders.js";
 import { restoreSession, clearSceneState } from "./sessionRestore.js";
 import { parseSessionJson } from "./session.js";
 import {
@@ -157,8 +158,8 @@ function init() {
   });
 
   switchImagery();
-  initializeTerrainProviders(savedTokens.ion).then((providers) => {
-    terrainProviders = providers;
+  initializeTerrainProviders(savedTokens.ion, terrainProviders).then((providers) => {
+    mergeTerrainProviders(terrainProviders, providers);
     switchTerrain();
   });
 

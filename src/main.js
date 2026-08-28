@@ -120,6 +120,7 @@ import {
   switchTerrain as switchTerrainImpl,
   applyUndergroundMode as applyUndergroundModeImpl,
 } from "./cesiumInit.js";
+import { mergeTerrainProviders } from "./terrainProviders.js";
 import { restoreSession as restoreSessionImpl } from "./sessionRestore.js";
 import { exportViewerPackage } from "./venueExport.js";
 import { publishToServer } from "./venuePublish.js";
@@ -529,7 +530,8 @@ function initLeftPanelTabs() {
 }
 
 async function initializeTerrainProviders(savedToken) {
-  terrainProviders = await initTerrainProviders(savedToken);
+  const incoming = await initTerrainProviders(savedToken, terrainProviders);
+  mergeTerrainProviders(terrainProviders, incoming);
   switchTerrain();
 }
 

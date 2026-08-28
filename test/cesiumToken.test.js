@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -19,6 +19,7 @@ import {
   resolveProviderTokens,
   saveCesiumIonToken,
   shouldReloadWorldTerrain,
+  clearInMemoryMapAccessTokens,
 } from "../src/cesiumToken.js";
 
 const SAMPLE_JWT =
@@ -35,6 +36,10 @@ function createStorage(seed = {}) {
     values,
   };
 }
+
+afterEach(() => {
+  clearInMemoryMapAccessTokens();
+});
 
 test("getStartupCesiumIonToken fills the input from a saved ion JWT", () => {
   const storage = createStorage({ [CESIUM_ION_TOKEN_STORAGE_KEY]: ` ${SAMPLE_JWT} ` });
@@ -241,4 +246,28 @@ test("applySavedMapAccessTokens restores ion and ArcGIS without writing Carto to
   applySavedMapAccessTokens({ Ion, ArcGisMapService, storage });
   assert.equal(Ion.defaultAccessToken, SAMPLE_JWT);
   assert.equal(ArcGisMapService.defaultAccessToken, SAMPLE_ARCGIS);
+});
+
+test("resolveProviderTokens falls back to an in-memory Carto key when storage is blocked", () => {
+  const storage = {
+    getItem: () => {
+      throw new Error("blocked");
+    },
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  };
+
+  const applied = applyMapAccessToken(SAMPLE_CARTO, { storage });
+  assert.equal(applied.kind, "carto");
+  assert.equal(applied.token, SAMPLE_CARTO);
+
+  const resolved = resolveProviderTokens({ storage });
+  assert.equal(resolved.carto, SAMPLE_CARTO);
+  assert.equal(
+    cartoBasemapUrl(resolved.carto),
+    `https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=${SAMPLE_CARTO}`,
+  );
+  assert.equal(resolved.ion, "");
+  assert.equal(resolved.arcgis, "");
 });

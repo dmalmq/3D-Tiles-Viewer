@@ -20,6 +20,7 @@ import {
   isJwtAccessToken,
   resolveProviderTokens,
 } from "./cesiumToken.js";
+import { mergeTerrainProviders } from "./terrainProviders.js";
 
 const DEFAULT_PLATEAU_TERRAIN_TOKEN =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
@@ -29,27 +30,30 @@ export const PLATEAU_TERRAIN_TOKEN =
 
 export const UNDERGROUND_BASE_COLOR = Color.fromCssColorString("#1a1a1a");
 
-export async function initializeTerrainProviders(savedToken) {
-  const providers = {
+export async function initializeTerrainProviders(savedToken, existingProviders) {
+  const providers = existingProviders ?? {
     worldTerrainProvider: null,
     plateauTerrainProvider: null,
   };
-
-  if (isJwtAccessToken(savedToken)) {
-    try {
-      providers.worldTerrainProvider = await createWorldTerrainAsync();
-    } catch (e) {
-      console.warn("Failed to load Cesium World Terrain:", e);
-    }
-  }
 
   try {
     const plateauResource = await IonResource.fromAssetId(3258112, {
       accessToken: PLATEAU_TERRAIN_TOKEN,
     });
-    providers.plateauTerrainProvider = await CesiumTerrainProvider.fromUrl(plateauResource);
+    const plateau = await CesiumTerrainProvider.fromUrl(plateauResource);
+    mergeTerrainProviders(providers, { plateauTerrainProvider: plateau, worldTerrainProvider: null });
   } catch (e) {
     console.warn("Failed to load PLATEAU terrain:", e);
+  }
+
+  const ionNow = resolveProviderTokens({ Ion, ArcGisMapService }).ion || savedToken;
+  if (isJwtAccessToken(ionNow) && !providers.worldTerrainProvider) {
+    try {
+      const world = await createWorldTerrainAsync();
+      mergeTerrainProviders(providers, { worldTerrainProvider: world, plateauTerrainProvider: null });
+    } catch (e) {
+      console.warn("Failed to load Cesium World Terrain:", e);
+    }
   }
 
   return providers;
