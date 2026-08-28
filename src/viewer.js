@@ -159,6 +159,7 @@ function init() {
     geocoder: false,
     animation: false,
     timeline: false,
+    navigationHelpButton: false,
     // Skip the default Ion base layer (needs a token); switchImagery() below
     // applies whatever the imagery select shows.
     baseLayer: false,
