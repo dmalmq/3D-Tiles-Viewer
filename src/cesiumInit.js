@@ -17,7 +17,8 @@ import {
   arcGisProviderOptions,
   cartoBasemapUrl,
   ionProviderOptions,
-  resolveActiveMapToken,
+  isJwtAccessToken,
+  resolveProviderTokens,
 } from "./cesiumToken.js";
 
 const DEFAULT_PLATEAU_TERRAIN_TOKEN =
@@ -34,7 +35,7 @@ export async function initializeTerrainProviders(savedToken) {
     plateauTerrainProvider: null,
   };
 
-  if (savedToken) {
+  if (isJwtAccessToken(savedToken)) {
     try {
       providers.worldTerrainProvider = await createWorldTerrainAsync();
     } catch (e) {
@@ -54,13 +55,13 @@ export async function initializeTerrainProviders(savedToken) {
   return providers;
 }
 
-function activeMapToken() {
-  return resolveActiveMapToken({ Ion, ArcGisMapService });
+function providerTokens() {
+  return resolveProviderTokens({ Ion, ArcGisMapService });
 }
 
 export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
   viewer.imageryLayers.removeAll();
-  const mapToken = activeMapToken();
+  const tokens = providerTokens();
   const osmFallback = () =>
     viewer.imageryLayers.addImageryProvider(
       new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }),
@@ -73,7 +74,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
     case "ion-bing-aerial":
       try {
         viewer.imageryLayers.addImageryProvider(
-          await IonImageryProvider.fromAssetId(2, ionProviderOptions(mapToken)),
+          await IonImageryProvider.fromAssetId(2, ionProviderOptions(tokens.ion)),
         );
       } catch (e) {
         console.warn("Failed to load Bing Aerial imagery:", e);
@@ -83,7 +84,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
     case "ion-sentinel":
       try {
         viewer.imageryLayers.addImageryProvider(
-          await IonImageryProvider.fromAssetId(3954, ionProviderOptions(mapToken)),
+          await IonImageryProvider.fromAssetId(3954, ionProviderOptions(tokens.ion)),
         );
       } catch (e) {
         console.warn("Failed to load Sentinel-2 imagery:", e);
@@ -95,7 +96,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer",
-            arcGisProviderOptions(mapToken),
+            arcGisProviderOptions(tokens.arcgis),
           ),
         );
       } catch (e) {
@@ -108,7 +109,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer",
-            arcGisProviderOptions(mapToken),
+            arcGisProviderOptions(tokens.arcgis),
           ),
         );
       } catch (e) {
@@ -121,7 +122,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer",
-            arcGisProviderOptions(mapToken),
+            arcGisProviderOptions(tokens.arcgis),
           ),
         );
       } catch (e) {
@@ -134,7 +135,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
         viewer.imageryLayers.addImageryProvider(
           await ArcGisMapServerImageryProvider.fromUrl(
             "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer",
-            arcGisProviderOptions(mapToken),
+            arcGisProviderOptions(tokens.arcgis),
           ),
         );
       } catch (e) {
@@ -145,7 +146,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
     case "carto-positron":
       viewer.imageryLayers.addImageryProvider(
         new UrlTemplateImageryProvider({
-          url: cartoBasemapUrl(mapToken),
+          url: cartoBasemapUrl(tokens.carto),
           subdomains: ["a", "b", "c", "d"],
           maximumLevel: 19,
           credit: "© OpenStreetMap contributors © CARTO",

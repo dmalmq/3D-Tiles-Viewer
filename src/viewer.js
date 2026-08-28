@@ -62,7 +62,7 @@ import {
   createNetworkDataSource,
   updateNetworkDataSourceVisibility,
 } from "./networkPlacement.js";
-import { getStartupCesiumIonToken, applyMapAccessToken } from "./cesiumToken.js";
+import { getStartupMapTokens, applyMapAccessToken, applySavedMapAccessTokens, shouldReloadWorldTerrain } from "./cesiumToken.js";
 
 // -- State --
 let viewer;
@@ -143,8 +143,8 @@ function init() {
   initPanelToggles();
   initSectionCollapse();
 
-  const savedToken = getStartupCesiumIonToken(tokenInput);
-  applyMapAccessToken(savedToken, { Ion, ArcGisMapService });
+  const savedTokens = getStartupMapTokens(tokenInput);
+  applySavedMapAccessTokens({ Ion, ArcGisMapService }, savedTokens);
 
   viewer = new Viewer("cesiumContainer", {
     baseLayerPicker: false,
@@ -157,7 +157,7 @@ function init() {
   });
 
   switchImagery();
-  initializeTerrainProviders(savedToken).then((providers) => {
+  initializeTerrainProviders(savedTokens.ion).then((providers) => {
     terrainProviders = providers;
     switchTerrain();
   });
@@ -451,12 +451,14 @@ function clearUnassignedLayers(rerender = true) {
 
 // -- Basemap --
 async function applyToken() {
-  const token = applyMapAccessToken(tokenInput?.value, { Ion, ArcGisMapService });
-  if (!token) return;
-  try {
-    terrainProviders.worldTerrainProvider = await createWorldTerrainAsync();
-  } catch (e) {
-    console.warn("Failed to load terrain with new token:", e);
+  const applied = applyMapAccessToken(tokenInput?.value, { Ion, ArcGisMapService });
+  if (!applied.token) return;
+  if (shouldReloadWorldTerrain(applied)) {
+    try {
+      terrainProviders.worldTerrainProvider = await createWorldTerrainAsync();
+    } catch (e) {
+      console.warn("Failed to load terrain with new token:", e);
+    }
   }
   await switchImagery();
   switchTerrain();
