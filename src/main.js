@@ -4991,11 +4991,8 @@ async function handleExportWebsiteBundle() {
       notifyUser("info", "venue.exportEmpty");
       return;
     }
-    const zip = createZip(result.files);
-    downloadBlob(
-      new Blob([zip], { type: "application/zip" }),
-      `${slugifyVenueId(result.venue.id ?? result.venue.name)}-web.zip`,
-    );
+    const zip = await createZip(result.files);
+    downloadBlob(zip, `${slugifyVenueId(result.venue.id ?? result.venue.name)}-web.zip`);
     notifyUser("info", "venue.exportWebsiteDone", {
       name: result.venue.name,
       count: result.files.length,
@@ -5010,7 +5007,7 @@ async function handleExportWebsiteBundle() {
       });
     }
   } catch (err) {
-    notifyUser("error", "venue.exportWebsitePartial", { detail: err.message });
+    notifyUser("error", "venue.exportWebsiteFailed", { detail: err.message });
   } finally {
     hideLoadingOverlay();
     if (exportWebsiteBtn) exportWebsiteBtn.disabled = false;
