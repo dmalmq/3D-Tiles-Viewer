@@ -27,6 +27,13 @@ const SAMPLE_JWT =
 const SAMPLE_ARCGIS = "AAPKabcdefghijklmnopqrstuvwxyz012345";
 const SAMPLE_CARTO = "carto-dummy-key-not-real";
 
+// Cesium 1.140 ships these as library demo credentials: Ion.defaultAccessToken is
+// a JWT and ArcGisMapService.defaultAccessToken is an AAPT eval key. Neither was
+// pasted by the user, so neither may be classified as a saved key.
+const CESIUM_DEMO_ION_JWT =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjZXNpdW0tZGVtbyJ9.library-default";
+const CESIUM_DEMO_ARCGIS_AAPT = "AAPTdemoevalkeyshippedwithcesium00";
+
 function createStorage(seed = {}) {
   const values = new Map(Object.entries(seed));
   return {
@@ -235,14 +242,54 @@ test("resolveProviderTokens keeps ion, Carto, and ArcGIS keys on separate slots"
     [CARTO_API_KEY_STORAGE_KEY]: SAMPLE_CARTO,
     [ARCGIS_API_KEY_STORAGE_KEY]: SAMPLE_ARCGIS,
   });
-  const Ion = { defaultAccessToken: "other" };
-  const ArcGisMapService = { defaultAccessToken: "eval-token" };
 
-  assert.deepEqual(resolveProviderTokens({ Ion, ArcGisMapService, storage }), {
+  assert.deepEqual(resolveProviderTokens({ storage }), {
     ion: SAMPLE_JWT,
     carto: SAMPLE_CARTO,
     arcgis: SAMPLE_ARCGIS,
   });
+});
+
+test("empty storage ignores the Cesium demo Ion JWT and ArcGIS eval key", () => {
+  const storage = createStorage();
+  const Ion = { defaultAccessToken: CESIUM_DEMO_ION_JWT };
+  const ArcGisMapService = { defaultAccessToken: CESIUM_DEMO_ARCGIS_AAPT };
+
+  const resolved = resolveProviderTokens({ Ion, ArcGisMapService, storage });
+  assert.deepEqual(resolved, { ion: "", carto: "", arcgis: "" });
+
+  // No demo JWT means initializeTerrainProviders never calls createWorldTerrainAsync,
+  // and no demo AAPT reaches ArcGisMapServerImageryProvider.fromUrl.
+  assert.equal(isJwtAccessToken(resolved.ion), false);
+  assert.deepEqual(ionProviderOptions(resolved.ion), {});
+  assert.deepEqual(arcGisProviderOptions(resolved.arcgis), {});
+});
+
+test("applySavedMapAccessTokens does not adopt Cesium demo defaults into session memory", () => {
+  const storage = createStorage();
+  const Ion = { defaultAccessToken: CESIUM_DEMO_ION_JWT };
+  const ArcGisMapService = { defaultAccessToken: CESIUM_DEMO_ARCGIS_AAPT };
+
+  const resolved = applySavedMapAccessTokens({ Ion, ArcGisMapService, storage });
+  assert.deepEqual(resolved, { ion: "", carto: "", arcgis: "" });
+
+  // The library defaults stay untouched, but they never become saved user keys.
+  assert.equal(Ion.defaultAccessToken, CESIUM_DEMO_ION_JWT);
+  assert.equal(ArcGisMapService.defaultAccessToken, CESIUM_DEMO_ARCGIS_AAPT);
+  assert.equal(storage.values.size, 0);
+  assert.deepEqual(resolveProviderTokens({ storage }), { ion: "", carto: "", arcgis: "" });
+});
+
+test("a Cesium demo AAPT default never survives a real ArcGIS paste being cleared", () => {
+  const storage = createStorage();
+  const ArcGisMapService = { defaultAccessToken: CESIUM_DEMO_ARCGIS_AAPT };
+
+  applyMapAccessToken(SAMPLE_ARCGIS, { ArcGisMapService, storage });
+  assert.equal(resolveProviderTokens({ storage }).arcgis, SAMPLE_ARCGIS);
+
+  storage.values.clear();
+  clearInMemoryMapAccessTokens();
+  assert.equal(resolveProviderTokens({ ArcGisMapService, storage }).arcgis, "");
 });
 
 test("legacy non-JWT cesiumIonToken migrates to Carto without remaining an ion token", () => {

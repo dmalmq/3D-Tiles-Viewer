@@ -207,10 +207,10 @@ function readSavedTokenForKind(kind, storage) {
  * this kind failed, the session token wins so a stale localStorage value cannot
  * replace the key that was just applied.
  */
-function effectiveTokenForKind(kind, storage, fallback = "") {
+function effectiveTokenForKind(kind, storage) {
   const session = sessionTokenForKind(kind);
   if (session && sessionWriteFailed[kind]) return session;
-  return readSavedTokenForKind(kind, storage) || session || fallback;
+  return readSavedTokenForKind(kind, storage) || session;
 }
 
 function lastAppliedKind(storage) {
@@ -287,7 +287,7 @@ export function applySavedMapAccessTokens(
   { Ion, ArcGisMapService, storage = getDefaultStorage() } = {},
   tokens,
 ) {
-  const resolved = tokens ?? resolveProviderTokens({ Ion, ArcGisMapService, storage });
+  const resolved = tokens ?? resolveProviderTokens({ storage });
   if (resolved.ion && Ion) Ion.defaultAccessToken = resolved.ion;
   if (resolved.arcgis && ArcGisMapService) ArcGisMapService.defaultAccessToken = resolved.arcgis;
   holdSessionToken("ion", resolved.ion);
@@ -313,15 +313,18 @@ export function cartoBasemapUrl(token, baseUrl = CARTO_POSITRON_URL) {
   return `${baseUrl}${sep}key=${encodeURIComponent(normalized)}`;
 }
 
-export function resolveProviderTokens({ Ion, ArcGisMapService, storage = getDefaultStorage() } = {}) {
-  const ionFromGlobal = isJwtAccessToken(Ion?.defaultAccessToken) ? normalizeCesiumIonToken(Ion.defaultAccessToken) : "";
-  const arcgisFromGlobal = isArcGisApiKey(ArcGisMapService?.defaultAccessToken)
-    ? normalizeCesiumIonToken(ArcGisMapService.defaultAccessToken)
-    : "";
+/**
+ * Only session memory and localStorage count as user keys. Ion.defaultAccessToken
+ * and ArcGisMapService.defaultAccessToken ship with Cesium as demo credentials
+ * (a library JWT and an AAPT eval key), so reading them back would turn an empty
+ * storage into a phantom "pasted key" and drive World Terrain / ArcGIS requests
+ * with credentials the user never supplied.
+ */
+export function resolveProviderTokens({ storage = getDefaultStorage() } = {}) {
   return {
-    ion: effectiveTokenForKind("ion", storage, ionFromGlobal),
+    ion: effectiveTokenForKind("ion", storage),
     carto: effectiveTokenForKind("carto", storage),
-    arcgis: effectiveTokenForKind("arcgis", storage, arcgisFromGlobal),
+    arcgis: effectiveTokenForKind("arcgis", storage),
   };
 }
 

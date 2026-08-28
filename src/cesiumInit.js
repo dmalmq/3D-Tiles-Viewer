@@ -10,8 +10,6 @@ import {
   createWorldTerrainAsync,
   IonResource,
   Color,
-  Ion,
-  ArcGisMapService,
 } from "cesium";
 import {
   arcGisProviderOptions,
@@ -46,7 +44,7 @@ export async function initializeTerrainProviders(savedToken, existingProviders) 
     console.warn("Failed to load PLATEAU terrain:", e);
   }
 
-  const ionNow = resolveProviderTokens({ Ion, ArcGisMapService }).ion || savedToken;
+  const ionNow = resolveProviderTokens().ion || savedToken;
   if (isJwtAccessToken(ionNow) && !providers.worldTerrainProvider) {
     try {
       const world = await createWorldTerrainAsync();
@@ -60,7 +58,7 @@ export async function initializeTerrainProviders(savedToken, existingProviders) 
 }
 
 function providerTokens() {
-  return resolveProviderTokens({ Ion, ArcGisMapService });
+  return resolveProviderTokens();
 }
 
 export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
