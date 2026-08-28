@@ -15,6 +15,7 @@ import {
 } from "cesium";
 import {
   arcGisProviderOptions,
+  cartoBasemapUrl,
   ionProviderOptions,
   resolveActiveMapToken,
 } from "./cesiumToken.js";
@@ -144,7 +145,7 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
     case "carto-positron":
       viewer.imageryLayers.addImageryProvider(
         new UrlTemplateImageryProvider({
-          url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+          url: cartoBasemapUrl(mapToken),
           subdomains: ["a", "b", "c", "d"],
           maximumLevel: 19,
           credit: "© OpenStreetMap contributors © CARTO",

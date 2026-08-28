@@ -5,6 +5,7 @@ import {
   CESIUM_ION_TOKEN_STORAGE_KEY,
   applyMapAccessToken,
   arcGisProviderOptions,
+  cartoBasemapUrl,
   getStartupCesiumIonToken,
   ionProviderOptions,
   isJwtAccessToken,
@@ -126,6 +127,21 @@ test("arcGisProviderOptions passes non-JWT keys and skips JWTs", () => {
   assert.deepEqual(arcGisProviderOptions(" AAPK-key "), { token: "AAPK-key" });
   assert.deepEqual(arcGisProviderOptions(SAMPLE_JWT), {});
   assert.deepEqual(arcGisProviderOptions(""), {});
+});
+
+test("cartoBasemapUrl appends a non-JWT key so Carto watermarks can clear", () => {
+  assert.equal(
+    cartoBasemapUrl(" carto-key-1 "),
+    "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=carto-key-1",
+  );
+  assert.equal(
+    cartoBasemapUrl(SAMPLE_JWT),
+    "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+  );
+  assert.equal(
+    cartoBasemapUrl(""),
+    "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+  );
 });
 
 test("resolveActiveMapToken prefers saved storage over Cesium defaults", () => {

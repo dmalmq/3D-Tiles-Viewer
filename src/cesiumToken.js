@@ -12,7 +12,11 @@ function readViteEnvToken() {
   try {
     const env = import.meta.env;
     return normalizeCesiumIonToken(
-      env?.VITE_CESIUM_ION_TOKEN || env?.VITE_CESIUM_ACCESS_TOKEN || env?.VITE_ARCGIS_API_KEY || "",
+      env?.VITE_CESIUM_ION_TOKEN ||
+        env?.VITE_CESIUM_ACCESS_TOKEN ||
+        env?.VITE_CARTO_API_KEY ||
+        env?.VITE_ARCGIS_API_KEY ||
+        "",
     );
   } catch {
     return "";
@@ -67,7 +71,8 @@ export function getStartupCesiumIonToken(input, storage = getDefaultStorage(), e
 /**
  * Persist the token and push it onto the Cesium globals that actually fetch
  * basemap tiles. JWTs are Cesium ion access tokens; other keys are treated as
- * ArcGIS / map-provider API keys so Esri "API key required" watermarks clear.
+ * map-provider API keys (Carto `key`, ArcGIS `token`) so "API key required"
+ * watermarks clear.
  */
 export function applyMapAccessToken(token, { Ion, ArcGisMapService, storage = getDefaultStorage() } = {}) {
   const normalized = saveCesiumIonToken(token, storage);
@@ -89,6 +94,15 @@ export function ionProviderOptions(token) {
 export function arcGisProviderOptions(token) {
   const normalized = normalizeCesiumIonToken(token);
   return normalized && !isJwtAccessToken(normalized) ? { token: normalized } : {};
+}
+
+const CARTO_POSITRON_URL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png";
+
+export function cartoBasemapUrl(token, baseUrl = CARTO_POSITRON_URL) {
+  const normalized = normalizeCesiumIonToken(token);
+  if (!normalized || isJwtAccessToken(normalized)) return baseUrl;
+  const sep = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${sep}key=${encodeURIComponent(normalized)}`;
 }
 
 export function resolveActiveMapToken({ Ion, ArcGisMapService, storage = getDefaultStorage() } = {}) {

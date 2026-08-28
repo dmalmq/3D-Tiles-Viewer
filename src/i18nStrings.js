@@ -122,8 +122,8 @@ const en = {
   "cityGml.empty": "No CityGML layers loaded.",
 
   // Basemap
-  "basemap.tokenLabel": "Cesium Ion Token",
-  "basemap.tokenPlaceholder": "Paste token here…",
+  "basemap.tokenLabel": "Map API key",
+  "basemap.tokenPlaceholder": "Paste Carto, Cesium ion, or ArcGIS key…",
   "basemap.applyToken": "Apply",
   "basemap.imageryLabel": "Imagery",
   "basemap.terrainLabel": "Terrain",
@@ -661,8 +661,8 @@ const ja = {
   "cityGml.empty": "CityGML レイヤがありません。",
 
   // Basemap
-  "basemap.tokenLabel": "Cesium Ion トークン",
-  "basemap.tokenPlaceholder": "ここにトークンを貼り付け…",
+  "basemap.tokenLabel": "マップ API キー",
+  "basemap.tokenPlaceholder": "Carto / Cesium ion / ArcGIS キーを貼り付け…",
   "basemap.applyToken": "適用",
   "basemap.imageryLabel": "画像",
   "basemap.terrainLabel": "地形",
