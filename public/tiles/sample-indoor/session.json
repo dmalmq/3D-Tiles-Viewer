@@ -1,6 +1,6 @@
 {
   "version": 4,
-  "imagery": "carto-positron",
+  "imagery": "osm",
   "terrain": "ellipsoid",
   "plateauOverridesEnabled": true,
   "modelLevels": [

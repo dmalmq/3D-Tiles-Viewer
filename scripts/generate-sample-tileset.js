@@ -366,7 +366,7 @@ function buildTileset(box) {
 function buildSession() {
   return {
     version: 4,
-    imagery: "carto-positron",
+    imagery: "osm",
     terrain: "ellipsoid",
     plateauOverridesEnabled: true,
     modelLevels: [
