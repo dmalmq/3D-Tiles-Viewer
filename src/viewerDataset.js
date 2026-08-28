@@ -1,20 +1,63 @@
 import { DEFAULT_MANIFEST_URL } from "./venueManifest.js";
 
+function normalizeAppBase(base) {
+  const raw = base == null || base === "" ? "/" : String(base);
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("./")) {
+    return raw.endsWith("/") ? raw : `${raw}/`;
+  }
+  const withSlash = raw.endsWith("/") ? raw : `${raw}/`;
+  return withSlash.startsWith("/") ? withSlash : `/${withSlash}`;
+}
+
 /**
  * Join a same-origin asset path with Vite's configured `base`.
- * BASE_URL is usually `/` or `/repo/` (trailing slash). Leading slashes on
- * `path` are stripped so we never emit `//tiles/...` or miss a slash.
+ * Idempotent: paths already under the base are returned unchanged so SAMPLE_*
+ * and query params can share one resolve site without double-prefixing.
  */
 export function withAppBase(path, base = import.meta.env?.BASE_URL ?? "/") {
-  const rawBase = base == null || base === "" ? "/" : String(base);
-  const rawPath = String(path ?? "").replace(/^\/+/, "");
-  if (!rawPath) return rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
-  if (/^https?:\/\//i.test(rawBase)) {
-    const originBase = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
-    return new URL(rawPath, originBase).href;
+  const input = String(path ?? "");
+  const normalizedBase = normalizeAppBase(base);
+  if (!input) return normalizedBase;
+  if (/^https?:\/\//i.test(input) || input.startsWith("blob:") || input.startsWith("data:")) {
+    return input;
   }
-  const normalizedBase = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
-  return `${normalizedBase}${rawPath}`;
+
+  if (/^https?:\/\//i.test(normalizedBase)) {
+    const baseUrl = new URL(normalizedBase);
+    if (input.startsWith(normalizedBase) || input === normalizedBase.slice(0, -1)) return input;
+    if (input.startsWith(baseUrl.pathname) && (baseUrl.pathname === "/" || input === baseUrl.pathname || input.startsWith(baseUrl.pathname.endsWith("/") ? baseUrl.pathname : `${baseUrl.pathname}/`))) {
+      return new URL(input.replace(/^\//, ""), baseUrl.origin + "/").href;
+    }
+    return new URL(input.replace(/^\/+/, ""), normalizedBase).href;
+  }
+
+  if (normalizedBase.startsWith("./")) {
+    if (input.startsWith(normalizedBase) || input === normalizedBase.slice(0, -1)) return input;
+    return `${normalizedBase}${input.replace(/^\/+/, "").replace(/^\.\//, "")}`;
+  }
+
+  if (normalizedBase === "/") {
+    if (input.startsWith("/")) return input;
+    return `/${input.replace(/^\/+/, "")}`;
+  }
+
+  const baseNoSlash = normalizedBase.slice(0, -1);
+  if (input === normalizedBase || input === baseNoSlash) return normalizedBase;
+  if (input.startsWith(normalizedBase) || input.startsWith(`${baseNoSlash}/`)) return input;
+  return `${normalizedBase}${input.replace(/^\/+/, "")}`;
+}
+
+/** Express mounts stay at domain root until that policy is decided separately. */
+export function isExpressRootPath(url) {
+  return /^\/(sessions|tilesets|packages|api)(\/|$)/.test(url);
+}
+
+/** Prefix a viewer query-param path once. Absolute URLs and Express roots are left alone. */
+export function resolveViewerQueryAssetUrl(url, base = import.meta.env?.BASE_URL ?? "/") {
+  if (!url || typeof url !== "string") return url;
+  if (/^https?:\/\//i.test(url) || url.startsWith("blob:") || url.startsWith("data:")) return url;
+  if (isExpressRootPath(url)) return url;
+  return withAppBase(url, base);
 }
 
 /** Static same-origin sample — no Express publish server required. */
@@ -27,19 +70,19 @@ export const SAMPLE_BUILDING_NAME = "Sample House";
  * Query params always win so published `?venue=` / `?session=` / `?manifest=`
  * links keep working. With no params, the public synthetic sample is the default.
  */
-export function resolveViewerDatasetFromParams(searchParams) {
+export function resolveViewerDatasetFromParams(searchParams, base = import.meta.env?.BASE_URL ?? "/") {
   const params = searchParams ?? new URLSearchParams();
   const session = params.get?.("session")?.trim();
-  if (session) return { kind: "session", url: session };
+  if (session) return { kind: "session", url: resolveViewerQueryAssetUrl(session, base) };
 
   const manifest = params.get?.("manifest")?.trim();
   const venueId = params.get?.("venue")?.trim() || null;
-  if (manifest) return { kind: "manifest", url: manifest, venueId };
+  if (manifest) return { kind: "manifest", url: resolveViewerQueryAssetUrl(manifest, base), venueId };
 
   if (venueId) return { kind: "manifest", url: DEFAULT_MANIFEST_URL, venueId };
 
   const tileset = params.get?.("tileset")?.trim();
-  if (tileset) return { kind: "tileset", url: tileset };
+  if (tileset) return { kind: "tileset", url: resolveViewerQueryAssetUrl(tileset, base) };
 
   return { kind: "sample", url: SAMPLE_SESSION_URL };
 }

@@ -127,6 +127,17 @@ A tiny **synthetic indoor** 3D Tiles dataset ships in the repo. Geometry is gene
 
 With the default Vite base `/`, those are `/tiles/sample-indoor/tileset.json` and `/viewer.html`. If `dist/` is hosted under a subpath (GitHub project Pages), set `base` in `vite.config.js` (for example `base: "/3D-Tiles-Viewer/"`) so the same files resolve as `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` and `/3D-Tiles-Viewer/viewer.html`. Express is not required.
 
+Query-param paths that start with `/tiles/` are joined the same way (once). Express `/sessions`, `/tilesets`, `/packages`, and `/api` stay at the domain root.
+
+| | `base: "/"` | `base: "/3D-Tiles-Viewer/"` |
+|---|---|---|
+| Viewer | `/viewer.html` | `/3D-Tiles-Viewer/viewer.html` |
+| Sample tileset | `/tiles/sample-indoor/tileset.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` |
+| Sample session | `/tiles/sample-indoor/session.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/session.json` |
+| `?tileset=/tiles/sample-indoor/tileset.json` | `/tiles/sample-indoor/tileset.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` |
+| `?session=/tiles/sample-indoor/session.json` | `/tiles/sample-indoor/session.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/session.json` |
+| Already-based SAMPLE tileset URL | `/tiles/sample-indoor/tileset.json` | `/3D-Tiles-Viewer/tiles/sample-indoor/tileset.json` (not doubled) |
+
 The portfolio embed should point at **`{base}tiles/sample-indoor/tileset.json`** for the tileset, and open **`{base}viewer.html`** for the click-to-load demo.
 
 ```bash

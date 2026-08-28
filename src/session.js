@@ -6,7 +6,7 @@ import { serializeNetworkDataset } from "./networkData.js";
 
 import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
 import { buildingLevelWorldHeight } from "./shapefilePlacement.js";
-import { withAppBase } from "./viewerDataset.js";
+import { isExpressRootPath, withAppBase } from "./viewerDataset.js";
 
 // Bump when changing the JSON shape in a non-backward-compatible way. Old
 // session files that match a previously-supported version remain loadable.
@@ -22,12 +22,12 @@ export function shouldLoadTilesetFromUrl(bData) {
   return typeof bData?.sourceUrl === "string" && bData.sourceUrl.length > 0;
 }
 
-/** Turn app-root paths (/tiles/..., /tilesets/..., /sessions/...) into same-origin URLs under Vite `base`. */
-export function resolveSessionAssetUrl(url) {
+/** Turn app-root paths (/tiles/...) into same-origin URLs under Vite `base`. Express mounts stay at domain root. */
+export function resolveSessionAssetUrl(url, base = import.meta.env?.BASE_URL ?? "/") {
   if (!url || typeof url !== "string") return url;
   if (/^https?:\/\//i.test(url) || url.startsWith("blob:") || url.startsWith("data:")) return url;
   if (url.startsWith("/")) {
-    const rooted = withAppBase(url);
+    const rooted = isExpressRootPath(url) ? url : withAppBase(url, base);
     if (typeof globalThis.location !== "undefined" && globalThis.location?.href) {
       return new URL(rooted, globalThis.location.href).href;
     }
