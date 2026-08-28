@@ -468,6 +468,7 @@ const en = {
   "venue.exportWebsiteNoTiles":
     "No tiles could be read from disk. Re-pick the tileset folder, then export again.",
   "venue.exportWebsitePartial": "Bundle exported with warnings: {detail}",
+  "venue.exportWebsiteFailed": "Website export failed: {detail}",
   "venue.filterScene": "Show only this venue in the scene tree",
   "venue.unassigned": "Unassigned",
   "venue.delete": "Delete venue",
@@ -1021,6 +1022,7 @@ const ja = {
   "venue.exportWebsiteNoTiles":
     "タイルをディスクから読み取れませんでした。タイルセットのフォルダを選び直してから、もう一度エクスポートしてください。",
   "venue.exportWebsitePartial": "警告付きでエクスポートしました：{detail}",
+  "venue.exportWebsiteFailed": "Webサイト用エクスポートに失敗しました：{detail}",
   "venue.filterScene": "この会場のみシーンツリーに表示",
   "venue.unassigned": "未割り当て",
   "venue.delete": "会場を削除",

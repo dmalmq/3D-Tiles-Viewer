@@ -58,7 +58,16 @@ import { zoomToBuilding as flyToBuilding, zoomToScene } from "./sceneZoom.js";
 import { resolveSessionAssetUrl } from "./session.js";
 import { loadTilesetGlbBuffer, computePerLinkLocalAabbs, unionAabbs } from "./glbBoundsExtractor.js";
 import { applyEntitiesContextState } from "./contextGhosting.js";
-import { getLayerType, isSpaceLayerName, isColorConfigurableLayer, HEX_COLOR_RE } from "./layerColorConfig.js";
+import {
+  COLOR2_DEFAULT,
+  COLOR2_LOOKUP,
+  getLayerType,
+  HEX_COLOR_RE,
+  isColorConfigurableLayer,
+  isSpaceLayerName,
+  OPENING_FILL_COLOR,
+  SPACE_STROKE_COLOR,
+} from "./layerColorConfig.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
 import { notifyUser } from "./notifications.js";
 import {
@@ -103,15 +112,6 @@ const transient = {
   searchOpen: false,
 };
 
-const COLOR2_LOOKUP = {
-  "橙": "#FFC090", "トイレ": "#E5E6E6", "薄紅": "#FFECE6", "緑": "#DDF5D9",
-  "濃空": "#C2E5F2", "濃鼠": "#C8C9CA", "白": "#FFFFFF", "薄空": "#C0E0EA",
-  "薄鼠": "#A0A1A2", "黄": "#F5F5C0", "濃紅": "#F2CFC2", "ラチ外白": "#FFFFFF",
-  "進入制限あり": "#E5E6E6",
-};
-const COLOR2_DEFAULT = "#808080";
-const SPACE_STROKE_COLOR = "#333333";
-const OPENING_FILL_COLOR = "#FF0000";
 
 const MARKER_ICON_PX = 32;
 const MARKER_SCALE_BY_DISTANCE = new NearFarScalar(50, 1.0, 5000, 0.6);

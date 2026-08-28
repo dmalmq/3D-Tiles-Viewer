@@ -1,6 +1,9 @@
 /**
  * Minimal store-only ZIP writer. Tiles and images are already compressed, so
  * deflate would buy little and cost a dependency.
+ *
+ * Entry data stays as a Blob/File and is streamed, never held whole in memory:
+ * a real venue's tiles are far larger than one ArrayBuffer allocation.
  */
 
 const CRC_TABLE = (() => {
@@ -15,71 +18,100 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export function crc32(bytes) {
-  let crc = 0xffffffff;
+/** ZIP32 keeps every offset in a uint32, so the archive cannot pass 4 GiB. */
+const MAX_ARCHIVE_BYTES = 0xffffffff;
+
+function updateCrc(crc, bytes) {
+  let next = crc;
   for (let i = 0; i < bytes.length; i++) {
-    crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+    next = CRC_TABLE[(next ^ bytes[i]) & 0xff] ^ (next >>> 8);
+  }
+  return next;
+}
+
+export function crc32(bytes) {
+  return (updateCrc(0xffffffff, bytes) ^ 0xffffffff) >>> 0;
+}
+
+function toBlob(data) {
+  if (data instanceof Blob) return data;
+  if (typeof data === "string") return new Blob([data]);
+  if (data instanceof Uint8Array || data instanceof ArrayBuffer) return new Blob([data]);
+  throw new Error("Zip entry data must be a string, Uint8Array, ArrayBuffer, or Blob.");
+}
+
+async function crc32OfBlob(blob) {
+  const reader = blob.stream().getReader();
+  let crc = 0xffffffff;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    crc = updateCrc(crc, value);
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function toBytes(data) {
-  if (typeof data === "string") return new TextEncoder().encode(data);
-  if (data instanceof Uint8Array) return data;
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  throw new Error("Zip entry data must be a string, Uint8Array, or ArrayBuffer.");
+function localHeader(name, crc, size) {
+  const header = new Uint8Array(30 + name.length);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 0x0800, true); // UTF-8 names
+  view.setUint16(8, 0, true); // stored
+  view.setUint16(10, 0, true); // time
+  view.setUint16(12, 0x0021, true); // date: 1980-01-01
+  view.setUint32(14, crc, true);
+  view.setUint32(18, size, true);
+  view.setUint32(22, size, true);
+  view.setUint16(26, name.length, true);
+  view.setUint16(28, 0, true);
+  header.set(name, 30);
+  return header;
+}
+
+function centralHeader(name, crc, size, offset) {
+  const header = new Uint8Array(46 + name.length);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x02014b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 20, true);
+  view.setUint16(8, 0x0800, true);
+  view.setUint16(10, 0, true);
+  view.setUint16(12, 0, true);
+  view.setUint16(14, 0x0021, true);
+  view.setUint32(16, crc, true);
+  view.setUint32(20, size, true);
+  view.setUint32(24, size, true);
+  view.setUint16(28, name.length, true);
+  view.setUint32(42, offset, true);
+  header.set(name, 46);
+  return header;
 }
 
 /**
- * @param {{ path: string, data: string | Uint8Array | ArrayBuffer }[]} entries
- * @returns {Uint8Array} the complete archive
+ * @param {{ path: string, data: string | Uint8Array | ArrayBuffer | Blob }[]} entries
+ * @returns {Promise<Blob>} the archive, backed by the browser rather than the heap
  */
-export function createZip(entries) {
+export async function createZip(entries) {
   const encoder = new TextEncoder();
-  const locals = [];
+  const parts = [];
   const central = [];
   let offset = 0;
 
   for (const entry of entries) {
+    const blob = toBlob(entry.data);
     const name = encoder.encode(entry.path);
-    const data = toBytes(entry.data);
-    const crc = crc32(data);
+    const size = blob.size;
+    const crc = await crc32OfBlob(blob);
 
-    const local = new Uint8Array(30 + name.length + data.length);
-    const localView = new DataView(local.buffer);
-    localView.setUint32(0, 0x04034b50, true);
-    localView.setUint16(4, 20, true);
-    localView.setUint16(6, 0x0800, true); // UTF-8 names
-    localView.setUint16(8, 0, true); // stored
-    localView.setUint16(10, 0, true); // time
-    localView.setUint16(12, 0x0021, true); // date: 1980-01-01
-    localView.setUint32(14, crc, true);
-    localView.setUint32(18, data.length, true);
-    localView.setUint32(22, data.length, true);
-    localView.setUint16(26, name.length, true);
-    localView.setUint16(28, 0, true);
-    local.set(name, 30);
-    local.set(data, 30 + name.length);
-    locals.push(local);
-
-    const header = new Uint8Array(46 + name.length);
-    const headerView = new DataView(header.buffer);
-    headerView.setUint32(0, 0x02014b50, true);
-    headerView.setUint16(4, 20, true);
-    headerView.setUint16(6, 20, true);
-    headerView.setUint16(8, 0x0800, true);
-    headerView.setUint16(10, 0, true);
-    headerView.setUint16(12, 0, true);
-    headerView.setUint16(14, 0x0021, true);
-    headerView.setUint32(16, crc, true);
-    headerView.setUint32(20, data.length, true);
-    headerView.setUint32(24, data.length, true);
-    headerView.setUint16(28, name.length, true);
-    headerView.setUint32(42, offset, true);
-    header.set(name, 46);
-    central.push(header);
-
-    offset += local.length;
+    parts.push(localHeader(name, crc, size), blob);
+    central.push(centralHeader(name, crc, size, offset));
+    offset += 30 + name.length + size;
+    if (offset > MAX_ARCHIVE_BYTES) {
+      throw new Error(
+        "Bundle is larger than 4 GB, which this zip format cannot address. Export fewer buildings.",
+      );
+    }
   }
 
   const centralSize = central.reduce((sum, part) => sum + part.length, 0);
@@ -91,12 +123,5 @@ export function createZip(entries) {
   endView.setUint32(12, centralSize, true);
   endView.setUint32(16, offset, true);
 
-  const total = offset + centralSize + end.length;
-  const out = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of [...locals, ...central, end]) {
-    out.set(part, cursor);
-    cursor += part.length;
-  }
-  return out;
+  return new Blob([...parts, ...central, end], { type: "application/zip" });
 }

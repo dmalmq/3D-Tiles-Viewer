@@ -87,10 +87,14 @@ import { createZip } from "./zipWriter.js";
 import { notifyUser } from "./notifications.js";
 import {
   chooseDefaultColorColumn,
+  COLOR2_DEFAULT,
+  COLOR2_LOOKUP,
   getLayerType,
   HEX_COLOR_RE,
   isColorConfigurableLayer,
   isSpaceLayerName,
+  OPENING_FILL_COLOR,
+  SPACE_STROKE_COLOR,
 } from "./layerColorConfig.js";
 import {
   applyEntitiesContextState,
@@ -187,25 +191,6 @@ const layerTypeFilters = { space: true, unit: true, opening: true, detail: true,
 
 const SHP_COLORS = ["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#16a085"];
 
-// Per-feature color lookup for _Space layers (from GDB color2 column).
-const COLOR2_LOOKUP = {
-  "橙": "#FFC090",
-  "トイレ": "#E5E6E6",
-  "薄紅": "#FFECE6",
-  "緑": "#DDF5D9",
-  "濃空": "#C2E5F2",
-  "濃鼠": "#C8C9CA",
-  "白": "#FFFFFF",
-  "薄空": "#C0E0EA",
-  "薄鼠": "#A0A1A2",
-  "黄": "#F5F5C0",
-  "濃紅": "#F2CFC2",
-  "ラチ外白": "#FFFFFF",
-  "進入制限あり": "#E5E6E6",
-};
-const COLOR2_DEFAULT = "#808080";
-const SPACE_STROKE_COLOR = "#333333";
-const OPENING_FILL_COLOR = "#FF0000";
 const COLOR_CONFIG_SWATCHES = [...new Set([...SHP_COLORS, ...Object.values(COLOR2_LOOKUP)])];
 
 // Per-feature point icons: fixed pixel footprint plus a gentle distance taper
@@ -4991,11 +4976,8 @@ async function handleExportWebsiteBundle() {
       notifyUser("info", "venue.exportEmpty");
       return;
     }
-    const zip = createZip(result.files);
-    downloadBlob(
-      new Blob([zip], { type: "application/zip" }),
-      `${slugifyVenueId(result.venue.id ?? result.venue.name)}-web.zip`,
-    );
+    const zip = await createZip(result.files);
+    downloadBlob(zip, `${slugifyVenueId(result.venue.id ?? result.venue.name)}-web.zip`);
     notifyUser("info", "venue.exportWebsiteDone", {
       name: result.venue.name,
       count: result.files.length,
@@ -5010,7 +4992,7 @@ async function handleExportWebsiteBundle() {
       });
     }
   } catch (err) {
-    notifyUser("error", "venue.exportWebsitePartial", { detail: err.message });
+    notifyUser("error", "venue.exportWebsiteFailed", { detail: err.message });
   } finally {
     hideLoadingOverlay();
     if (exportWebsiteBtn) exportWebsiteBtn.disabled = false;

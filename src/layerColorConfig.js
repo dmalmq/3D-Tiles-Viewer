@@ -1,5 +1,24 @@
 export const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
+export const COLOR2_LOOKUP = {
+  "橙": "#FFC090",
+  "トイレ": "#E5E6E6",
+  "薄紅": "#FFECE6",
+  "緑": "#DDF5D9",
+  "濃空": "#C2E5F2",
+  "濃鼠": "#C8C9CA",
+  "白": "#FFFFFF",
+  "薄空": "#C0E0EA",
+  "薄鼠": "#A0A1A2",
+  "黄": "#F5F5C0",
+  "濃紅": "#F2CFC2",
+  "ラチ外白": "#FFFFFF",
+  "進入制限あり": "#E5E6E6",
+};
+export const COLOR2_DEFAULT = "#808080";
+export const SPACE_STROKE_COLOR = "#333333";
+export const OPENING_FILL_COLOR = "#FF0000";
+
 const COLUMN_SCAN_CAP = 5000;
 const DEFAULT_COLOR_COLUMN_PREFERENCES = [
   "color2",

@@ -15,7 +15,7 @@ export { buildWebsiteManifest } from "./websiteManifest.js";
 async function fetchIcon(slug) {
   const response = await fetch(`/icons/marker/${slug}`);
   if (!response.ok) throw new Error(String(response.status));
-  return new Uint8Array(await response.arrayBuffer());
+  return response.blob();
 }
 
 function relativeInsideTileset(file) {
@@ -50,10 +50,9 @@ export async function collectWebsiteBundle(state, options = {}) {
       const dir = buildingFolder(building);
       included.add(dir);
       for (const file of bundle.files) {
-        files.push({
-          path: `tiles/${dir}/${relativeInsideTileset(file)}`,
-          data: new Uint8Array(await file.arrayBuffer()),
-        });
+        // The File is handed to the zip as-is; reading it here is what blew the
+        // heap on real venues.
+        files.push({ path: `tiles/${dir}/${relativeInsideTileset(file)}`, data: file });
       }
     }
   }
