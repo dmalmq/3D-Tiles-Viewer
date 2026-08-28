@@ -37,6 +37,8 @@ test("viewer.html loads the public synthetic sample without the authoring UI", a
   await expect(page.locator("#viewerDatasetSelect")).toHaveValue("local");
   await expect(page.locator("#viewerBuildingSelect option")).toHaveCount(2, { timeout: 45_000 });
   await waitForTilesetRenderSignal(page);
+  await expect(page.locator("#viewerLayersList")).toContainText("1F");
+  await expect(page.locator("#viewerLayersList")).toContainText("2F");
 
   expect(uploads).toEqual([]);
 });

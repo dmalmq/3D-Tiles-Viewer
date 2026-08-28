@@ -326,37 +326,57 @@ async function handleDatasetSelectChange() {
   }
   if (value === "local") {
     const opened = await openLocalTilesetFolder();
-    if (!opened) setDatasetKind(previous);
+    if (!opened) setDatasetKind(currentDatasetKind);
+  }
+}
+
+async function restorePreviousDataset(kind) {
+  try {
+    if (kind === "shared") {
+      await bootstrapFromUrl();
+      return;
+    }
+    await loadSampleSession();
+  } catch (err) {
+    console.warn("Could not restore previous dataset:", err);
   }
 }
 
 async function openLocalTilesetFolder() {
-  if (isFileSystemAccessSupported() && !globalThis.window?.__CESIUM_E2E__) {
+  const pickerAvailable =
+    isFileSystemAccessSupported() && !globalThis.window?.__CESIUM_E2E__;
+  if (pickerAvailable) {
+    let dirHandle;
     try {
-      const dirHandle = await window.showDirectoryPicker({ mode: "read" });
-      const files = await getFilesFromDirectoryHandle(dirHandle);
-      await loadLocalTilesetFiles(files, dirHandle.name || inferLocalTilesetName(files));
-      return true;
+      dirHandle = await window.showDirectoryPicker({ mode: "read" });
     } catch (e) {
       if (e?.name === "AbortError") return false;
       console.warn("showDirectoryPicker error:", e);
+      notifyUser("error", "alert.failedSession", { message: e.message });
+      return false;
+    }
+    try {
+      const files = await getFilesFromDirectoryHandle(dirHandle);
+      await loadLocalTilesetFiles(files, dirHandle.name || inferLocalTilesetName(files));
+      return true;
+    } catch (err) {
+      notifyUser("error", "alert.failedSession", { message: err.message });
+      await restorePreviousDataset(currentDatasetKind);
+      return false;
     }
   }
   viewerTilesetFolderInput.click();
-  return true;
+  return false;
 }
 
 async function handleTilesetFolderInput(e) {
   const files = snapshotAndClearFileInput(e.target);
-  if (!files.length) {
-    if (currentDatasetKind !== "local") setDatasetKind(currentDatasetKind);
-    return;
-  }
+  if (!files.length) return;
   try {
     await loadLocalTilesetFiles(files, inferLocalTilesetName(files));
   } catch (err) {
     notifyUser("error", "alert.failedSession", { message: err.message });
-    try { await loadSampleSession(); } catch { /* keep empty scene */ }
+    await restorePreviousDataset(currentDatasetKind);
   }
 }
 

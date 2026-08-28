@@ -213,6 +213,7 @@ export async function restoreLoadedTileset(tileset, bData, ctx) {
   const building = makeBuildingFromData(bData, tileset);
   await wireTileset(tileset, building, bData, ctx, bData.sourceUrl ?? null);
   ctx.buildings.push(building);
+  ctx.rebuildModelLevels?.();
   return building;
 }
 
