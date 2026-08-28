@@ -5,8 +5,10 @@ import {
   SAMPLE_SESSION_URL,
   SAMPLE_TILESET_URL,
   inferLocalTilesetName,
+  isDirectoryPickerAbort,
   isLocalDatasetUploadRequest,
   resolveViewerDatasetFromParams,
+  shouldFallbackToDirectoryInput,
 } from "../src/viewerDataset.js";
 
 test("viewer.html with no query params defaults to the public sample session", () => {
@@ -49,4 +51,12 @@ test("local folder viewing must not POST to publish or package APIs", () => {
   assert.equal(isLocalDatasetUploadRequest("http://localhost:5173/api/publish", "POST"), true);
   assert.equal(isLocalDatasetUploadRequest("/tilesets/dir-1/tileset.json", "GET"), false);
   assert.equal(isLocalDatasetUploadRequest("/tilesets/dir-1/tileset.json", "PUT"), true);
+});
+
+test("directory picker abort does not fall through; permission errors do", () => {
+  assert.equal(isDirectoryPickerAbort({ name: "AbortError" }), true);
+  assert.equal(shouldFallbackToDirectoryInput({ name: "AbortError" }), false);
+  assert.equal(shouldFallbackToDirectoryInput({ name: "SecurityError" }), true);
+  assert.equal(shouldFallbackToDirectoryInput({ name: "NotAllowedError" }), true);
+  assert.equal(shouldFallbackToDirectoryInput({ name: "TypeError" }), false);
 });

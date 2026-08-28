@@ -38,6 +38,8 @@ import {
   SAMPLE_BUILDING_NAME,
   resolveViewerDatasetFromParams,
   inferLocalTilesetName,
+  isDirectoryPickerAbort,
+  shouldFallbackToDirectoryInput,
 } from "./viewerDataset.js";
 import { isFileSystemAccessSupported, getFilesFromDirectoryHandle } from "./fileSystemAccess.js";
 import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
@@ -354,7 +356,11 @@ async function openLocalTilesetFolder() {
     try {
       dirHandle = await window.showDirectoryPicker({ mode: "read" });
     } catch (e) {
-      if (e?.name === "AbortError") return false;
+      if (isDirectoryPickerAbort(e)) return false;
+      if (shouldFallbackToDirectoryInput(e)) {
+        viewerTilesetFolderInput.click();
+        return false;
+      }
       console.warn("showDirectoryPicker error:", e);
       notifyUser("error", "alert.failedSession", { message: e.message });
       return false;
@@ -365,7 +371,6 @@ async function openLocalTilesetFolder() {
       return true;
     } catch (err) {
       notifyUser("error", "alert.failedSession", { message: err.message });
-      await restorePreviousDataset(currentDatasetKind);
       return false;
     }
   }
@@ -380,7 +385,6 @@ async function handleTilesetFolderInput(e) {
     await loadLocalTilesetFiles(files, inferLocalTilesetName(files));
   } catch (err) {
     notifyUser("error", "alert.failedSession", { message: err.message });
-    await restorePreviousDataset(currentDatasetKind);
   }
 }
 
@@ -419,10 +423,12 @@ async function levelsFromUrl(tilesetUrl) {
 async function loadLocalTilesetFiles(files, name) {
   const ctx = buildRestoreContext();
   showLoadingOverlay(t("viewer.loadingLocal"), "");
+  let sceneCleared = false;
   try {
-    await clearSceneState(ctx);
     const levels = await levelsFromFiles(files);
-    const tileset = await loadTilesetFromFiles(ctx.viewer, files, null);
+    const tileset = await loadTilesetFromFiles(ctx.viewer, files, null, { zoom: false });
+    await clearSceneState(ctx);
+    sceneCleared = true;
     await restoreLoadedTileset(tileset, {
       name: name || inferLocalTilesetName(files),
       sourceUrl: null,
@@ -437,6 +443,7 @@ async function loadLocalTilesetFiles(files, name) {
     hideBanner();
   } catch (err) {
     showBanner(t("viewer.loadFailed", { message: err.message }), true);
+    if (sceneCleared) await restorePreviousDataset(currentDatasetKind);
     throw err;
   } finally {
     hideLoadingOverlay();

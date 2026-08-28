@@ -54,3 +54,13 @@ export function isLocalDatasetUploadRequest(url, method = "GET") {
   if (verb === "GET" || verb === "HEAD" || verb === "OPTIONS") return false;
   return path.startsWith("/api/") || path.startsWith("/tilesets/") || path.startsWith("/packages/");
 }
+
+export function isDirectoryPickerAbort(error) {
+  return error?.name === "AbortError";
+}
+
+/** Iframe / permission denials should use the webkitdirectory input. Cancel must not. */
+export function shouldFallbackToDirectoryInput(error) {
+  const name = error?.name;
+  return name === "SecurityError" || name === "NotAllowedError";
+}

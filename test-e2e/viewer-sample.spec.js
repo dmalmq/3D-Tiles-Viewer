@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { prepareCleanApp, waitForTilesetRenderSignal } from "./helpers.js";
 
@@ -51,4 +52,26 @@ test("viewer.html ?tileset= loads the static sample and rebuilds floors", async 
   await waitForTilesetRenderSignal(page);
   await expect(page.locator("#viewerLayersList")).toContainText("1F");
   await expect(page.locator("#viewerLayersList")).toContainText("2F");
+});
+
+test("invalid local folder does not wipe the current tileset", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const emptyDir = testInfo.outputPath("not-a-tileset");
+  await fs.mkdir(emptyDir, { recursive: true });
+  await fs.writeFile(path.join(emptyDir, "readme.txt"), "not a tileset");
+
+  await prepareCleanApp(page);
+  await page.goto("/viewer.html");
+  await expect(page.locator("#viewerBuildingSelect option").nth(1)).toHaveText("Sample House", { timeout: 45_000 });
+
+  await page.locator("#viewerTilesetFolderInput").setInputFiles(SAMPLE_DIR);
+  await expect.poll(() => page.evaluate(() => window.__CESIUM_E2E__?.datasetKind)).toBe("local");
+  await expect(page.locator("#viewerLayersList")).toContainText("1F");
+
+  await page.locator("#viewerTilesetFolderInput").setInputFiles(emptyDir);
+  await expect(page.locator("#loadingOverlay")).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator("#viewerDatasetSelect")).toHaveValue("local");
+  await expect(page.locator("#viewerBuildingSelect option").nth(1)).toHaveText("sample-indoor");
+  await expect(page.locator("#viewerLayersList")).toContainText("1F");
+  expect(await page.evaluate(() => window.__CESIUM_E2E__?.datasetKind)).toBe("local");
 });
