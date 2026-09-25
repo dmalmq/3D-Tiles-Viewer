@@ -200,7 +200,7 @@ function init() {
     if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
   });
   imagerySelect.addEventListener("change", () => switchImagery());
-  terrainSelect.addEventListener("change", switchTerrain);
+  terrainSelect.addEventListener("change", () => switchTerrain());
   plateauTransparencyToggle.addEventListener("change", () => {
     plateauTransparencyEnabled = plateauTransparencyToggle.checked;
     syncEnvironmentVisibilityControls();
