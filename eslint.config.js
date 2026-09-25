@@ -61,6 +61,6 @@ export default [
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "test-results/**", "public/**"],
+    ignores: [".cursor/**", "dist/**", "node_modules/**", "test-results/**", "public/**"],
   },
 ];
