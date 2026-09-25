@@ -30,6 +30,7 @@ import {
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
+import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
 import {
   loadTilesetFromUrl,
   loadTilesetFromFiles,
@@ -154,6 +155,7 @@ import {
   getStartupCesiumIonToken,
   saveCesiumIonToken,
 } from "./cesiumToken.js";
+import { readSavedCartoKey, saveCartoKey } from "./cartoKey.js";
 
 // -- State --
 let viewer;
@@ -186,6 +188,9 @@ let venues = []; // [{ id, name, description, _expanded? }]
 let activeVenueFilter = null; // venue id or null
 let selectedPlateauFeature = null;
 let plateauOverridesEnabled = true;
+let plateauTransparencyEnabled = false;
+let plateauTransparencyPercent = 70;
+let gdbIconsVisible = true;
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 
@@ -257,6 +262,8 @@ const loadSessionBtn = document.getElementById("loadSessionBtn");
 const sessionInput = document.getElementById("sessionInput");
 const tokenInput = document.getElementById("tokenInput");
 const applyTokenBtn = document.getElementById("applyTokenBtn");
+const cartoKeyInput = document.getElementById("cartoKeyInput");
+const applyCartoKeyBtn = document.getElementById("applyCartoKeyBtn");
 const imagerySelect = document.getElementById("imagerySelect");
 const urlInput = document.getElementById("urlInput");
 const loadUrlBtn = document.getElementById("loadUrlBtn");
@@ -301,6 +308,10 @@ const splitConfirmDialog = document.getElementById("splitConfirmDialog");
 const splitGroupCountEl = document.getElementById("splitGroupCount");
 const splitGroupListEl = document.getElementById("splitGroupList");
 const buildingOverlapToggle = document.getElementById("buildingOverlapToggle");
+const plateauTransparencyToggle = document.getElementById("plateauTransparencyToggle");
+const plateauTransparencySlider = document.getElementById("plateauTransparencySlider");
+const plateauTransparencyValue = document.getElementById("plateauTransparencyValue");
+const gdbIconsToggle = document.getElementById("gdbIconsToggle");
 const plateauFloatingCard = document.getElementById("plateauFloatingCard");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingOverlayMessage = document.getElementById("loadingOverlayMessage");
@@ -352,6 +363,7 @@ function init() {
 
   const savedToken = getStartupCesiumIonToken(tokenInput);
   if (savedToken) Ion.defaultAccessToken = savedToken;
+  cartoKeyInput.value = readSavedCartoKey() || import.meta.env.VITE_CARTO_API_KEY || "";
 
   viewer = new Viewer("cesiumContainer", {
     baseLayerPicker: false,
@@ -380,6 +392,10 @@ function init() {
   sessionInput.addEventListener("change", handleLoadSession);
   applyTokenBtn.addEventListener("click", applyToken);
   tokenInput.addEventListener("change", () => saveCesiumIonToken(tokenInput.value));
+  applyCartoKeyBtn.addEventListener("click", () => {
+    const key = saveCartoKey(cartoKeyInput.value);
+    if (key) switchImagery();
+  });
   imagerySelect.addEventListener("change", switchImagery);
   terrainSelect.addEventListener("change", switchTerrain);
   loadUrlBtn.addEventListener("click", handleLoadUrl);
@@ -430,6 +446,20 @@ function init() {
     if (e.key === "Escape" && clearLayerSelection()) renderLevelList();
   });
   buildingOverlapToggle.addEventListener("change", handleBuildingOverlapToggle);
+  plateauTransparencyToggle.addEventListener("change", () => {
+    plateauTransparencyEnabled = plateauTransparencyToggle.checked;
+    syncEnvironmentVisibilityControls();
+    refreshAllPlateauOverrideStyles();
+  });
+  plateauTransparencySlider.addEventListener("input", () => {
+    plateauTransparencyPercent = Number(plateauTransparencySlider.value);
+    syncEnvironmentVisibilityControls();
+    refreshAllPlateauOverrideStyles();
+  });
+  gdbIconsToggle.addEventListener("change", () => {
+    gdbIconsVisible = gdbIconsToggle.checked;
+    refreshGdbIcons();
+  });
   editorBuildingSelectEl?.addEventListener("change", () => {
     const val = parseInt(editorBuildingSelectEl.value, 10);
     selectedBuildingIndex = val >= 0 ? val : -1;
@@ -1031,7 +1061,10 @@ async function applyToken() {
 
 // -- Imagery / terrain (shared helpers in cesiumInit.js) --
 async function switchImagery() {
-  await switchImageryImpl(viewer, imagerySelect.value, { onAfterSwitch: applyUndergroundMode });
+  await switchImageryImpl(viewer, imagerySelect.value, {
+    onAfterSwitch: applyUndergroundMode,
+    cartoKey: cartoKeyInput.value.trim(),
+  });
 }
 
 function switchTerrain() {
@@ -1066,8 +1099,23 @@ function pickThroughGhosts(position) {
 function applyPlateauLayerStyle(layer) {
   applyPlateauLayerStyleImpl(layer, {
     overridesEnabled: plateauOverridesEnabled,
-    contextGhosted: isContextGhosted(),
+    transparencyEnabled: plateauTransparencyEnabled,
+    transparencyPercent: plateauTransparencyPercent,
   });
+}
+
+function syncEnvironmentVisibilityControls() {
+  plateauTransparencyToggle.checked = plateauTransparencyEnabled;
+  plateauTransparencySlider.value = String(plateauTransparencyPercent);
+  plateauTransparencySlider.disabled = !plateauTransparencyEnabled;
+  plateauTransparencyValue.value = `${plateauTransparencyPercent}%`;
+  gdbIconsToggle.checked = gdbIconsVisible;
+}
+
+function refreshGdbIcons() {
+  for (const layer of [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)]) {
+    setGdbLayerIconsVisible(layer, gdbIconsVisible);
+  }
 }
 
 function refreshAllPlateauOverrideStyles() {
@@ -4094,6 +4142,7 @@ function applyEntityStyling(dataSource, layerName = "", layer = null) {
       }
     }
   }
+  setGdbLayerIconsVisible(layer, gdbIconsVisible);
 }
 
 function removeShapefileLayer(building, layer) {
@@ -4793,6 +4842,9 @@ function buildSessionSnapshot() {
     imagery: imagerySelect.value,
     terrain: terrainSelect.value,
     plateauOverridesEnabled,
+    plateauTransparencyEnabled,
+    plateauTransparencyPercent,
+    gdbIconsVisible,
     modelLevels,
     activeModelLevelIndex,
     venues,
@@ -4829,6 +4881,15 @@ function createSessionRestoreContext() {
       activeVenueFilter = null;
     },
     setPlateauOverridesEnabled: (v) => { plateauOverridesEnabled = v; },
+    setPlateauTransparency: (enabled, percent) => {
+      plateauTransparencyEnabled = enabled;
+      plateauTransparencyPercent = percent;
+      syncEnvironmentVisibilityControls();
+    },
+    setGdbIconsVisible: (visible) => {
+      gdbIconsVisible = visible;
+      syncEnvironmentVisibilityControls();
+    },
     setSelectedPlateauFeature: (v) => { selectedPlateauFeature = v; },
     setImageryChoice: (v) => { imagerySelect.value = v; },
     switchImagery: async (choice) => {
@@ -4876,6 +4937,7 @@ function createSessionRestoreContext() {
     onComplete: () => {
       renderImportedLayersList();
       refreshAllPlateauOverrideStyles();
+      refreshGdbIcons();
       invalidateAndRerender();
     },
   };
@@ -4945,6 +5007,9 @@ function getPublishState() {
     imagery: imagerySelect.value,
     terrain: terrainSelect.value,
     plateauOverridesEnabled,
+    plateauTransparencyEnabled,
+    plateauTransparencyPercent,
+    gdbIconsVisible,
     modelLevels,
     activeModelLevelIndex,
     buildings,

@@ -20,6 +20,7 @@ import {
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
+import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
 import {
   initializeTerrainProviders,
   switchImagery as switchImageryProvider,
@@ -80,6 +81,7 @@ import {
   updateNetworkDataSourceVisibility,
 } from "./networkPlacement.js";
 import { readSavedCesiumIonToken } from "./cesiumToken.js";
+import { readSavedCartoKey } from "./cartoKey.js";
 
 // -- State --
 let viewer;
@@ -90,6 +92,9 @@ let modelLevels = [];
 let activeModelLevelIndex = -1;
 let selectedBuildingIndex = -1;
 let plateauOverridesEnabled = true;
+let plateauTransparencyEnabled = false;
+let plateauTransparencyPercent = 70;
+let gdbIconsVisible = true;
 let manifest = null;
 let venues = [];
 let currentVenueId = null;
@@ -139,6 +144,10 @@ const importedLayersListEl = document.getElementById("importedLayersList");
 const noImportedLayersMsg = document.getElementById("noImportedLayersMsg");
 const imagerySelect = document.getElementById("imagerySelect");
 const terrainSelect = document.getElementById("terrainSelect");
+const plateauTransparencyToggle = document.getElementById("plateauTransparencyToggle");
+const plateauTransparencySlider = document.getElementById("plateauTransparencySlider");
+const plateauTransparencyValue = document.getElementById("plateauTransparencyValue");
+const gdbIconsToggle = document.getElementById("gdbIconsToggle");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
 const searchInput = document.getElementById("searchInput");
@@ -191,7 +200,21 @@ function init() {
     if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
   });
   imagerySelect.addEventListener("change", () => switchImagery());
-  terrainSelect.addEventListener("change", switchTerrain);
+  terrainSelect.addEventListener("change", () => switchTerrain());
+  plateauTransparencyToggle.addEventListener("change", () => {
+    plateauTransparencyEnabled = plateauTransparencyToggle.checked;
+    syncEnvironmentVisibilityControls();
+    refreshPlateauStyles();
+  });
+  plateauTransparencySlider.addEventListener("input", () => {
+    plateauTransparencyPercent = Number(plateauTransparencySlider.value);
+    syncEnvironmentVisibilityControls();
+    refreshPlateauStyles();
+  });
+  gdbIconsToggle.addEventListener("change", () => {
+    gdbIconsVisible = gdbIconsToggle.checked;
+    refreshGdbIcons();
+  });
   lodFilterToggle.addEventListener("change", handleLodFilterToggle);
   initSearch();
   onLanguageChange(() => invalidateAndRerender());
@@ -558,6 +581,15 @@ function buildRestoreContext() {
     clearImportedLayers: (rerender) => clearImportedLayers(rerender),
     clearUnassignedLayers: (rerender) => clearUnassignedLayers(rerender),
     setPlateauOverridesEnabled: (v) => { plateauOverridesEnabled = v; },
+    setPlateauTransparency: (enabled, percent) => {
+      plateauTransparencyEnabled = enabled;
+      plateauTransparencyPercent = percent;
+      syncEnvironmentVisibilityControls();
+    },
+    setGdbIconsVisible: (visible) => {
+      gdbIconsVisible = visible;
+      syncEnvironmentVisibilityControls();
+    },
     setSelectedPlateauFeature: () => {},
     setImageryChoice: (v) => { imagerySelect.value = v; },
     switchImagery: (v) => switchImagery(v),
@@ -586,6 +618,7 @@ function buildRestoreContext() {
     },
     onComplete: () => {
       refreshPlateauStyles();
+      refreshGdbIcons();
       showMissingTilesetWarnings();
       zoomToScene(viewer, buildings);
       invalidateAndRerender();
@@ -631,7 +664,10 @@ function clearUnassignedLayers(rerender = true) {
 
 // -- Basemap --
 async function switchImagery(choice = imagerySelect.value) {
-  await switchImageryProvider(viewer, choice, { onAfterSwitch: applyUndergroundMode });
+  await switchImageryProvider(viewer, choice, {
+    onAfterSwitch: applyUndergroundMode,
+    cartoKey: readSavedCartoKey() || import.meta.env.VITE_CARTO_API_KEY || "",
+  });
 }
 
 function switchTerrain(choice = terrainSelect.value) {
@@ -979,6 +1015,7 @@ function applyEntityStyling(dataSource, layerName = "", layer = null) {
       }
     }
   }
+  setGdbLayerIconsVisible(layer, gdbIconsVisible);
 }
 
 function showMissingTilesetWarnings() {
@@ -1004,10 +1041,24 @@ function showMissingTilesetWarnings() {
 }
 
 // -- PLATEAU (read-only styles) --
+function syncEnvironmentVisibilityControls() {
+  plateauTransparencyToggle.checked = plateauTransparencyEnabled;
+  plateauTransparencySlider.value = String(plateauTransparencyPercent);
+  plateauTransparencySlider.disabled = !plateauTransparencyEnabled;
+  plateauTransparencyValue.value = `${plateauTransparencyPercent}%`;
+  gdbIconsToggle.checked = gdbIconsVisible;
+}
+
+function refreshGdbIcons() {
+  for (const layer of [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)]) {
+    setGdbLayerIconsVisible(layer, gdbIconsVisible);
+  }
+}
+
 function refreshPlateauStyles() {
   for (const layer of importedLayers) {
     if (!isPlateauLayer(layer)) continue;
-    applyPlateauLayerStyleImpl(layer, { overridesEnabled: plateauOverridesEnabled, contextGhosted: activeModelLevelIndex >= 0 });
+    applyPlateauLayerStyleImpl(layer, { overridesEnabled: plateauOverridesEnabled, transparencyEnabled: plateauTransparencyEnabled, transparencyPercent: plateauTransparencyPercent });
   }
 }
 
@@ -1016,7 +1067,7 @@ function applyImportedLayerContexts() {
   for (const layer of importedLayers) {
     if (isPlateauLayer(layer)) {
       if (layer.data) layer.data.show = !!layer.visible && !isUndergroundActive();
-      applyPlateauLayerStyleImpl(layer, { overridesEnabled: plateauOverridesEnabled, contextGhosted: ghosted });
+      applyPlateauLayerStyleImpl(layer, { overridesEnabled: plateauOverridesEnabled, transparencyEnabled: plateauTransparencyEnabled, transparencyPercent: plateauTransparencyPercent });
     } else if (layer.type === "datasource" && layer.data) {
       layer.data.show = !!layer.visible;
       applyEntitiesContextState(layer.data.entities.values, { ghosted, layerVisible: layer.visible });

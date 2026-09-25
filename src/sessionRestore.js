@@ -134,6 +134,8 @@ export async function restoreSession(data, ctx) {
   await clearSceneState(ctx);
 
   ctx.setPlateauOverridesEnabled?.(data.plateauOverridesEnabled ?? true);
+  ctx.setPlateauTransparency?.(data.plateauTransparencyEnabled ?? false, data.plateauTransparencyPercent ?? 70);
+  ctx.setGdbIconsVisible?.(data.gdbIconsVisible ?? true);
   ctx.setSelectedPlateauFeature?.(null);
 
   if (data.imagery) {

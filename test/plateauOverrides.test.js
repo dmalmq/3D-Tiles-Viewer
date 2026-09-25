@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   PLATEAU_ID_PROPERTIES,
+  applyPlateauLayerStyle,
   clearPlateauFeatureOverrides,
   countPlateauOverrides,
   createPlateauFeatureSelection,
@@ -213,6 +214,39 @@ test("getPlateauOverride returns undefined when the feature isn't overridden", (
   const layer = { plateauOverrides: new Map() };
   const feature = { getProperty: (n) => (n === "uro:buildingID" ? "B-9" : null) };
   assert.equal(getPlateauOverride(layer, feature), undefined);
+});
+
+test("selecting a floor leaves visible PLATEAU buildings opaque", () => {
+  const originalStyle = { name: "original" };
+  const layer = makePlateauLayer({ data: { style: originalStyle, makeStyleDirty() {} } });
+
+  applyPlateauLayerStyle(layer, { overridesEnabled: true, contextGhosted: true });
+  assert.equal(layer.data.style, originalStyle);
+
+  setPlateauFeatureOverride(layer, "uro:buildingID:G", "ghost", "Ghosted");
+  applyPlateauLayerStyle(layer, { overridesEnabled: true, contextGhosted: true });
+  const visible = { getProperty: (name) => name === "uro:buildingID" ? "V" : null };
+  const ghosted = { getProperty: (name) => name === "uro:buildingID" ? "G" : null };
+  assert.equal(layer.data.style.color.evaluateColor(visible).alpha, 1);
+  assert.ok(layer.data.style.color.evaluateColor(ghosted).alpha < 1);
+});
+
+test("global PLATEAU transparency applies without manual overrides and combines with them", () => {
+  const originalStyle = { name: "original" };
+  const layer = makePlateauLayer({ data: { style: originalStyle, makeStyleDirty() {} } });
+  const normal = { getProperty: (name) => name === "uro:buildingID" ? "N" : null };
+  const ghost = { getProperty: (name) => name === "uro:buildingID" ? "G" : null };
+
+  applyPlateauLayerStyle(layer, { overridesEnabled: true, transparencyEnabled: true, transparencyPercent: 60 });
+  assert.ok(Math.abs(layer.data.style.color.evaluateColor(normal).alpha - 0.4) < 0.001);
+
+  setPlateauFeatureOverride(layer, "uro:buildingID:G", "ghost", "Ghosted");
+  applyPlateauLayerStyle(layer, { overridesEnabled: true, transparencyEnabled: true, transparencyPercent: 60 });
+  assert.ok(Math.abs(layer.data.style.color.evaluateColor(normal).alpha - 0.4) < 0.001);
+  assert.equal(layer.data.style.color.evaluateColor(ghost).alpha, 0.18);
+
+  applyPlateauLayerStyle(layer, { overridesEnabled: true, transparencyEnabled: false });
+  assert.equal(layer.data.style.color.evaluateColor(normal).alpha, 1);
 });
 
 test("override collection helpers mutate only PLATEAU layers", () => {
