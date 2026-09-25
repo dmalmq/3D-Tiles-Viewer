@@ -6,6 +6,8 @@ data/packages/
 terminals/
 public/tiles/*
 !public/tiles/.gitkeep
+!public/tiles/sample-indoor/
+!public/tiles/sample-indoor/**
 
 debug.log
 vite-*.log

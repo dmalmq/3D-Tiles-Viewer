@@ -53,7 +53,7 @@ export async function loadTilesetFromUrl(viewer, url, { zoom = true } = {}) {
  * selected files, then loads the rewritten JSON. This avoids fetch/XHR
  * interception issues since Cesium gets direct blob URLs for every resource.
  */
-export async function loadTilesetFromFiles(viewer, fileList, statusEl) {
+export async function loadTilesetFromFiles(viewer, fileList, statusEl, { zoom = true } = {}) {
   let tilesetJsonFile = null;
   let tilesetJsonPath = null;
 
@@ -109,7 +109,7 @@ export async function loadTilesetFromFiles(viewer, fileList, statusEl) {
     bindE2eTilesetSignals(tileset, tilesetJsonPath);
     viewer.scene.primitives.add(tileset);
     if (statusEl) statusEl.textContent = t("tileset.loaded", { path: tilesetJsonPath });
-    await viewer.zoomTo(tileset);
+    if (zoom) await viewer.zoomTo(tileset);
 
     tileset._blobCleanup = { blobUrls, tilesetBlobUrl };
     return tileset;
@@ -165,9 +165,9 @@ function rewriteContentUris(tile, blobUrls) {
 /**
  * Load 3D Tiles from a FileSystemDirectoryHandle (Chrome File System Access API).
  */
-export async function loadTilesetFromDirectoryHandle(viewer, dirHandle, statusEl) {
+export async function loadTilesetFromDirectoryHandle(viewer, dirHandle, statusEl, options) {
   const files = await getFilesFromDirectoryHandle(dirHandle);
-  return loadTilesetFromFiles(viewer, files, statusEl);
+  return loadTilesetFromFiles(viewer, files, statusEl, options);
 }
 
 /**
