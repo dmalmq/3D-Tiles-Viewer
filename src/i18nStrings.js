@@ -124,6 +124,8 @@ const en = {
   // Basemap
   "basemap.tokenLabel": "Cesium Ion Token",
   "basemap.tokenPlaceholder": "Paste token here…",
+  "basemap.cartoKeyLabel": "CARTO Basemaps API Key",
+  "basemap.cartoKeyPlaceholder": "Paste CARTO key here…",
   "basemap.applyToken": "Apply",
   "basemap.imageryLabel": "Imagery",
   "basemap.terrainLabel": "Terrain",
@@ -452,6 +454,9 @@ const en = {
 
   // PLATEAU overlap
   "building.plateauOverlap": "Ghost overlapping PLATEAU",
+  "plateau.globalTransparency": "Transparent PLATEAU data",
+  "plateau.transparencyAmount": "Transparency",
+  "gdb.showIcons": "Show GDB icons",
 
   // Venues
   "venue.add": "Add venue",
@@ -670,6 +675,8 @@ const ja = {
   // Basemap
   "basemap.tokenLabel": "Cesium Ion トークン",
   "basemap.tokenPlaceholder": "ここにトークンを貼り付け…",
+  "basemap.cartoKeyLabel": "CARTO ベースマップ API キー",
+  "basemap.cartoKeyPlaceholder": "CARTO キーを貼り付け…",
   "basemap.applyToken": "適用",
   "basemap.imageryLabel": "画像",
   "basemap.terrainLabel": "地形",
@@ -997,6 +1004,9 @@ const ja = {
 
   // PLATEAU overlap
   "building.plateauOverlap": "重複する PLATEAU を透過表示",
+  "plateau.globalTransparency": "PLATEAU データを透過表示",
+  "plateau.transparencyAmount": "透過率",
+  "gdb.showIcons": "GDB アイコンを表示",
 
   // Loading indicators
   "ctx.building.assignVenue": "会場に割り当て",

@@ -120,6 +120,21 @@
             <span data-i18n="models.highestLodOnly">Highest LOD only</span>
           </label>
           <p id="lodFilterStatus" class="status-text"></p>
+          <label class="toggle-label">
+            <input type="checkbox" id="plateauTransparencyToggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span data-i18n="plateau.globalTransparency">Transparent PLATEAU data</span>
+          </label>
+          <label class="field-label" for="plateauTransparencySlider" data-i18n="plateau.transparencyAmount">Transparency</label>
+          <div class="slider-row">
+            <input id="plateauTransparencySlider" type="range" min="0" max="100" value="70" disabled />
+            <output id="plateauTransparencyValue" for="plateauTransparencySlider">70%</output>
+          </div>
+          <label class="toggle-label">
+            <input type="checkbox" id="gdbIconsToggle" checked />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span data-i18n="gdb.showIcons">Show GDB icons</span>
+          </label>
         </div>
       </div>
 

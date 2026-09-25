@@ -219,20 +219,21 @@ export function initializePlateauLayer(layer) {
 // Apply (or remove) the override style on a PLATEAU layer.
 //   overridesEnabled — global toggle from the UI; false means user wants the
 //     normal PLATEAU appearance.
-//   contextGhosted — true when an active model level is hiding non-active
-//     buildings, in which case PLATEAU should ghost too.
-export function applyPlateauLayerStyle(layer, { overridesEnabled, contextGhosted }) {
+export function applyPlateauLayerStyle(layer, { overridesEnabled, transparencyEnabled = false, transparencyPercent = 70 }) {
   if (!isPlateauLayer(layer) || !layer.data) return;
   initializePlateauLayer(layer);
 
   const hasOverrides = layer.plateauOverrides.size > 0;
-  if (!contextGhosted && (!overridesEnabled || !hasOverrides)) {
+  if ((!overridesEnabled || !hasOverrides) && !transparencyEnabled) {
     layer.data.style = layer._plateauOriginalStyle;
     layer.data.makeStyleDirty();
     layer._plateauOverrideStyleApplied = false;
     return;
   }
 
+  const alpha = transparencyEnabled ? 1 - Math.min(100, Math.max(0, Number(transparencyPercent) || 0)) / 100 : 1;
+  const transparentColor = Color.WHITE.withAlpha(alpha);
+  const ghostColor = PLATEAU_GHOST_COLOR.withAlpha(Math.min(PLATEAU_GHOST_COLOR.alpha, alpha));
   const style = new Cesium3DTileStyle();
   style.show = {
     evaluate: (feature) => {
@@ -243,8 +244,8 @@ export function applyPlateauLayerStyle(layer, { overridesEnabled, contextGhosted
   style.color = {
     evaluateColor: (feature, result) => {
       const mode = overridesEnabled ? getPlateauOverride(layer, feature)?.mode : null;
-      if (mode === "ghost" || contextGhosted) return Color.clone(PLATEAU_GHOST_COLOR, result);
-      return Color.clone(Color.WHITE, result);
+      if (mode === "ghost") return Color.clone(ghostColor, result);
+      return Color.clone(transparentColor, result);
     },
   };
   layer.data.style = style;

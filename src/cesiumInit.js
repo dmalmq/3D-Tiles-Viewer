@@ -8,15 +8,11 @@ import {
   CustomHeightmapTerrainProvider,
   WebMercatorTilingScheme,
   createWorldTerrainAsync,
-  IonResource,
   Color,
 } from "cesium";
+import { getCartoTileUrl } from "./cartoKey.js";
 
-const DEFAULT_PLATEAU_TERRAIN_TOKEN =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY";
-
-export const PLATEAU_TERRAIN_TOKEN =
-  import.meta.env.VITE_PLATEAU_TERRAIN_TOKEN || DEFAULT_PLATEAU_TERRAIN_TOKEN;
+const PLATEAU_TERRAIN_URL = "https://tile.plateauview.mlit.go.jp/terrain";
 
 export const UNDERGROUND_BASE_COLOR = Color.fromCssColorString("#1a1a1a");
 
@@ -35,10 +31,7 @@ export async function initializeTerrainProviders(savedToken) {
   }
 
   try {
-    const plateauResource = await IonResource.fromAssetId(3258112, {
-      accessToken: PLATEAU_TERRAIN_TOKEN,
-    });
-    providers.plateauTerrainProvider = await CesiumTerrainProvider.fromUrl(plateauResource);
+    providers.plateauTerrainProvider = await CesiumTerrainProvider.fromUrl(PLATEAU_TERRAIN_URL);
   } catch (e) {
     console.warn("Failed to load PLATEAU terrain:", e);
   }
@@ -46,7 +39,7 @@ export async function initializeTerrainProviders(savedToken) {
   return providers;
 }
 
-export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
+export async function switchImagery(viewer, choice, { onAfterSwitch, cartoKey = "" } = {}) {
   viewer.imageryLayers.removeAll();
   const osmFallback = () =>
     viewer.imageryLayers.addImageryProvider(
@@ -122,9 +115,13 @@ export async function switchImagery(viewer, choice, { onAfterSwitch } = {}) {
       }
       break;
     case "carto-positron":
+      if (!cartoKey) {
+        osmFallback();
+        break;
+      }
       viewer.imageryLayers.addImageryProvider(
         new UrlTemplateImageryProvider({
-          url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+          url: getCartoTileUrl(cartoKey),
           subdomains: ["a", "b", "c", "d"],
           maximumLevel: 19,
           credit: "© OpenStreetMap contributors © CARTO",

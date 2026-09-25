@@ -42,6 +42,19 @@ test("serializeSession stamps the current schema version", () => {
   assert.equal(data.version, SESSION_SCHEMA_VERSION);
 });
 
+test("serializeSession preserves map visibility settings in venue slices", () => {
+  const data = serializeSession({
+    ...baseState(),
+    plateauTransparencyEnabled: true,
+    plateauTransparencyPercent: 55,
+    gdbIconsVisible: false,
+  });
+  const sliced = filterSessionByVenue(data, "venue-1");
+  assert.equal(sliced.plateauTransparencyEnabled, true);
+  assert.equal(sliced.plateauTransparencyPercent, 55);
+  assert.equal(sliced.gdbIconsVisible, false);
+});
+
 test("buildings sharing a tileset get the same tilesetGroupId", () => {
   const shared = {};
   const state = baseState();

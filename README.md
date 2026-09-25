@@ -109,7 +109,7 @@ npm start
 |---|---|---|
 | `PORT` | `3000` | Port for the production Express server |
 | `PUBLISH_TOKEN` | `""` | Optional bearer token to guard publish endpoints |
-| `VITE_PLATEAU_TERRAIN_TOKEN` | bundled | Override the public PLATEAU terrain token |
+| `VITE_CARTO_API_KEY` | `""` | CARTO Basemaps key for Positron tiles; can also be entered in map settings |
 | `VITE_DEV_ALLOW_CORS` | `true` | Set to `false` to disable permissive CORS on the dev server |
 
 ---

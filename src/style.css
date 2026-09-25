@@ -944,6 +944,8 @@ select option {
   height: 3px;
 }
 
+.slider-row input[type="range"]:disabled { opacity: 0.45; }
+
 .slider-row input[type="number"] {
   width: 68px !important;
   flex-shrink: 0;
