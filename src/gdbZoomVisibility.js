@@ -13,8 +13,9 @@
 import { Cartesian3, Cartographic, DistanceDisplayCondition, JulianDate, Math as CesiumMath } from "cesium";
 
 export const DEFAULT_MIN_ZOOM = 19;
-export const ICON_DETAIL_MIN = -2;
-export const ICON_DETAIL_MAX = 3;
+export const ICON_DETAIL_MIN = -3;
+export const ICON_DETAIL_MAX = 4;
+export const ICON_DETAIL_STEP = 0.1;
 
 // point_facility's label categories, from landmarks down to single shops.
 const LABEL_CATEGORY_MIN_ZOOM = {
@@ -38,7 +39,22 @@ const WEB_MERCATOR_EQUATOR_MPP = 156543.03392;
 export function normalizeIconDetail(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
-  return Math.min(ICON_DETAIL_MAX, Math.max(ICON_DETAIL_MIN, Math.round(n * 2) / 2));
+  const stepped = Math.round(n / ICON_DETAIL_STEP) * ICON_DETAIL_STEP;
+  return Math.min(ICON_DETAIL_MAX, Math.max(ICON_DETAIL_MIN, Number(stepped.toFixed(1))));
+}
+
+/** "+1.5", "0", "-0.5" for the Icon detail readout. */
+export function formatIconDetail(value) {
+  const n = normalizeIconDetail(value);
+  if (n === 0) return "0";
+  return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
+}
+
+/** Icon floor setting: a floor number, or null for all floors. */
+export function normalizeIconFloor(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Camera distance (m) matching the ground resolution of web-map `zoom`. */
@@ -165,8 +181,10 @@ function compareMarkers(a, b) {
  * @param {import("cesium").Viewer} options.viewer
  * @param {() => object[]} options.getLayers all GDB-capable layers
  * @param {() => number} options.getDetail icon-detail offset (zoom levels)
+ * @param {(layer: object) => boolean} [options.includeLayer] limits which
+ *   layers' markers take part, e.g. to show icons from one floor only
  */
-export function createGdbIconSampler({ viewer, getLayers, getDetail }) {
+export function createGdbIconSampler({ viewer, getLayers, getDetail, includeLayer = () => true }) {
   const { scene, camera } = viewer;
   let lastSignature = "";
   let pending = false;
@@ -175,6 +193,7 @@ export function createGdbIconSampler({ viewer, getLayers, getDetail }) {
     const out = [];
     for (const layer of getLayers() ?? []) {
       if (!layer?.dataSource || (layer._origin ?? "gdb") !== "gdb" || layer.dataSource.show === false) continue;
+      if (!includeLayer(layer)) continue;
       for (const entity of layer.dataSource.entities.values) {
         if (entity._gdbBaseFar == null) continue;
         const graphic = entity.billboard ?? entity.point;

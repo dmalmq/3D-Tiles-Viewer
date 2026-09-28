@@ -49,6 +49,7 @@ export function serializeSession({
   revitSettings = null,
   gdbIconsVisible = true,
   gdbIconDetail = 0,
+  gdbIconFloor = null,
   modelLevels,
   activeModelLevelIndex,
   venues = [],
@@ -78,6 +79,7 @@ export function serializeSession({
     ...(revitSettings ? { revitSettings: normalizeRevitSettings(revitSettings) } : {}),
     gdbIconsVisible,
     gdbIconDetail,
+    gdbIconFloor,
     modelLevels: modelLevels.map((m) => ({
       floorNumber: m.floorNumber,
       name: m.name,

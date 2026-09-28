@@ -31,7 +31,14 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
-import { applyGdbLayerZoomVisibility, createGdbIconSampler, normalizeIconDetail } from "./gdbZoomVisibility.js";
+import {
+  applyGdbLayerZoomVisibility,
+  createGdbIconSampler,
+  formatIconDetail,
+  normalizeIconDetail,
+  normalizeIconFloor,
+} from "./gdbZoomVisibility.js";
+import { formatFloorNumber } from "./floorSplit.js";
 import {
   loadTilesetFromUrl,
   loadTilesetFromFiles,
@@ -215,6 +222,7 @@ let selectedRevitFeature = null; // { building, key, label, category }
 let gdbIconsVisible = true;
 let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
 let gdbIconSampler = null;
+let gdbIconFloor = null; // floor number whose GDB icons show; null = all floors
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 
@@ -344,6 +352,7 @@ const revitHighlightColor = document.getElementById("revitHighlightColor");
 const revitHighlightMaterialToggle = document.getElementById("revitHighlightMaterialToggle");
 const gdbIconDetailSlider = document.getElementById("gdbIconDetailSlider");
 const gdbIconDetailValue = document.getElementById("gdbIconDetailValue");
+const gdbIconFloorSelect = document.getElementById("gdbIconFloorSelect");
 const plateauFloatingCard = document.getElementById("plateauFloatingCard");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingOverlayMessage = document.getElementById("loadingOverlayMessage");
@@ -410,6 +419,7 @@ function init() {
     viewer,
     getLayers: () => [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)],
     getDetail: () => gdbIconDetail,
+    includeLayer: (layer) => gdbIconFloor == null || gdbLayerFloorNumber(layer) === gdbIconFloor,
   });
 
   switchImagery();
@@ -513,6 +523,13 @@ function init() {
   gdbIconDetailSlider.addEventListener("input", () => {
     gdbIconDetail = normalizeIconDetail(gdbIconDetailSlider.value);
     syncEnvironmentVisibilityControls();
+    refreshGdbIcons();
+  });
+  // Floors come and go with buildings; refresh the list when it's opened.
+  gdbIconFloorSelect.addEventListener("pointerdown", populateGdbIconFloorSelect);
+  gdbIconFloorSelect.addEventListener("focus", populateGdbIconFloorSelect);
+  gdbIconFloorSelect.addEventListener("change", () => {
+    gdbIconFloor = normalizeIconFloor(gdbIconFloorSelect.value);
     refreshGdbIcons();
   });
   editorBuildingSelectEl?.addEventListener("change", () => {
@@ -1182,7 +1199,40 @@ function syncEnvironmentVisibilityControls() {
   revitHighlightColor.disabled = revitSettings.highlightMode === "material";
   gdbIconsToggle.checked = gdbIconsVisible;
   gdbIconDetailSlider.value = String(gdbIconDetail);
-  gdbIconDetailValue.value = gdbIconDetail > 0 ? `+${gdbIconDetail}` : String(gdbIconDetail);
+  gdbIconDetailValue.value = formatIconDetail(gdbIconDetail);
+  populateGdbIconFloorSelect();
+}
+
+// Floor number of the level a GDB layer sits on; null for "All floors" and
+// unassigned layers.
+function gdbLayerFloorNumber(layer) {
+  if (layer?.levelKey == null) return null;
+  const building = buildings.find((b) => b.shapefileLayers.includes(layer));
+  const level = building?.levels.find((l) => (l.key ?? "") === layer.levelKey);
+  return level ? levelNameToNumber(level.name) : null;
+}
+
+function populateGdbIconFloorSelect() {
+  const current = gdbIconFloor == null ? "" : String(gdbIconFloor);
+  // Every floor of the loaded buildings, top first. Built from the levels
+  // directly: the model-level list isn't populated on every load path.
+  const floors = new Map();
+  for (const building of buildings) {
+    for (const level of building.levels ?? []) {
+      const fn = levelNameToNumber(level.name);
+      if (fn != null && !floors.has(fn)) floors.set(fn, formatFloorNumber(fn));
+    }
+  }
+  const options = [["", t("gdb.iconFloorAll")]];
+  for (const [fn, label] of [...floors].sort((x, y) => y[0] - x[0])) options.push([String(fn), label]);
+  // Keep a saved floor selectable even before its building has loaded.
+  if (current && !options.some(([value]) => value === current)) options.push([current, current]);
+  const signature = options.map(([value, label]) => `${value}=${label}`).join("|");
+  if (gdbIconFloorSelect.dataset.options !== signature) {
+    gdbIconFloorSelect.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+    gdbIconFloorSelect.dataset.options = signature;
+  }
+  gdbIconFloorSelect.value = current;
 }
 
 function setRevitSettings(next) {
@@ -2275,6 +2325,7 @@ function rebuildModelLevels() {
   next.sort((a, b) => a.floorNumber - b.floorNumber);
   modelLevels = next;
   if (activeModelLevelIndex >= modelLevels.length) activeModelLevelIndex = -1;
+  populateGdbIconFloorSelect();
 }
 
 // Set the global active model level and fan out to each building's
@@ -5202,6 +5253,7 @@ function buildSessionSnapshot() {
     revitSettings,
     gdbIconsVisible,
     gdbIconDetail,
+    gdbIconFloor,
     modelLevels,
     activeModelLevelIndex,
     venues,
@@ -5251,6 +5303,10 @@ function createSessionRestoreContext() {
     },
     setGdbIconDetail: (detail) => {
       gdbIconDetail = normalizeIconDetail(detail);
+      syncEnvironmentVisibilityControls();
+    },
+    setGdbIconFloor: (floor) => {
+      gdbIconFloor = normalizeIconFloor(floor);
       syncEnvironmentVisibilityControls();
     },
     setSelectedPlateauFeature: (v) => { selectedPlateauFeature = v; },
@@ -5375,6 +5431,7 @@ function getPublishState() {
     revitSettings,
     gdbIconsVisible,
     gdbIconDetail,
+    gdbIconFloor,
     modelLevels,
     activeModelLevelIndex,
     buildings,

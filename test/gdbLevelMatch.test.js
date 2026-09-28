@@ -101,3 +101,11 @@ test("split groups features by floor and reports unmatched floors", () => {
     [null, 1, null],
   ]);
 });
+
+test("floor numbers format as short labels", async () => {
+  const { formatFloorNumber } = await import("../src/floorSplit.js");
+  assert.equal(formatFloorNumber(1), "1F");
+  assert.equal(formatFloorNumber(36), "36F");
+  assert.equal(formatFloorNumber(-2), "B2F");
+  assert.equal(formatFloorNumber(1.5), "M2F");
+});

@@ -63,6 +63,13 @@ export function extractFloorNumber(text) {
   return null;
 }
 
+/** Short label for a floor number: 1 → "1F", -2 → "B2F", 1.5 → "M2F". */
+export function formatFloorNumber(n) {
+  if (!Number.isFinite(n)) return "";
+  if (!Number.isInteger(n)) return `M${Math.round(n + 0.5)}F`;
+  return n < 0 ? `B${-n}F` : `${n}F`;
+}
+
 /** The one-letter line prefix of a floor code ("KB3" → "K"), if any. */
 export function extractFloorPrefix(text) {
   if (!text) return null;
