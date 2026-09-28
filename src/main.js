@@ -108,6 +108,7 @@ import {
   countPlateauOverrides,
   createPlateauFeatureSelection,
   findPlateauLayerForFeature,
+  getFeatureTileset,
   getPlateauOverrideMode,
   isPlateauLayer,
   listPlateauLayers,
@@ -118,6 +119,21 @@ import {
   serializePlateauOverrides,
   setPlateauFeatureOverride,
 } from "./plateauOverrides.js";
+import {
+  applyRevitFeatureAppearance,
+  createRevitHighlightShader,
+  findOwningBuilding,
+  getRevitFeatureCategory,
+  getRevitFeatureKey,
+  getRevitFeatureLabel,
+  normalizeRevitAppearance,
+  normalizeRevitSettings,
+  resolveRevitFeatureMode,
+  revitGhostAlpha,
+  setRevitCategoryOverride,
+  setRevitFeatureOverride,
+  updateRevitHighlightShader,
+} from "./revitAppearance.js";
 import {
   findLayerParent as findLayerParentImpl,
 } from "./sceneTreeView.js";
@@ -190,6 +206,10 @@ let selectedPlateauFeature = null;
 let plateauOverridesEnabled = true;
 let plateauTransparencyEnabled = false;
 let plateauTransparencyPercent = 70;
+let revitSettings = normalizeRevitSettings();
+// One shader shared by every Revit tileset; the sliders only update uniforms.
+const revitHighlightShader = createRevitHighlightShader(revitSettings);
+let selectedRevitFeature = null; // { building, key, label, category }
 let gdbIconsVisible = true;
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
@@ -312,6 +332,11 @@ const plateauTransparencyToggle = document.getElementById("plateauTransparencyTo
 const plateauTransparencySlider = document.getElementById("plateauTransparencySlider");
 const plateauTransparencyValue = document.getElementById("plateauTransparencyValue");
 const gdbIconsToggle = document.getElementById("gdbIconsToggle");
+const revitTransparencySlider = document.getElementById("revitTransparencySlider");
+const revitTransparencyValue = document.getElementById("revitTransparencyValue");
+const revitHighlightSlider = document.getElementById("revitHighlightSlider");
+const revitHighlightValue = document.getElementById("revitHighlightValue");
+const revitHighlightColor = document.getElementById("revitHighlightColor");
 const plateauFloatingCard = document.getElementById("plateauFloatingCard");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingOverlayMessage = document.getElementById("loadingOverlayMessage");
@@ -459,6 +484,16 @@ function init() {
   gdbIconsToggle.addEventListener("change", () => {
     gdbIconsVisible = gdbIconsToggle.checked;
     refreshGdbIcons();
+  });
+  revitTransparencySlider.addEventListener("input", () => {
+    setRevitSettings({ ...revitSettings, transparencyPercent: revitTransparencySlider.value });
+    refreshRevitAppearance();
+  });
+  revitHighlightSlider.addEventListener("input", () => {
+    setRevitSettings({ ...revitSettings, highlightPercent: revitHighlightSlider.value });
+  });
+  revitHighlightColor.addEventListener("input", () => {
+    setRevitSettings({ ...revitSettings, highlightColor: revitHighlightColor.value });
   });
   editorBuildingSelectEl?.addEventListener("change", () => {
     const val = parseInt(editorBuildingSelectEl.value, 10);
@@ -975,9 +1010,11 @@ function initHighlight() {
 
     const plateauLayer = findPlateauLayerForFeature(importedLayers, picked);
     if (plateauLayer) {
+      selectedRevitFeature = null;
       selectPlateauFeature(plateauLayer, picked);
     } else {
       selectedPlateauFeature = null;
+      selectedRevitFeature = createRevitFeatureSelection(picked);
       renderPlateauFloatingCard();
     }
 
@@ -1091,7 +1128,9 @@ function isContextGhosted() {
 
 function pickThroughGhosts(position) {
   return pickThroughGhostsImpl(position, {
-    drillPick: (p) => viewer.scene.drillPick(p),
+    drillPick: (p) => preferRevitBehindTransparentPlateau(
+      viewer.scene.drillPick(p).filter((hit) => !isTransparentRevitFeature(hit)),
+    ),
     layerForFeature: (feature) => findPlateauLayerForFeature(importedLayers, feature),
   });
 }
@@ -1109,7 +1148,27 @@ function syncEnvironmentVisibilityControls() {
   plateauTransparencySlider.value = String(plateauTransparencyPercent);
   plateauTransparencySlider.disabled = !plateauTransparencyEnabled;
   plateauTransparencyValue.value = `${plateauTransparencyPercent}%`;
+  revitTransparencySlider.value = String(revitSettings.transparencyPercent);
+  revitTransparencyValue.value = `${revitSettings.transparencyPercent}%`;
+  revitHighlightSlider.value = String(revitSettings.highlightPercent);
+  revitHighlightValue.value = `${revitSettings.highlightPercent}%`;
+  revitHighlightColor.value = revitSettings.highlightColor;
   gdbIconsToggle.checked = gdbIconsVisible;
+}
+
+function setRevitSettings(next) {
+  revitSettings = normalizeRevitSettings(next);
+  updateRevitHighlightShader(revitHighlightShader, revitSettings);
+  syncEnvironmentVisibilityControls();
+  viewer.scene.requestRender();
+}
+
+// Re-run the per-feature filter so override / transparency changes apply to
+// tiles that are already loaded.
+function refreshRevitAppearance(tileset = null) {
+  const tilesets = tileset ? [tileset] : [...new Set(buildings.map((b) => b.tileset).filter(Boolean))];
+  for (const ts of tilesets) applyFiltersForTileset(ts);
+  viewer.scene.requestRender();
 }
 
 function refreshGdbIcons() {
@@ -1184,6 +1243,10 @@ function handleBuildingOverlapToggle() {
 function renderPlateauFloatingCard() {
   updateBuildingOverlapToggle();
   if (!plateauFloatingCard) return;
+  if (selectedRevitFeature) {
+    renderRevitFloatingCard();
+    return;
+  }
 
   const showTools = shouldShowPlateauToolsPanel();
   if (!showTools) {
@@ -1293,6 +1356,192 @@ function renderPlateauFloatingCard() {
     emptyOverrides.className = "empty-msg";
     emptyOverrides.textContent = t("plateau.noOverrides");
     plateauFloatingCard.appendChild(emptyOverrides);
+  }
+  clearBtn.disabled = count === 0;
+}
+
+// -- Revit element overrides --
+// Clicking a Revit feature opens the same floating card with element and
+// category controls; overrides live on the owning building (building.appearance).
+
+function createRevitFeatureSelection(feature) {
+  if (!(feature instanceof Cesium3DTileFeature)) return null;
+  const tileset = getFeatureTileset(feature);
+  const building = findOwningBuilding(tileset?._buildings, feature);
+  if (!building) return null;
+  return {
+    building,
+    key: getRevitFeatureKey(feature),
+    label: getRevitFeatureLabel(feature),
+    category: getRevitFeatureCategory(feature),
+  };
+}
+
+// With "Transparent PLATEAU data" on, the model is visible through the
+// PLATEAU block in front of it, so a click should reach the model.
+function preferRevitBehindTransparentPlateau(hits) {
+  if (!plateauTransparencyEnabled) return hits;
+  const revitIndex = hits.findIndex((hit) => createRevitFeatureSelection(hit) != null);
+  if (revitIndex <= 0) return hits;
+  const inFront = hits.slice(0, revitIndex);
+  if (!inFront.every((hit) => findPlateauLayerForFeature(importedLayers, hit))) return hits;
+  return hits.slice(revitIndex);
+}
+
+function isTransparentRevitFeature(feature) {
+  if (!(feature instanceof Cesium3DTileFeature)) return false;
+  const building = findOwningBuilding(getFeatureTileset(feature)?._buildings, feature);
+  return resolveRevitFeatureMode(building?.appearance, feature) === "ghost";
+}
+
+function ensureRevitAppearance(building) {
+  if (!building.appearance) building.appearance = normalizeRevitAppearance();
+  return building.appearance;
+}
+
+function setSelectedRevitElementMode(mode) {
+  const selected = selectedRevitFeature;
+  if (!selected?.key) return;
+  setRevitFeatureOverride(ensureRevitAppearance(selected.building), selected.key, mode, selected.label);
+  refreshRevitAppearance(selected.building.tileset);
+  renderPlateauFloatingCard();
+}
+
+function setSelectedRevitCategoryMode(mode) {
+  const selected = selectedRevitFeature;
+  if (!selected?.category) return;
+  setRevitCategoryOverride(ensureRevitAppearance(selected.building), selected.category, mode);
+  refreshRevitAppearance(selected.building.tileset);
+  renderPlateauFloatingCard();
+}
+
+function clearRevitOverrides(building) {
+  building.appearance = normalizeRevitAppearance();
+  refreshRevitAppearance(building.tileset);
+  renderPlateauFloatingCard();
+}
+
+function renderRevitFloatingCard() {
+  const selected = selectedRevitFeature;
+  const { building } = selected;
+  const appearance = building.appearance ?? normalizeRevitAppearance();
+  plateauFloatingCard.hidden = false;
+  plateauFloatingCard.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "card-header";
+  const title = document.createElement("span");
+  title.textContent = t("revit.cardTitle", { building: building.name });
+  header.appendChild(title);
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "card-close-btn";
+  closeBtn.type = "button";
+  closeBtn.textContent = "×";
+  closeBtn.title = t("modal.close");
+  closeBtn.addEventListener("click", () => {
+    selectedRevitFeature = null;
+    renderPlateauFloatingCard();
+  });
+  header.appendChild(closeBtn);
+  plateauFloatingCard.appendChild(header);
+
+  const nameDiv = document.createElement("div");
+  nameDiv.className = "plateau-feature-name";
+  nameDiv.textContent = selected.label;
+  nameDiv.title = selected.key ?? "";
+  plateauFloatingCard.appendChild(nameDiv);
+
+  const mkActions = (labelText, currentMode, onSelect, disabled) => {
+    const label = document.createElement("div");
+    label.className = "revit-override-scope";
+    label.textContent = labelText;
+    plateauFloatingCard.appendChild(label);
+    const actions = document.createElement("div");
+    actions.className = "plateau-feature-actions";
+    for (const [labelKey, modeValue] of [
+      ["plateau.transparent", "ghost"],
+      ["plateau.hideFeature", "hidden"],
+      ["plateau.visible", null],
+    ]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "secondary-btn compact";
+      b.textContent = t(labelKey);
+      b.disabled = disabled;
+      b.classList.toggle("active", !disabled && currentMode === modeValue);
+      b.addEventListener("click", () => onSelect(modeValue));
+      actions.appendChild(b);
+    }
+    plateauFloatingCard.appendChild(actions);
+  };
+
+  mkActions(
+    t("revit.thisElement"),
+    selected.key ? appearance.features[selected.key]?.mode ?? null : null,
+    setSelectedRevitElementMode,
+    !selected.key,
+  );
+  if (selected.category) {
+    mkActions(
+      t("revit.allInCategory", { category: selected.category }),
+      appearance.categories[selected.category] ?? null,
+      setSelectedRevitCategoryMode,
+      false,
+    );
+  }
+
+  const overridesHeader = document.createElement("div");
+  overridesHeader.className = "plateau-overrides-header";
+  const overridesTitle = document.createElement("span");
+  overridesTitle.textContent = t("plateau.overridesTitle");
+  overridesHeader.appendChild(overridesTitle);
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "secondary-btn compact";
+  clearBtn.textContent = t("plateau.clearAll");
+  clearBtn.addEventListener("click", () => clearRevitOverrides(building));
+  overridesHeader.appendChild(clearBtn);
+  plateauFloatingCard.appendChild(overridesHeader);
+
+  const list = document.createElement("ul");
+  list.id = "plateauOverrideList";
+  const addItem = (name, mode, onRestore) => {
+    const li = document.createElement("li");
+    li.className = "plateau-override-item";
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "plateau-override-name";
+    nameSpan.textContent = name;
+    nameSpan.title = name;
+    const modeSpan = document.createElement("span");
+    modeSpan.className = "plateau-override-mode";
+    modeSpan.textContent = t(mode === "hidden" ? "plateau.mode.hidden" : "plateau.mode.ghost");
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "plateau-override-restore-btn";
+    restoreBtn.textContent = t("plateau.visible");
+    restoreBtn.addEventListener("click", () => {
+      onRestore();
+      refreshRevitAppearance(building.tileset);
+      renderPlateauFloatingCard();
+    });
+    li.appendChild(nameSpan);
+    li.appendChild(modeSpan);
+    li.appendChild(restoreBtn);
+    list.appendChild(li);
+  };
+  for (const [category, mode] of Object.entries(appearance.categories)) {
+    addItem(t("revit.allInCategory", { category }), mode, () => setRevitCategoryOverride(ensureRevitAppearance(building), category, null));
+  }
+  for (const [key, entry] of Object.entries(appearance.features)) {
+    addItem(entry.label || key, entry.mode, () => setRevitFeatureOverride(ensureRevitAppearance(building), key, null));
+  }
+  plateauFloatingCard.appendChild(list);
+
+  const count = list.children.length;
+  if (count === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-msg";
+    empty.textContent = t("plateau.noOverrides");
+    plateauFloatingCard.appendChild(empty);
   }
   clearBtn.disabled = count === 0;
 }
@@ -1534,6 +1783,7 @@ function makeBuildingObject({ name, tileset, sourceUrl, levelBaseElevation, link
 function bindTilesetTileLoad(tileset) {
   if (!tileset || tileset._linkAwareTileLoadBound) return;
   tileset._linkAwareTileLoadBound = true;
+  tileset.customShader = revitHighlightShader;
   tileset.tileLoad.addEventListener(tile => {
     applyFiltersToContent(tileset, tile.content);
     scheduleLodFilterRefresh();
@@ -2273,6 +2523,7 @@ function applyFiltersToContent(tileset, content) {
     linkValue: b.linkFilter?.value ?? null,
     hidden: !!b._hidden,
   }));
+  const ghostAlpha = revitGhostAlpha(revitSettings);
 
   for (let i = 0; i < count; i++) {
     const feature = content.getFeature(i);
@@ -2288,21 +2539,24 @@ function applyFiltersToContent(tileset, content) {
       feature.show = false;
       continue;
     }
+    let visible;
     if (activeFn === null) {
       // "All floors" — show everything.
-      feature.show = true;
+      visible = true;
     } else {
       const lvl = feature.getProperty("levelName");
       const cat = feature.getProperty("category");
       if (lvl === "Unassigned" && cat === "Mass") {
-        feature.show = false;
+        visible = false;
       } else {
         const fn = getFeatureFloorNumber(owning.building, lvl);
-        if (fn == null) feature.show = false; // unmappable → hidden when filtering
-        else if (fn <= activeFn && cat === "Ceilings") feature.show = false;
-        else feature.show = fn <= activeFn;
+        if (fn == null) visible = false; // unmappable → hidden when filtering
+        else if (fn <= activeFn && cat === "Ceilings") visible = false;
+        else visible = fn <= activeFn;
       }
     }
+    const mode = visible ? resolveRevitFeatureMode(owning.building.appearance, feature) : null;
+    applyRevitFeatureAppearance(feature, visible, mode, ghostAlpha);
   }
 }
 
@@ -4844,6 +5098,7 @@ function buildSessionSnapshot() {
     plateauOverridesEnabled,
     plateauTransparencyEnabled,
     plateauTransparencyPercent,
+    revitSettings,
     gdbIconsVisible,
     modelLevels,
     activeModelLevelIndex,
@@ -4879,7 +5134,9 @@ function createSessionRestoreContext() {
     onCleared: () => {
       venues.length = 0;
       activeVenueFilter = null;
+      selectedRevitFeature = null;
     },
+    setRevitSettings,
     setPlateauOverridesEnabled: (v) => { plateauOverridesEnabled = v; },
     setPlateauTransparency: (enabled, percent) => {
       plateauTransparencyEnabled = enabled;
@@ -5009,6 +5266,7 @@ function getPublishState() {
     plateauOverridesEnabled,
     plateauTransparencyEnabled,
     plateauTransparencyPercent,
+    revitSettings,
     gdbIconsVisible,
     modelLevels,
     activeModelLevelIndex,

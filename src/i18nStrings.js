@@ -471,6 +471,14 @@ const en = {
   "building.plateauOverlap": "Ghost overlapping PLATEAU",
   "plateau.globalTransparency": "Transparent PLATEAU data",
   "plateau.transparencyAmount": "Transparency",
+  "revit.sectionTitle": "Revit models",
+  "revit.highlight": "Highlight",
+  "revit.highlightColor": "Highlight colour",
+  "revit.transparencyAmount": "Transparent elements",
+  "revit.transparencyHint": "Click a Revit element to make it, or its whole category, transparent.",
+  "revit.cardTitle": "Revit element · {building}",
+  "revit.thisElement": "This element",
+  "revit.allInCategory": "All “{category}”",
   "gdb.showIcons": "Show GDB icons",
 
   // Venues
@@ -1043,6 +1051,14 @@ const ja = {
   "building.plateauOverlap": "重複する PLATEAU を透過表示",
   "plateau.globalTransparency": "PLATEAU データを透過表示",
   "plateau.transparencyAmount": "透過率",
+  "revit.sectionTitle": "Revit モデル",
+  "revit.highlight": "ハイライト",
+  "revit.highlightColor": "ハイライト色",
+  "revit.transparencyAmount": "半透明要素の透明度",
+  "revit.transparencyHint": "Revit の要素をクリックすると、その要素またはカテゴリ全体を半透明にできます。",
+  "revit.cardTitle": "Revit 要素 · {building}",
+  "revit.thisElement": "この要素",
+  "revit.allInCategory": "「{category}」すべて",
   "gdb.showIcons": "GDB アイコンを表示",
 
   // Loading indicators

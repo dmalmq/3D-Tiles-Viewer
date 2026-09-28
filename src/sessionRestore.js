@@ -1,3 +1,4 @@
+import { normalizeRevitAppearance, normalizeRevitSettings } from "./revitAppearance.js";
 import { Color, GeoJsonDataSource } from "cesium";
 import { loadTilesetFromUrl, loadTilesetFromFiles, removeCurrentTileset } from "./tilesetLoader.js";
 import { getFilesFromDirectoryHandle } from "./fileSystemAccess.js";
@@ -80,6 +81,7 @@ function makeBuildingFromData(bData, tileset, { loadError = null, tilesetUrl = n
       .map((dataset) => reviveNetworkDataset(dataset))
       .filter(Boolean),
     linkFilter: bData.linkFilter ?? null,
+    appearance: normalizeRevitAppearance(bData.appearance),
     venueId: bData.venueId ?? null,
     aliases: Array.isArray(bData.aliases) ? bData.aliases : [],
     packageBuildingId: bData.packageBuildingId ?? null,
@@ -135,6 +137,7 @@ export async function restoreSession(data, ctx) {
 
   ctx.setPlateauOverridesEnabled?.(data.plateauOverridesEnabled ?? true);
   ctx.setPlateauTransparency?.(data.plateauTransparencyEnabled ?? false, data.plateauTransparencyPercent ?? 70);
+  ctx.setRevitSettings?.(normalizeRevitSettings(data.revitSettings));
   ctx.setGdbIconsVisible?.(data.gdbIconsVisible ?? true);
   ctx.setSelectedPlateauFeature?.(null);
 
