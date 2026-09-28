@@ -36,22 +36,29 @@ test("marker zoom comes from min_zoom_level, then label_category, then the defau
   assert.equal(markerMinZoom(read({})), DEFAULT_MIN_ZOOM);
 });
 
-test("important markers stay visible from further away", () => {
+test("a marker's zoom sets its label range; icons wait for the sampler", () => {
   const landmark = marker({ min_zoom_level: 16 });
   const toilet = marker({ min_zoom_level: 20 });
   const layer = { _origin: "gdb", dataSource: { entities: { values: [landmark, toilet] } } };
   applyGdbLayerZoomVisibility(layer, 0);
-  const far = (e) => e.billboard.distanceDisplayCondition.far;
-  assert.ok(far(landmark) > far(toilet) * 15);
+  assert.ok(landmark._gdbBaseFar > toilet._gdbBaseFar * 15);
+  assert.equal(toilet.billboard.distanceDisplayCondition.far, 1, "hidden until it wins a cell");
+  toilet._gdbSampled = true;
+  applyGdbLayerZoomVisibility(layer, 0);
+  assert.ok(toilet.billboard.distanceDisplayCondition.far > 10000);
 });
 
-test("icon detail shifts every marker and labels keep their own cap", () => {
+test("icon detail shifts label ranges, which keep their cap", () => {
   const shop = marker({ min_zoom_level: 18 }, { label: true });
   const layer = { _origin: "gdb", dataSource: { entities: { values: [shop] } } };
-  applyGdbLayerZoomVisibility(layer, 0, { labelMaxDistance: 300 });
-  const base = shop.billboard.distanceDisplayCondition.far;
+  applyGdbLayerZoomVisibility(layer, 0, { labelMaxDistance: 5000 });
+  const base = shop._gdbBaseFar;
+  assert.equal(shop.label.distanceDisplayCondition.far, 1, "hidden until sampled");
+  shop._gdbLabelSampled = true;
+  applyGdbLayerZoomVisibility(layer, 1, { labelMaxDistance: 5000 });
+  assert.ok(Math.abs(shop._gdbBaseFar / base - 2) < 0.01);
+  assert.ok(Math.abs(shop.label.distanceDisplayCondition.far - shop._gdbBaseFar) < 1);
   applyGdbLayerZoomVisibility(layer, 1, { labelMaxDistance: 300 });
-  assert.ok(Math.abs(shop.billboard.distanceDisplayCondition.far / base - 2) < 0.01);
   assert.equal(shop.label.distanceDisplayCondition.far, 300);
 });
 
@@ -65,4 +72,32 @@ test("icon detail is clamped to half steps", () => {
   assert.equal(normalizeIconDetail("1.3"), 1.5);
   assert.equal(normalizeIconDetail(9), 3);
   assert.equal(normalizeIconDetail("x"), 0);
+});
+
+test("sampling keeps the most important marker per cell", async () => {
+  const { sampleMarkersByCell } = await import("../src/gdbZoomVisibility.js");
+  const at = (key, lat, lng, minZoom, hasImage = true, rank = 0.5) => ({ key, lat, lng, minZoom, hasImage, rank });
+  const markers = [
+    at("shop", 35.6810, 139.7670, 20),
+    at("exit", 35.6811, 139.7671, 17),
+    at("dot", 35.6811, 139.7672, 17, false),
+    at("far", 35.6900, 139.7800, 20),
+  ];
+  // 200 m cells: the first three share a cell; the exit wins (lower zoom,
+  // and a picture icon beats a plain dot at the same zoom).
+  assert.deepEqual([...sampleMarkersByCell(markers, 200)].sort(), ["exit", "far"]);
+  // Tiny cells: everyone gets their own.
+  assert.equal(sampleMarkersByCell(markers, 1).size, 4);
+  // Sampling off.
+  assert.equal(sampleMarkersByCell(markers, 0).size, 0);
+});
+
+test("ties are broken the same way every time", async () => {
+  const { sampleMarkersByCell } = await import("../src/gdbZoomVisibility.js");
+  const markers = [
+    { key: "a", lat: 35.681, lng: 139.767, minZoom: 19, hasImage: true, rank: 0.7 },
+    { key: "b", lat: 35.681, lng: 139.767, minZoom: 19, hasImage: true, rank: 0.2 },
+  ];
+  assert.deepEqual([...sampleMarkersByCell(markers, 100)], ["b"]);
+  assert.deepEqual([...sampleMarkersByCell([...markers].reverse(), 100)], ["b"]);
 });

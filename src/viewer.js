@@ -21,7 +21,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
-import { applyGdbLayerZoomVisibility, normalizeIconDetail } from "./gdbZoomVisibility.js";
+import { applyGdbLayerZoomVisibility, createGdbIconSampler, normalizeIconDetail } from "./gdbZoomVisibility.js";
 import {
   initializeTerrainProviders,
   switchImagery as switchImageryProvider,
@@ -107,6 +107,7 @@ let revitSettings = normalizeRevitSettings();
 const revitHighlightShader = createRevitHighlightShader(revitSettings);
 let gdbIconsVisible = true;
 let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
+let gdbIconSampler = null;
 let manifest = null;
 let venues = [];
 let currentVenueId = null;
@@ -195,6 +196,11 @@ function init() {
     // Skip the default Ion base layer (needs a token); switchImagery() below
     // applies whatever the imagery select shows.
     baseLayer: false,
+  });
+  gdbIconSampler = createGdbIconSampler({
+    viewer,
+    getLayers: () => [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)],
+    getDetail: () => gdbIconDetail,
   });
 
   switchImagery();
@@ -1126,6 +1132,7 @@ function refreshGdbIcons() {
     setGdbLayerIconsVisible(layer, gdbIconsVisible);
     applyGdbLayerZoomVisibility(layer, gdbIconDetail, { labelMaxDistance: 300 });
   }
+  gdbIconSampler?.refresh();
   viewer.scene.requestRender();
 }
 
