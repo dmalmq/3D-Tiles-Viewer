@@ -999,9 +999,13 @@ function initHighlight() {
   let prevEntity = null;
 
   handler.setInputAction((click) => {
-    // Restore previous highlight
+    // Restore previous highlight. Revit features get their current override
+    // re-applied instead: the colour captured at click time goes stale if the
+    // element (or its category) was made transparent while it was selected.
     if (prevTileFeature) {
-      prevTileFeature.color = prevTileColor.clone();
+      if (!reapplyRevitFeatureAppearance(prevTileFeature)) {
+        prevTileFeature.color = prevTileColor.clone();
+      }
       prevTileFeature = null;
     }
     if (prevEntity) {
@@ -1393,6 +1397,13 @@ function preferRevitBehindTransparentPlateau(hits) {
   const inFront = hits.slice(0, revitIndex);
   if (!inFront.every((hit) => findPlateauLayerForFeature(importedLayers, hit))) return hits;
   return hits.slice(revitIndex);
+}
+
+function reapplyRevitFeatureAppearance(feature) {
+  const tileset = getFeatureTileset(feature);
+  if (!tileset?._buildings?.length || !feature.content || feature.content.isDestroyed?.()) return false;
+  applyFiltersToContent(tileset, feature.content);
+  return true;
 }
 
 function isTransparentRevitFeature(feature) {
