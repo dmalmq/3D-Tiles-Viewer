@@ -21,6 +21,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
+import { applyGdbLayerZoomVisibility, normalizeIconDetail } from "./gdbZoomVisibility.js";
 import {
   initializeTerrainProviders,
   switchImagery as switchImageryProvider,
@@ -105,6 +106,7 @@ let plateauTransparencyPercent = 70;
 let revitSettings = normalizeRevitSettings();
 const revitHighlightShader = createRevitHighlightShader(revitSettings);
 let gdbIconsVisible = true;
+let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
 let manifest = null;
 let venues = [];
 let currentVenueId = null;
@@ -164,6 +166,8 @@ const revitHighlightValue = document.getElementById("revitHighlightValue");
 const revitHighlightColor = document.getElementById("revitHighlightColor");
 const revitHighlightMaterialToggle = document.getElementById("revitHighlightMaterialToggle");
 const gdbIconsToggle = document.getElementById("gdbIconsToggle");
+const gdbIconDetailSlider = document.getElementById("gdbIconDetailSlider");
+const gdbIconDetailValue = document.getElementById("gdbIconDetailValue");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
 const searchInput = document.getElementById("searchInput");
@@ -242,6 +246,11 @@ function init() {
   });
   gdbIconsToggle.addEventListener("change", () => {
     gdbIconsVisible = gdbIconsToggle.checked;
+    refreshGdbIcons();
+  });
+  gdbIconDetailSlider.addEventListener("input", () => {
+    gdbIconDetail = normalizeIconDetail(gdbIconDetailSlider.value);
+    syncEnvironmentVisibilityControls();
     refreshGdbIcons();
   });
   lodFilterToggle.addEventListener("change", handleLodFilterToggle);
@@ -620,6 +629,10 @@ function buildRestoreContext() {
       syncEnvironmentVisibilityControls();
     },
     setRevitSettings,
+    setGdbIconDetail: (detail) => {
+      gdbIconDetail = normalizeIconDetail(detail);
+      syncEnvironmentVisibilityControls();
+    },
     setSelectedPlateauFeature: () => {},
     setImageryChoice: (v) => { imagerySelect.value = v; },
     switchImagery: (v) => switchImagery(v),
@@ -1050,6 +1063,7 @@ function applyEntityStyling(dataSource, layerName = "", layer = null) {
     }
   }
   setGdbLayerIconsVisible(layer, gdbIconsVisible);
+  applyGdbLayerZoomVisibility(layer, gdbIconDetail, { labelMaxDistance: 300 });
 }
 
 function showMissingTilesetWarnings() {
@@ -1089,6 +1103,8 @@ function syncEnvironmentVisibilityControls() {
   // The picked colour is unused while glowing in material colours.
   revitHighlightColor.disabled = revitSettings.highlightMode === "material";
   gdbIconsToggle.checked = gdbIconsVisible;
+  gdbIconDetailSlider.value = String(gdbIconDetail);
+  gdbIconDetailValue.value = gdbIconDetail > 0 ? `+${gdbIconDetail}` : String(gdbIconDetail);
 }
 
 function setRevitSettings(next) {
@@ -1108,7 +1124,9 @@ function refreshRevitAppearance() {
 function refreshGdbIcons() {
   for (const layer of [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)]) {
     setGdbLayerIconsVisible(layer, gdbIconsVisible);
+    applyGdbLayerZoomVisibility(layer, gdbIconDetail, { labelMaxDistance: 300 });
   }
+  viewer.scene.requestRender();
 }
 
 function refreshPlateauStyles() {

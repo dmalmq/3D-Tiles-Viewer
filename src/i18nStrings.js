@@ -230,6 +230,9 @@ const en = {
 
   // GDB import review dialog
   "gdb.dialog.title": "Import GDB layers",
+  "gdb.floorSplitDone": "Split {layers} layers by floor: {matched} of {floors} floors were placed on a level automatically.",
+  "gdb.iconDetail": "Icon detail",
+  "gdb.iconDetailHint": "How close you need to be before GDB icons appear. Higher shows more icons from further away.",
   "gdb.dialog.subtitle": "{count} layers found. Review the building and floor for each, then click Import.",
   "gdb.dialog.col.layer": "Layer",
   "gdb.dialog.col.match": "Match",
@@ -811,6 +814,9 @@ const ja = {
 
   // GDB インポート確認ダイアログ
   "gdb.dialog.title": "GDB レイヤをインポート",
+  "gdb.floorSplitDone": "{layers} 件のレイヤを階ごとに分割しました：{floors} 階中 {matched} 階を自動でレベルに割り当てました。",
+  "gdb.iconDetail": "アイコンの表示量",
+  "gdb.iconDetailHint": "GDB アイコンが表示されるまでの距離です。高くすると、より遠くから多くのアイコンが表示されます。",
   "gdb.dialog.subtitle": "{count} 件のレイヤが見つかりました。各レイヤの建物とフロアを確認し、インポートをクリックしてください。",
   "gdb.dialog.col.layer": "レイヤ",
   "gdb.dialog.col.match": "一致",

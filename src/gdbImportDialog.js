@@ -13,7 +13,6 @@ import {
   isLevelFeatureClass,
   detectLayerLevelRef,
   resolveLayerLevelForBuilding,
-  matchLevelByText,
   groupFeaturesByFloor,
 } from "./gdbAutoMatch.js";
 import {
@@ -25,8 +24,12 @@ import {
   buildingIndexFromValue as buildingIndexFromValueShared,
   stripExt,
 } from "./gdbAssignmentControls.js";
+import { buildFloorAltitudeHints, resolveFloorLevel } from "./gdbLevelMatch.js";
 
-export function openGdbImportDialog({ featureCollections, buildings, onImport, mode = "import" }) {
+export function openGdbImportDialog({ featureCollections, buildings, onImport, mode = "import", buildingFootprints = null }) {
+  // Lets layers without an altitude column borrow it for the same floor code
+  // from sibling layers in this GDB when choosing between same-numbered levels.
+  const altitudeHints = buildFloorAltitudeHints(featureCollections);
   const levelsByPrefix = buildLevelsByPrefix(featureCollections);
   let filterText = "";
   let submitting = false;
@@ -64,6 +67,7 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
           filename: fc.fileName,
           features: fc.features ?? [],
           buildings,
+          buildingFootprints,
         });
 
     const buildingValue = metadataOnly
@@ -453,7 +457,12 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
     if (row.floorManual) return;
     const bi = buildingIndexFromValue(row.buildingValue);
     if (bi == null || !row.floorValue) return;
-    const matched = matchLevelByText(row.floorValue, buildings[bi].levels);
+    const matched = resolveFloorLevel({
+      floorValue: row.floorValue,
+      features: row.features,
+      levels: buildings[bi].levels,
+      altitudeHints,
+    })?.level;
     if (matched) {
       row.levelValue = matched.key ?? "";
       row.floorResolved = true;
@@ -469,6 +478,7 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
         floorValue: g.floorValue,
         key: g.key,
         count: g.features.length,
+        features: g.features,
         buildingValue: parentBuildingValue,
         levelValue: FLOOR_ALL,
         confidence: g.floorValue ? "medium" : "none",

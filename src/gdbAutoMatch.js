@@ -103,8 +103,13 @@ export function matchLayerToTarget({ filename, features, buildings, buildingFoot
   }
 
   const building = buildings[best.buildingIndex];
-  const levelText = [fileText, source].filter(Boolean).join(" ");
-  const level = matchLevelByText(levelText, building.levels);
+  // A layer spanning several floors is split per floor on import, so don't
+  // pin it to one level from its name. Numeric-only sources ("1") are ids,
+  // not floors.
+  const multiFloor = groupFeaturesByFloor(features ?? []).length >= 2;
+  const levelSource = source && !/^\d+$/.test(source.trim()) ? source : null;
+  const levelText = [fileText, levelSource].filter(Boolean).join(" ");
+  const level = multiFloor ? null : matchLevelByText(levelText, building.levels);
   // Spatial-only matches stay "medium" — preselects the building in review but never auto-imports
   const confidence = best.nameScore > 0 && level ? "high" : "medium";
   return {
@@ -310,11 +315,12 @@ export function splitFeaturesBySource(fc) {
   const noSource = [];
   for (const f of features) {
     const raw = readProp(f?.properties ?? {}, ["source", "Source", "SOURCE"]);
-    if (!raw || isPlaceholderSource(raw)) {
+    // Trim so "1" and "1 " are one source; blank-after-trim means no source.
+    const key = raw == null ? "" : String(raw).trim();
+    if (!key || isPlaceholderSource(key)) {
       noSource.push(f);
       continue;
     }
-    const key = String(raw);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
   }

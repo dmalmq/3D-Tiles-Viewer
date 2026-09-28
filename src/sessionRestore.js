@@ -139,6 +139,7 @@ export async function restoreSession(data, ctx) {
   ctx.setPlateauTransparency?.(data.plateauTransparencyEnabled ?? false, data.plateauTransparencyPercent ?? 70);
   ctx.setRevitSettings?.(normalizeRevitSettings(data.revitSettings));
   ctx.setGdbIconsVisible?.(data.gdbIconsVisible ?? true);
+  ctx.setGdbIconDetail?.(data.gdbIconDetail ?? 0);
   ctx.setSelectedPlateauFeature?.(null);
 
   if (data.imagery) {

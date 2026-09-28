@@ -48,6 +48,7 @@ export function serializeSession({
   plateauTransparencyPercent = 70,
   revitSettings = null,
   gdbIconsVisible = true,
+  gdbIconDetail = 0,
   modelLevels,
   activeModelLevelIndex,
   venues = [],
@@ -76,6 +77,7 @@ export function serializeSession({
     plateauTransparencyPercent,
     ...(revitSettings ? { revitSettings: normalizeRevitSettings(revitSettings) } : {}),
     gdbIconsVisible,
+    gdbIconDetail,
     modelLevels: modelLevels.map((m) => ({
       floorNumber: m.floorNumber,
       name: m.name,
