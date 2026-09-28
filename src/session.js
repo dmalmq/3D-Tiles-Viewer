@@ -1,6 +1,7 @@
 // Pure (de)serialization for session JSON. The actual reload/restore
 // orchestration lives in main.js — this module only owns the on-disk shape.
 
+import { normalizeSavedViews } from "./viewExport.js";
 import { hasRevitOverrides, normalizeRevitAppearance, normalizeRevitSettings } from "./revitAppearance.js";
 import { serializeSourceLevelGroups } from "./levelMetadata.js";
 import { serializeNetworkDataset } from "./networkData.js";
@@ -50,6 +51,7 @@ export function serializeSession({
   gdbIconsVisible = true,
   gdbIconDetail = 0,
   gdbIconFloor = null,
+  savedViews = [],
   modelLevels,
   activeModelLevelIndex,
   venues = [],
@@ -80,6 +82,7 @@ export function serializeSession({
     gdbIconsVisible,
     gdbIconDetail,
     gdbIconFloor,
+    ...(savedViews?.length ? { savedViews: normalizeSavedViews(savedViews) } : {}),
     modelLevels: modelLevels.map((m) => ({
       floorNumber: m.floorNumber,
       name: m.name,
