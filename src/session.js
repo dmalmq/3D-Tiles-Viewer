@@ -46,6 +46,7 @@ export function serializeSession({
   plateauTransparencyEnabled = false,
   plateauTransparencyPercent = 70,
   gdbIconsVisible = true,
+  gdbIconDetail = 0,
   modelLevels,
   activeModelLevelIndex,
   venues = [],
@@ -73,6 +74,7 @@ export function serializeSession({
     plateauTransparencyEnabled,
     plateauTransparencyPercent,
     gdbIconsVisible,
+    gdbIconDetail,
     modelLevels: modelLevels.map((m) => ({
       floorNumber: m.floorNumber,
       name: m.name,
