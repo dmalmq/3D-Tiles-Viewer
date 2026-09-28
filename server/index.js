@@ -5,6 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mirrorTilesetFromUrl, writeTilesetFiles } from "./tilesetMirror.js";
 import { resolvePublishOrigin } from "./publishOrigin.js";
+import {
+  PLATEAU_CACHE_DIR,
+  deletePlateauCache,
+  downloadPlateauTileset,
+  listPlateauCache,
+} from "./plateauCache.js";
 import { storePackage, prunePackagesForBuilding, sanitizePackageId, resolveUploadRelativePath } from "./packageStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -234,6 +240,44 @@ app.post("/api/import-package", packageUpload.any(), async (req, res) => {
   }
 });
 
+// --- PLATEAU local cache: download a dataset (optionally cut to grid cells) ---
+app.get("/api/plateau-cache", async (req, res) => {
+  res.json({ entries: await listPlateauCache() });
+});
+
+// Streams NDJSON: {type:"progress",done,total,bytes} lines, then one
+// {type:"done",...meta} or {type:"error",error} line.
+app.post("/api/plateau-cache", express.json({ limit: "1mb" }), async (req, res) => {
+  const { sourceUrl, meshCodes, label } = req.body ?? {};
+  if (typeof sourceUrl !== "string" || !sourceUrl) {
+    res.status(400).json({ error: "sourceUrl is required" });
+    return;
+  }
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders?.();
+  const send = (payload) => {
+    if (!res.writableEnded) res.write(`${JSON.stringify(payload)}
+`);
+  };
+  try {
+    const meta = await downloadPlateauTileset(
+      { sourceUrl, meshCodes: Array.isArray(meshCodes) ? meshCodes : [], label: String(label ?? "") },
+      progress => send({ type: "progress", ...progress }),
+    );
+    send({ type: "done", ...meta });
+  } catch (err) {
+    console.error("PLATEAU download failed:", err);
+    send({ type: "error", error: err.message || "Download failed" });
+  }
+  res.end();
+});
+
+app.delete("/api/plateau-cache/:key", async (req, res) => {
+  const ok = await deletePlateauCache(req.params.key);
+  res.status(ok ? 200 : 400).json({ ok });
+});
+
 app.use((err, req, res, next) => {
   if (!req.path.startsWith("/api")) {
     next(err);
@@ -247,6 +291,7 @@ app.use((err, req, res, next) => {
 app.use("/sessions", express.static(SESSIONS_DIR, { fallthrough: false }));
 app.use("/tilesets", express.static(TILESETS_DIR, { fallthrough: false }));
 app.use("/packages", express.static(PACKAGES_DIR, { fallthrough: false }));
+app.use("/plateau-cache", express.static(PLATEAU_CACHE_DIR, { fallthrough: false, maxAge: "7d" }));
 app.use(express.static(DIST));
 
 app.use((req, res) => {

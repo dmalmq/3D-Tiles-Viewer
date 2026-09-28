@@ -1927,6 +1927,48 @@ body.left-collapsed .panel-toggle-left .toggle-arrow { transform: rotate(180deg)
   line-height: 1.25;
 }
 
+.import-plateau-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.import-plateau-grid-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.import-plateau-grid-status {
+  flex-basis: 100%;
+  color: var(--text-primary);
+}
+
+.import-plateau-grid-btn {
+  flex-shrink: 0;
+  padding: 3px 10px !important;
+  font-size: 11px !important;
+}
+
+.import-plateau-option-row .import-plateau-option-label {
+  width: auto;
+}
+
+.import-plateau-download-row {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-input);
+}
+
+.import-map-pane.plateau-grid-active .leaflet-container,
+.import-map-pane.plateau-grid-active.leaflet-container {
+  cursor: crosshair;
+}
+
 @media (max-width: 700px) {
   #importModal {
     width: calc(100vw - 24px);

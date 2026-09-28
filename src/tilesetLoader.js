@@ -32,10 +32,10 @@ function bindE2eTilesetSignals(tileset, source) {
  * Load a Cesium3DTileset from a URL.
  * e.g. http://localhost:5173/tiles/my-model/tileset.json
  */
-export async function loadTilesetFromUrl(viewer, url, { zoom = true } = {}) {
+export async function loadTilesetFromUrl(viewer, url, { zoom = true, tilesetOptions } = {}) {
   let tileset = null;
   try {
-    tileset = await Cesium3DTileset.fromUrl(url);
+    tileset = await Cesium3DTileset.fromUrl(url, tilesetOptions);
     bindE2eTilesetSignals(tileset, url);
     viewer.scene.primitives.add(tileset);
     if (zoom) await viewer.zoomTo(tileset);

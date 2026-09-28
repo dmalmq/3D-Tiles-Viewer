@@ -5,17 +5,20 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 
-const api = spawn("node", ["server/index.js"], {
+// Run both children with this Node binary directly (no shell): avoids
+// DEP0190 on Node 24 and lets kill() reach the real process on Windows
+// instead of a cmd.exe wrapper.
+const VITE_BIN = path.join(ROOT, "node_modules", "vite", "bin", "vite.js");
+
+const api = spawn(process.execPath, ["server/index.js"], {
   cwd: ROOT,
   env: { ...process.env, PORT: "3001", PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN || "http://localhost:5173" },
   stdio: "inherit",
-  shell: process.platform === "win32",
 });
 
-const vite = spawn("npx", ["vite", "--port", "5173"], {
+const vite = spawn(process.execPath, [VITE_BIN, "--port", "5173"], {
   cwd: ROOT,
   stdio: "inherit",
-  shell: true,
 });
 
 function shutdown() {

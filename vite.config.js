@@ -36,6 +36,7 @@ export default defineConfig({
       "/sessions": { target: "http://localhost:3001", changeOrigin: true },
       "/tilesets": { target: "http://localhost:3001", changeOrigin: true },
       "/packages": { target: "http://localhost:3001", changeOrigin: true },
+      "/plateau-cache": { target: "http://localhost:3001", changeOrigin: true },
     },
   },
 });
