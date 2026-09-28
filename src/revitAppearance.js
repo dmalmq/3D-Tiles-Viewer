@@ -22,7 +22,12 @@ export const DEFAULT_REVIT_SETTINGS = Object.freeze({
   transparencyPercent: 70,
   highlightPercent: 0,
   highlightColor: "#ff9f1c",
+  // "color": glow in highlightColor; "material": glow in each element's own
+  // Revit material colour.
+  highlightMode: "color",
 });
+
+const HIGHLIGHT_MODES = new Set(["color", "material"]);
 
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
@@ -37,6 +42,7 @@ export function normalizeRevitSettings(value) {
     highlightColor: HEX_COLOR_RE.test(value?.highlightColor ?? "")
       ? value.highlightColor.toLowerCase()
       : DEFAULT_REVIT_SETTINGS.highlightColor,
+    highlightMode: HIGHLIGHT_MODES.has(value?.highlightMode) ? value.highlightMode : DEFAULT_REVIT_SETTINGS.highlightMode,
   };
 }
 
@@ -157,18 +163,30 @@ export function findOwningBuilding(siblings, feature) {
 
 // -- Highlight --------------------------------------------------------------
 
-// Tint towards the highlight colour and add a Fresnel rim that glows along
+// Tint towards the glow colour and add a Fresnel rim that glows along
 // silhouettes and grazing faces. Strength 0 leaves the model untouched.
+//
+// In material mode the glow colour is the element's own Revit material
+// colour with its saturation boosted: Revit materials are mostly pastels
+// (a "green" wall is often ~#DEF5D9), which would otherwise glow near-white.
+// Greys have no hue to boost; they glow neutral and more softly.
 const HIGHLIGHT_FRAGMENT_SHADER = `
 void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
   float strength = u_revitHighlightStrength;
   if (strength <= 0.0) return;
+  vec3 base = material.diffuse;
+  float luma = dot(base, vec3(0.2126, 0.7152, 0.0722));
+  vec3 vivid = clamp(mix(vec3(luma), base, 3.0), 0.0, 1.0);
+  vec3 glowColor = mix(u_revitHighlightColor, vivid, u_revitHighlightUseMaterial);
+  // In material mode, colourless materials glow less so tinted ones stand out.
+  float chroma = max(vivid.r, max(vivid.g, vivid.b)) - min(vivid.r, min(vivid.g, vivid.b));
+  strength *= mix(1.0, mix(0.3, 1.0, smoothstep(0.05, 0.4, chroma)), u_revitHighlightUseMaterial);
   vec3 viewDir = normalize(-fsInput.attributes.positionEC);
   vec3 normal = normalize(fsInput.attributes.normalEC);
   float facing = clamp(abs(dot(normal, viewDir)), 0.0, 1.0);
   float rim = pow(1.0 - facing, 2.2);
-  material.diffuse = mix(material.diffuse, u_revitHighlightColor, 0.45 * strength);
-  material.emissive += u_revitHighlightColor * (0.12 + rim * 1.4) * strength;
+  material.diffuse = mix(base, glowColor, 0.45 * strength);
+  material.emissive += glowColor * (0.12 + rim * 1.4) * strength;
 }
 `;
 
@@ -185,6 +203,7 @@ export function createRevitHighlightShader(settings = DEFAULT_REVIT_SETTINGS) {
     uniforms: {
       u_revitHighlightStrength: { type: UniformType.FLOAT, value: normalized.highlightPercent / 100 },
       u_revitHighlightColor: { type: UniformType.VEC3, value: hexToCartesian3(normalized.highlightColor) },
+      u_revitHighlightUseMaterial: { type: UniformType.FLOAT, value: normalized.highlightMode === "material" ? 1 : 0 },
     },
     fragmentShaderText: HIGHLIGHT_FRAGMENT_SHADER,
   });
@@ -195,4 +214,5 @@ export function updateRevitHighlightShader(shader, settings) {
   const normalized = normalizeRevitSettings(settings);
   shader.setUniform("u_revitHighlightStrength", normalized.highlightPercent / 100);
   shader.setUniform("u_revitHighlightColor", hexToCartesian3(normalized.highlightColor));
+  shader.setUniform("u_revitHighlightUseMaterial", normalized.highlightMode === "material" ? 1 : 0);
 }

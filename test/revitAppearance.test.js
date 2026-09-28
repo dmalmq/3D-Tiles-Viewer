@@ -80,7 +80,10 @@ test("settings are clamped and colours validated", () => {
     transparencyPercent: 100,
     highlightPercent: 40,
     highlightColor: "#abcdef",
+    highlightMode: "color",
   });
+  assert.equal(normalizeRevitSettings({ highlightMode: "material" }).highlightMode, "material");
+  assert.equal(normalizeRevitSettings({ highlightMode: "rainbow" }).highlightMode, "color");
   assert.equal(normalizeRevitSettings({ highlightColor: "red" }).highlightColor, "#ff9f1c");
   assert.ok(Math.abs(revitGhostAlpha({ transparencyPercent: 70 }) - 0.3) < 1e-9);
 });
@@ -101,7 +104,7 @@ test("sessions save building overrides and Revit settings", () => {
     imagery: "osm",
     terrain: "none",
     plateauOverridesEnabled: true,
-    revitSettings: { transparencyPercent: 55, highlightPercent: 30, highlightColor: "#00aaff" },
+    revitSettings: { transparencyPercent: 55, highlightPercent: 30, highlightColor: "#00aaff", highlightMode: "material" },
     modelLevels: [],
     activeModelLevelIndex: -1,
     buildings: [
@@ -113,7 +116,7 @@ test("sessions save building overrides and Revit settings", () => {
     isPlateauLayer: () => false,
     serializePlateauOverrides: () => [],
   });
-  assert.deepEqual(session.revitSettings, { transparencyPercent: 55, highlightPercent: 30, highlightColor: "#00aaff" });
+  assert.deepEqual(session.revitSettings, { transparencyPercent: 55, highlightPercent: 30, highlightColor: "#00aaff", highlightMode: "material" });
   assert.deepEqual(session.buildings[0].appearance, { features: {}, categories: { Mass: "ghost" } });
   assert.equal("appearance" in session.buildings[1], false);
 });

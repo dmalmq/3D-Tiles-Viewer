@@ -162,6 +162,7 @@ const revitTransparencyValue = document.getElementById("revitTransparencyValue")
 const revitHighlightSlider = document.getElementById("revitHighlightSlider");
 const revitHighlightValue = document.getElementById("revitHighlightValue");
 const revitHighlightColor = document.getElementById("revitHighlightColor");
+const revitHighlightMaterialToggle = document.getElementById("revitHighlightMaterialToggle");
 const gdbIconsToggle = document.getElementById("gdbIconsToggle");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
 const lodFilterStatus = document.getElementById("lodFilterStatus");
@@ -235,6 +236,9 @@ function init() {
   });
   revitHighlightColor.addEventListener("input", () => {
     setRevitSettings({ ...revitSettings, highlightColor: revitHighlightColor.value });
+  });
+  revitHighlightMaterialToggle.addEventListener("change", () => {
+    setRevitSettings({ ...revitSettings, highlightMode: revitHighlightMaterialToggle.checked ? "material" : "color" });
   });
   gdbIconsToggle.addEventListener("change", () => {
     gdbIconsVisible = gdbIconsToggle.checked;
@@ -1081,6 +1085,9 @@ function syncEnvironmentVisibilityControls() {
   revitHighlightSlider.value = String(revitSettings.highlightPercent);
   revitHighlightValue.value = `${revitSettings.highlightPercent}%`;
   revitHighlightColor.value = revitSettings.highlightColor;
+  revitHighlightMaterialToggle.checked = revitSettings.highlightMode === "material";
+  // The picked colour is unused while glowing in material colours.
+  revitHighlightColor.disabled = revitSettings.highlightMode === "material";
   gdbIconsToggle.checked = gdbIconsVisible;
 }
 
