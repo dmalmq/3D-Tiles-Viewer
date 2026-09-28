@@ -1,6 +1,7 @@
 // Pure (de)serialization for session JSON. The actual reload/restore
 // orchestration lives in main.js — this module only owns the on-disk shape.
 
+import { hasRevitOverrides, normalizeRevitAppearance, normalizeRevitSettings } from "./revitAppearance.js";
 import { serializeSourceLevelGroups } from "./levelMetadata.js";
 import { serializeNetworkDataset } from "./networkData.js";
 
@@ -45,6 +46,7 @@ export function serializeSession({
   plateauOverridesEnabled,
   plateauTransparencyEnabled = false,
   plateauTransparencyPercent = 70,
+  revitSettings = null,
   gdbIconsVisible = true,
   gdbIconDetail = 0,
   modelLevels,
@@ -73,6 +75,7 @@ export function serializeSession({
     plateauOverridesEnabled,
     plateauTransparencyEnabled,
     plateauTransparencyPercent,
+    ...(revitSettings ? { revitSettings: normalizeRevitSettings(revitSettings) } : {}),
     gdbIconsVisible,
     gdbIconDetail,
     modelLevels: modelLevels.map((m) => ({
@@ -114,6 +117,7 @@ function serializeBuilding(b, idFor) {
     sourceUrl: b.sourceUrl ?? null,
     tilesetGroupId: idFor(b.tileset),
     linkFilter: b.linkFilter ?? null,
+    ...(hasRevitOverrides(b.appearance) ? { appearance: normalizeRevitAppearance(b.appearance) } : {}),
     venueId: b.venueId ?? null,
     heightOffset: b.heightOffset,
     levelBaseElevation: b.levelBaseElevation,

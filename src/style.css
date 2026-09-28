@@ -537,6 +537,38 @@ html[data-theme="light"] .left-popover {
   margin-top: 0;
 }
 
+.env-subheading {
+  margin: 16px 0 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-input);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+
+.slider-row input[type="color"].slider-color {
+  flex-shrink: 0;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+.slider-row input[type="color"].slider-color:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.revit-override-scope {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .field-help {
   font-size: 11px;
   color: var(--text-muted);

@@ -54,6 +54,14 @@ import {
   isPlateauLayer,
 } from "./plateauOverrides.js";
 import { resolveTilesetTopClipLocalZ } from "./levelClipping.js";
+import {
+  applyRevitFeatureAppearance,
+  createRevitHighlightShader,
+  normalizeRevitSettings,
+  resolveRevitFeatureMode,
+  revitGhostAlpha,
+  updateRevitHighlightShader,
+} from "./revitAppearance.js";
 import { levelNameToNumber, shortLevelName } from "./floorSplit.js";
 import { loadTilesetFromUrl, loadTilesetFromFiles, removeCurrentTileset } from "./tilesetLoader.js";
 import { zoomToBuilding as flyToBuilding, zoomToScene } from "./sceneZoom.js";
@@ -95,6 +103,8 @@ let selectedBuildingIndex = -1;
 let plateauOverridesEnabled = true;
 let plateauTransparencyEnabled = false;
 let plateauTransparencyPercent = 70;
+let revitSettings = normalizeRevitSettings();
+const revitHighlightShader = createRevitHighlightShader(revitSettings);
 let gdbIconsVisible = true;
 let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
 let manifest = null;
@@ -149,6 +159,12 @@ const terrainSelect = document.getElementById("terrainSelect");
 const plateauTransparencyToggle = document.getElementById("plateauTransparencyToggle");
 const plateauTransparencySlider = document.getElementById("plateauTransparencySlider");
 const plateauTransparencyValue = document.getElementById("plateauTransparencyValue");
+const revitTransparencySlider = document.getElementById("revitTransparencySlider");
+const revitTransparencyValue = document.getElementById("revitTransparencyValue");
+const revitHighlightSlider = document.getElementById("revitHighlightSlider");
+const revitHighlightValue = document.getElementById("revitHighlightValue");
+const revitHighlightColor = document.getElementById("revitHighlightColor");
+const revitHighlightMaterialToggle = document.getElementById("revitHighlightMaterialToggle");
 const gdbIconsToggle = document.getElementById("gdbIconsToggle");
 const gdbIconDetailSlider = document.getElementById("gdbIconDetailSlider");
 const gdbIconDetailValue = document.getElementById("gdbIconDetailValue");
@@ -214,6 +230,19 @@ function init() {
     plateauTransparencyPercent = Number(plateauTransparencySlider.value);
     syncEnvironmentVisibilityControls();
     refreshPlateauStyles();
+  });
+  revitTransparencySlider.addEventListener("input", () => {
+    setRevitSettings({ ...revitSettings, transparencyPercent: revitTransparencySlider.value });
+    refreshRevitAppearance();
+  });
+  revitHighlightSlider.addEventListener("input", () => {
+    setRevitSettings({ ...revitSettings, highlightPercent: revitHighlightSlider.value });
+  });
+  revitHighlightColor.addEventListener("input", () => {
+    setRevitSettings({ ...revitSettings, highlightColor: revitHighlightColor.value });
+  });
+  revitHighlightMaterialToggle.addEventListener("change", () => {
+    setRevitSettings({ ...revitSettings, highlightMode: revitHighlightMaterialToggle.checked ? "material" : "color" });
   });
   gdbIconsToggle.addEventListener("change", () => {
     gdbIconsVisible = gdbIconsToggle.checked;
@@ -599,6 +628,7 @@ function buildRestoreContext() {
       gdbIconsVisible = visible;
       syncEnvironmentVisibilityControls();
     },
+    setRevitSettings,
     setGdbIconDetail: (detail) => {
       gdbIconDetail = normalizeIconDetail(detail);
       syncEnvironmentVisibilityControls();
@@ -799,6 +829,9 @@ function applyFiltersToContent(tileset, content) {
   if (!siblings.length) return;
   const linkProperty = siblings[0]?.linkFilter?.property ?? null;
   const activeFn = activeModelLevelIndex < 0 ? null : modelLevels[activeModelLevelIndex]?.floorNumber ?? null;
+  const ghostAlpha = revitGhostAlpha(revitSettings);
+  const show = (feature, building, visible) =>
+    applyRevitFeatureAppearance(feature, visible, visible ? resolveRevitFeatureMode(building.appearance, feature) : null, ghostAlpha);
   for (let i = 0; i < count; i++) {
     const feature = content.getFeature(i);
     let owning = siblings[0];
@@ -807,14 +840,14 @@ function applyFiltersToContent(tileset, content) {
       owning = siblings.find((s) => s.linkFilter?.value === valStr) || siblings[0];
     }
     if (!owning || owning._hidden) { feature.show = false; continue; }
-    if (activeFn === null) { feature.show = true; continue; }
+    if (activeFn === null) { show(feature, owning, true); continue; }
     const lvl = feature.getProperty("levelName");
     const cat = feature.getProperty("category");
     if (lvl === "Unassigned" && cat === "Mass") { feature.show = false; continue; }
     const fn = levelNameToNumber(lvl);
     if (fn == null) feature.show = false;
     else if (fn <= activeFn && cat === "Ceilings") feature.show = false;
-    else feature.show = fn <= activeFn;
+    else show(feature, owning, fn <= activeFn);
   }
 }
 
@@ -869,6 +902,7 @@ function activeModelFloorNumber() {
 function bindTilesetTileLoad(tileset) {
   if (!tileset || tileset._linkAwareTileLoadBound) return;
   tileset._linkAwareTileLoadBound = true;
+  tileset.customShader = revitHighlightShader;
   tileset.tileLoad.addEventListener((tile) => {
     applyFiltersToContent(tileset, tile.content);
     scheduleLodFilterRefresh();
@@ -1060,9 +1094,31 @@ function syncEnvironmentVisibilityControls() {
   plateauTransparencySlider.value = String(plateauTransparencyPercent);
   plateauTransparencySlider.disabled = !plateauTransparencyEnabled;
   plateauTransparencyValue.value = `${plateauTransparencyPercent}%`;
+  revitTransparencySlider.value = String(revitSettings.transparencyPercent);
+  revitTransparencyValue.value = `${revitSettings.transparencyPercent}%`;
+  revitHighlightSlider.value = String(revitSettings.highlightPercent);
+  revitHighlightValue.value = `${revitSettings.highlightPercent}%`;
+  revitHighlightColor.value = revitSettings.highlightColor;
+  revitHighlightMaterialToggle.checked = revitSettings.highlightMode === "material";
+  // The picked colour is unused while glowing in material colours.
+  revitHighlightColor.disabled = revitSettings.highlightMode === "material";
   gdbIconsToggle.checked = gdbIconsVisible;
   gdbIconDetailSlider.value = String(gdbIconDetail);
   gdbIconDetailValue.value = gdbIconDetail > 0 ? `+${gdbIconDetail}` : String(gdbIconDetail);
+}
+
+function setRevitSettings(next) {
+  revitSettings = normalizeRevitSettings(next);
+  updateRevitHighlightShader(revitHighlightShader, revitSettings);
+  syncEnvironmentVisibilityControls();
+  viewer.scene.requestRender();
+}
+
+function refreshRevitAppearance() {
+  for (const tileset of new Set(buildings.map((b) => b.tileset).filter(Boolean))) {
+    applyFiltersForTileset(tileset);
+  }
+  viewer.scene.requestRender();
 }
 
 function refreshGdbIcons() {
