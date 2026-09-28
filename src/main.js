@@ -31,6 +31,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./style.css";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
+import { applyGdbLayerZoomVisibility, normalizeIconDetail } from "./gdbZoomVisibility.js";
 import {
   loadTilesetFromUrl,
   loadTilesetFromFiles,
@@ -57,7 +58,7 @@ import { loadGdb } from "./gdbLoader.js";
 import { splitFeaturesBySource } from "./gdbAutoMatch.js";
 import { featureCollectionForVectorLayerRender } from "./geojsonHeight.js";
 import { openGdbImportDialog } from "./gdbImportDialog.js";
-import { openImportReviewTray } from "./importReviewTray.js";
+import { computeBuildingFootprints, openImportReviewTray } from "./importReviewTray.js";
 import { classifyImportFiles } from "./importPipeline.js";
 import { indexPackageFiles, buildGisDecisions, parsePackageManifestText, computeLevelLocalPlanes, packageUnchanged } from "./packageIngest.js";
 import { connectPackageEvents } from "./packageEvents.js";
@@ -66,7 +67,8 @@ import { openBuildingPickerDialog } from "./importBuildingPickerDialog.js";
 import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
 import { openColorConfigDialog } from "./colorConfigDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
-import { groupFeaturesByFloor, matchLevelByText, levelNameToNumber, shortLevelName } from "./floorSplit.js";
+import { groupFeaturesByFloor, levelNameToNumber, shortLevelName } from "./floorSplit.js";
+import { buildFloorAltitudeHints, splitByFloorLevel } from "./gdbLevelMatch.js";
 import { resolveTilesetTopClipLocalZ } from "./levelClipping.js";
 import {
   normalizeLevelRecords,
@@ -191,6 +193,7 @@ let plateauOverridesEnabled = true;
 let plateauTransparencyEnabled = false;
 let plateauTransparencyPercent = 70;
 let gdbIconsVisible = true;
+let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 
@@ -312,6 +315,8 @@ const plateauTransparencyToggle = document.getElementById("plateauTransparencyTo
 const plateauTransparencySlider = document.getElementById("plateauTransparencySlider");
 const plateauTransparencyValue = document.getElementById("plateauTransparencyValue");
 const gdbIconsToggle = document.getElementById("gdbIconsToggle");
+const gdbIconDetailSlider = document.getElementById("gdbIconDetailSlider");
+const gdbIconDetailValue = document.getElementById("gdbIconDetailValue");
 const plateauFloatingCard = document.getElementById("plateauFloatingCard");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingOverlayMessage = document.getElementById("loadingOverlayMessage");
@@ -458,6 +463,11 @@ function init() {
   });
   gdbIconsToggle.addEventListener("change", () => {
     gdbIconsVisible = gdbIconsToggle.checked;
+    refreshGdbIcons();
+  });
+  gdbIconDetailSlider.addEventListener("input", () => {
+    gdbIconDetail = normalizeIconDetail(gdbIconDetailSlider.value);
+    syncEnvironmentVisibilityControls();
     refreshGdbIcons();
   });
   editorBuildingSelectEl?.addEventListener("change", () => {
@@ -1110,12 +1120,16 @@ function syncEnvironmentVisibilityControls() {
   plateauTransparencySlider.disabled = !plateauTransparencyEnabled;
   plateauTransparencyValue.value = `${plateauTransparencyPercent}%`;
   gdbIconsToggle.checked = gdbIconsVisible;
+  gdbIconDetailSlider.value = String(gdbIconDetail);
+  gdbIconDetailValue.value = gdbIconDetail > 0 ? `+${gdbIconDetail}` : String(gdbIconDetail);
 }
 
 function refreshGdbIcons() {
   for (const layer of [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)]) {
     setGdbLayerIconsVisible(layer, gdbIconsVisible);
+    applyGdbLayerZoomVisibility(layer, gdbIconDetail, { labelMaxDistance: LABEL_MAX_DISTANCE_M });
   }
+  viewer.scene.requestRender();
 }
 
 function refreshAllPlateauOverrideStyles() {
@@ -2893,7 +2907,7 @@ async function handleGdbDirSelect(e) {
 
 // Drop a staged layer onto a building. If the source features carry a `floor`
 // property with multiple distinct values, split into one child layer per
-// floor — each matched to a building level via matchLevelByText, falling back
+// floor — each matched to a building level via splitByFloorLevel, falling back
 // to the drop target's levelKey when the floor string doesn't resolve.
 //
 // Returns the array of newly-created layer objects in the target building so
@@ -2915,11 +2929,13 @@ async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
   const baseName = (stagedLayer.name ?? "layer").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
   removeUnassignedLayer(stagedLayer);
 
+  const levelByFloor = new Map(
+    splitByFloorLevel(stagedLayer.features ?? [], target.levels, { altitudeHints: gdbFloorAltitudeHints })
+      .map((part) => [part.floorValue, part.level]),
+  );
   const created = [];
   for (const g of groups) {
-    const matched = g.floorValue
-      ? matchLevelByText(g.floorValue, target.levels)
-      : null;
+    const matched = g.floorValue ? levelByFloor.get(g.floorValue) ?? null : null;
     const suffix = g.floorValue || t("level.allFloors");
     const nameOverride = `${baseName} (${suffix})`;
     if (matched) {
@@ -2995,7 +3011,7 @@ async function runGdbLoad(input, defaults = null) {
       defaultBuildingIndex: defaults?.defaultBuildingIndex ?? null,
       defaultLevelKey: defaults?.defaultLevelKey ?? null,
       onOpenClassicTable: () =>
-        openGdbImportDialog({ featureCollections: expanded, buildings, onImport: applyGdbDecisions }),
+        openGdbImportDialog({ featureCollections: expanded, buildings, onImport: applyGdbDecisions, buildingFootprints: computeBuildingFootprints(buildings) }),
     });
   }
   hideLoadingOverlay();
@@ -3006,6 +3022,8 @@ async function applyGdbDecisions(decisions) {
   const touchedBuildings = new Set();
   const networkImportsByBuilding = new Map();
   let duplicateSkipped = 0;
+  const floorSplit = { layers: 0, floors: 0, matched: 0 };
+  rememberFloorAltitudeHints((decisions ?? []).map((d) => d.fc));
 
   for (const { fc, target, nameOverride } of decisions ?? []) {
     if (target.kind === "skip") continue;
@@ -3026,6 +3044,18 @@ async function applyGdbDecisions(decisions) {
         networkImportsByBuilding.get(target.buildingIndex).push(fc);
         touchedBuildings.add(target.buildingIndex);
         continue;
+      }
+      if (target.levelKey == null) {
+        // "All floors" + a floor column → one layer per floor on its level.
+        const split = await addFeatureCollectionSplitByFloor(building, fc, { origin: "gdb", nameOverride });
+        if (split) {
+          floorSplit.layers++;
+          floorSplit.floors += split.floors;
+          floorSplit.matched += split.matched;
+          duplicateSkipped += split.duplicates;
+          if (split.created > 0) touchedBuildings.add(target.buildingIndex);
+          continue;
+        }
       }
       const layer = await addFeatureCollectionLayer(building, fc, {
         levelKeyOverride: target.levelKey,
@@ -3053,6 +3083,51 @@ async function applyGdbDecisions(decisions) {
   if (unassignedLayers.length > 0) transient.unassignedTreeExpanded = true;
   invalidateAndRerender();
   reportGdbDuplicateSkips(duplicateSkipped);
+  if (floorSplit.layers > 0) {
+    notifyUser("info", "gdb.floorSplitDone", floorSplit);
+  }
+}
+
+// Altitudes per floor code learned from every GDB imported this session, so
+// a layer without an altitude column (dragged in later, too) can still pick
+// the right one of several same-numbered levels.
+const gdbFloorAltitudeHints = new Map();
+
+function rememberFloorAltitudeHints(featureCollections) {
+  for (const [key, altitude] of buildFloorAltitudeHints(featureCollections)) {
+    gdbFloorAltitudeHints.set(key, altitude);
+  }
+}
+
+// Split a feature collection with several floor values into one layer per
+// floor, each on its resolved level; floors that don't resolve stay on "All
+// floors" so they can be dragged to a level. Returns null when there is
+// nothing to split (fewer than two floor values).
+async function addFeatureCollectionSplitByFloor(building, fc, { origin, nameOverride = null }) {
+  const parts = splitByFloorLevel(fc.features ?? [], building.levels, { altitudeHints: gdbFloorAltitudeHints });
+  if (parts.length < 2) return null;
+  const baseName = (nameOverride ?? fc.fileName ?? "layer").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
+  const result = { floors: parts.length, matched: 0, created: 0, duplicates: 0, layers: [] };
+  for (const part of parts) {
+    const suffix = part.floorValue || t("level.allFloors");
+    const layer = await addFeatureCollectionLayer(
+      building,
+      { ...fc, fileName: baseName, features: part.features },
+      {
+        levelKeyOverride: part.level ? (part.level.key ?? "") : null,
+        origin,
+        nameOverride: `${baseName} (${suffix})`,
+      },
+    );
+    if (part.level) result.matched++;
+    if (layer) {
+      result.created++;
+      result.layers.push(layer);
+    } else {
+      result.duplicates++;
+    }
+  }
+  return result;
 }
 
 // -- RevitGeoSuite Cesium packages --
@@ -3201,7 +3276,7 @@ async function ingestCesiumPackage(pkg, { sourceUrl = null } = {}) {
         onImport: applyGdbDecisions,
         onSilentImport: applyGdbDecisions,
         onOpenClassicTable: () =>
-          openGdbImportDialog({ featureCollections: expanded, buildings, onImport: applyGdbDecisions }),
+          openGdbImportDialog({ featureCollections: expanded, buildings, onImport: applyGdbDecisions, buildingFootprints: computeBuildingFootprints(buildings) }),
       });
     }
   }
@@ -4143,6 +4218,7 @@ function applyEntityStyling(dataSource, layerName = "", layer = null) {
     }
   }
   setGdbLayerIconsVisible(layer, gdbIconsVisible);
+  applyGdbLayerZoomVisibility(layer, gdbIconDetail, { labelMaxDistance: LABEL_MAX_DISTANCE_M });
 }
 
 function removeShapefileLayer(building, layer) {
@@ -4845,6 +4921,7 @@ function buildSessionSnapshot() {
     plateauTransparencyEnabled,
     plateauTransparencyPercent,
     gdbIconsVisible,
+    gdbIconDetail,
     modelLevels,
     activeModelLevelIndex,
     venues,
@@ -4888,6 +4965,10 @@ function createSessionRestoreContext() {
     },
     setGdbIconsVisible: (visible) => {
       gdbIconsVisible = visible;
+      syncEnvironmentVisibilityControls();
+    },
+    setGdbIconDetail: (detail) => {
+      gdbIconDetail = normalizeIconDetail(detail);
       syncEnvironmentVisibilityControls();
     },
     setSelectedPlateauFeature: (v) => { selectedPlateauFeature = v; },
@@ -5010,6 +5091,7 @@ function getPublishState() {
     plateauTransparencyEnabled,
     plateauTransparencyPercent,
     gdbIconsVisible,
+    gdbIconDetail,
     modelLevels,
     activeModelLevelIndex,
     buildings,

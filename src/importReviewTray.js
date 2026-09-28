@@ -29,6 +29,22 @@ const MAX_MAP_FEATURES_PER_GROUP = 50;
 
 let activeTray = null;
 
+// Rough WGS84 footprint per building from its tileset bounding sphere, used
+// to match GDB layers to a building by location when names don't match.
+export function computeBuildingFootprints(buildings) {
+  return (buildings ?? []).map((b) => {
+    const sphere = b._boundingSphere ?? b?.tileset?.boundingSphere;
+    if (!sphere?.center) return null;
+    const carto = Cartographic.fromCartesian(sphere.center);
+    if (!carto) return null;
+    return {
+      lat: CesiumMath.toDegrees(carto.latitude),
+      lon: CesiumMath.toDegrees(carto.longitude),
+      radiusMeters: sphere.radius ?? 0,
+    };
+  });
+}
+
 export function openImportReviewTray({
   featureCollections,
   buildings,
@@ -43,17 +59,7 @@ export function openImportReviewTray({
 }) {
   if (activeTray) activeTray.close();
 
-  const buildingFootprints = buildings.map((b) => {
-    const sphere = b._boundingSphere ?? b?.tileset?.boundingSphere;
-    if (!sphere?.center) return null;
-    const carto = Cartographic.fromCartesian(sphere.center);
-    if (!carto) return null;
-    return {
-      lat: CesiumMath.toDegrees(carto.latitude),
-      lon: CesiumMath.toDegrees(carto.longitude),
-      radiusMeters: sphere.radius ?? 0,
-    };
-  });
+  const buildingFootprints = computeBuildingFootprints(buildings);
 
   const { autoImport, needsReview, metadataOnly } = partitionForReview(
     featureCollections,

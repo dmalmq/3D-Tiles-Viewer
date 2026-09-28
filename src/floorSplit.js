@@ -21,8 +21,18 @@ function buildFloorSynonyms() {
       `basement${n}`,
     ]);
   }
+  // Mezzanines ("M2" / "M2F" / "中2階" = the mezzanine below floor 2) sit
+  // half a floor below the floor they are named after, so they sort and
+  // filter between their neighbours.
+  for (let n = 2; n <= 10; n++) {
+    map.set(n - 0.5, [`m${n}`, `m${n}f`, `m${n}fl`, `mf${n}`, `中${n}階`, `中${n}f`]);
+  }
   return map;
 }
+
+// One-letter line/zone prefix on a floor code, as station datasets use to
+// tell stacked platforms apart: "KB3" = Keiyō line B3, "SB4" = Sōbu line B4.
+const PREFIXED_FLOOR_RE = /^([a-z])((?:b\d+|m\d+|f\d+|\d+f)(?:l)?)$/;
 
 const FLOOR_SYNONYMS = buildFloorSynonyms();
 
@@ -45,7 +55,21 @@ export function extractFloorNumber(text) {
     const num = SYNONYM_LOOKUP.get(tok);
     if (num !== undefined) return num;
   }
+  for (const tok of ordered) {
+    const prefixed = PREFIXED_FLOOR_RE.exec(tok);
+    const num = prefixed ? SYNONYM_LOOKUP.get(prefixed[2]) : undefined;
+    if (num !== undefined) return num;
+  }
   return null;
+}
+
+/** The one-letter line prefix of a floor code ("KB3" → "K"), if any. */
+export function extractFloorPrefix(text) {
+  if (!text) return null;
+  const token = String(text).trim().toLowerCase();
+  if (SYNONYM_LOOKUP.has(token)) return null;
+  const prefixed = PREFIXED_FLOOR_RE.exec(token);
+  return prefixed && SYNONYM_LOOKUP.has(prefixed[2]) ? prefixed[1].toUpperCase() : null;
 }
 
 // Return the leading token of a level name, split on `_`, whitespace, and
