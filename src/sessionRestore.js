@@ -140,6 +140,7 @@ export async function restoreSession(data, ctx) {
   ctx.setRevitSettings?.(normalizeRevitSettings(data.revitSettings));
   ctx.setGdbIconsVisible?.(data.gdbIconsVisible ?? true);
   ctx.setGdbIconDetail?.(data.gdbIconDetail ?? 0);
+  ctx.setGdbIconFloor?.(data.gdbIconFloor ?? null);
   ctx.setSelectedPlateauFeature?.(null);
 
   if (data.imagery) {

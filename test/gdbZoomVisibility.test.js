@@ -68,10 +68,26 @@ test("shapefile layers are left alone", () => {
   assert.equal(m.billboard.distanceDisplayCondition, undefined);
 });
 
-test("icon detail is clamped to half steps", () => {
-  assert.equal(normalizeIconDetail("1.3"), 1.5);
-  assert.equal(normalizeIconDetail(9), 3);
+test("icon detail moves in 0.1 steps and is clamped", async () => {
+  const { formatIconDetail } = await import("../src/gdbZoomVisibility.js");
+  assert.equal(normalizeIconDetail("1.34"), 1.3);
+  assert.equal(normalizeIconDetail(0.25), 0.3);
+  assert.equal(normalizeIconDetail(9), 4);
+  assert.equal(normalizeIconDetail(-9), -3);
   assert.equal(normalizeIconDetail("x"), 0);
+  assert.equal(formatIconDetail(1.3), "+1.3");
+  assert.equal(formatIconDetail(-0.5), "-0.5");
+  assert.equal(formatIconDetail(0), "0");
+});
+
+test("icon floor is a floor number or null", async () => {
+  const { normalizeIconFloor } = await import("../src/gdbZoomVisibility.js");
+  assert.equal(normalizeIconFloor(""), null);
+  assert.equal(normalizeIconFloor(null), null);
+  assert.equal(normalizeIconFloor("1"), 1);
+  assert.equal(normalizeIconFloor("1.5"), 1.5);
+  assert.equal(normalizeIconFloor("-2"), -2);
+  assert.equal(normalizeIconFloor("abc"), null);
 });
 
 test("sampling keeps the most important marker per cell", async () => {
