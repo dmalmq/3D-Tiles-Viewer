@@ -14,12 +14,32 @@ import {
   normalizePlateauCatalog,
   uniquePlateauAreas,
 } from './plateauCatalog.js';
-import { resolveAutoPlateauAreaSelection } from './plateauAreaSelection.js';
+import {
+  meshCodeFor,
+  meshCodesInBounds,
+  meshBounds,
+  meshNeighborhood,
+  meshSamplePoints,
+  normalizeMeshCodes,
+} from './plateauGrid.js';
+import {
+  PLATEAU_TILESET_OPTIONS,
+  createPlateauSubsetUrl,
+  downloadPlateauToCache,
+  formatMegabytes,
+  isPlateauCacheAvailable,
+  loadSavedPlateauTileset,
+} from './plateauLayerSource.js';
 
 const PLATEAU_CATALOG_API = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets';
 const GSI_REVERSE_GEOCODER_API = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress';
 
 const DEFAULT_PLATEAU_TYPES = ['bldg'];
+// Below this zoom 1 km cells are only a few pixels wide; draw just the
+// selection instead of the whole grid.
+const PLATEAU_GRID_MIN_ZOOM = 12;
+const PLATEAU_GRID_MAX_CELLS = 3000;
+const REVERSE_GEOCODE_CONCURRENCY = 4;
 const PLATEAU_TYPE_LABEL_KEYS = {
   bldg: 'plateau.feature.bldg',
   tran: 'plateau.feature.tran',
@@ -67,10 +87,18 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   let currentBounds = null;
   let selectedSourceId = SOURCES[0].id;
   let selectedPlateauAreas = [];
-  let selectedPlateauAreaSource = null;
-  let plateauAreaSelectionMode = 'auto';
-  let plateauAreaDetectionAttempted = false;
-  let plateauAreaDetectionSeq = 0;
+  // 'grid': load only the selected 1 km cells (areas follow from the cells).
+  // 'area': load a whole municipality picked in the search box.
+  let plateauSelectionMode = 'grid';
+  let selectedMeshCodes = [];
+  let plateauGridSource = null;
+  let plateauAreaResolving = false;
+  let plateauAreaResolveSeq = 0;
+  let plateauDownloadEnabled = true;
+  let plateauCacheAvailable = null;
+  let plateauGridLayer = null;
+  let bboxRect = null;
+  let plateauGridStatus = null;
   let selectedPlateauTypes = new Set(DEFAULT_PLATEAU_TYPES);
   let plateauCatalog = null;
   let plateauCatalogError = null;
@@ -191,6 +219,8 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
       row.querySelector('input[type="radio"]').checked = active;
     }
     updateDescPane(SOURCES.find(s => s.id === id));
+    renderBboxRect();
+    renderPlateauGrid();
   }
 
   function updateDescPane(src) {
@@ -199,6 +229,7 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
     plateauAreaDatalist = null;
     plateauTypeList = null;
     plateauStatus = null;
+    plateauGridStatus = null;
 
     const desc = document.createElement('p');
     desc.textContent = t(src.descKey);
@@ -218,12 +249,43 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   }
 
   function buildPlateauControls() {
+    // -- Grid cells --
+    const gridTitle = document.createElement('div');
+    gridTitle.className = 'import-plateau-type-title';
+    gridTitle.textContent = t('plateau.gridLabel');
+    descPane.appendChild(gridTitle);
+
+    const gridHint = document.createElement('p');
+    gridHint.className = 'import-plateau-hint';
+    gridHint.textContent = t('plateau.gridHint');
+    descPane.appendChild(gridHint);
+
+    const gridRow = document.createElement('div');
+    gridRow.className = 'import-plateau-grid-row';
+    plateauGridStatus = document.createElement('span');
+    plateauGridStatus.className = 'import-plateau-grid-status';
+    const aroundBtn = document.createElement('button');
+    aroundBtn.type = 'button';
+    aroundBtn.className = 'import-plateau-grid-btn';
+    aroundBtn.textContent = t('plateau.gridAroundModel');
+    aroundBtn.addEventListener('click', () => selectCellsAroundPreferredPosition());
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'import-plateau-grid-btn';
+    clearBtn.textContent = t('plateau.gridClear');
+    clearBtn.addEventListener('click', () => setSelectedMeshCodes([], 'manual'));
+    gridRow.appendChild(plateauGridStatus);
+    gridRow.appendChild(aroundBtn);
+    gridRow.appendChild(clearBtn);
+    descPane.appendChild(gridRow);
+
+    // -- Whole municipality (optional override) --
     const areaRow = document.createElement('div');
     areaRow.className = 'import-plateau-option-row';
 
     const areaLabel = document.createElement('span');
     areaLabel.className = 'import-plateau-option-label';
-    areaLabel.textContent = t('plateau.areaLabel');
+    areaLabel.textContent = t('plateau.wholeAreaLabel');
 
     plateauAreaInput = document.createElement('input');
     plateauAreaInput.className = 'import-plateau-select';
@@ -233,23 +295,19 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
     plateauAreaInput.addEventListener('change', () => {
       const value = plateauAreaInput.value.trim();
       if (!value) {
-        plateauAreaSelectionMode = 'auto';
-        plateauAreaDetectionAttempted = false;
-        selectedPlateauAreas = [];
-        selectedPlateauAreaSource = null;
-        detectPlateauAreasFromCurrentMap();
-        renderPlateauControls();
-        updateAreaLabels(currentBounds);
+        useGridSelection();
         return;
       }
 
       const area = findPlateauAreaByInput(value);
       if (area) {
-        plateauAreaSelectionMode = 'manual';
+        plateauSelectionMode = 'area';
+        plateauAreaResolveSeq++;
+        plateauAreaResolving = false;
         selectedPlateauAreas = [area];
-        selectedPlateauAreaSource = 'manual';
         syncPlateauTypeSelection();
         renderPlateauControls();
+        renderPlateauGrid();
         updateAreaLabels(currentBounds);
       } else if (plateauStatus) {
         plateauStatus.textContent = t('plateau.areaNotFound');
@@ -276,15 +334,48 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
     plateauTypeList = document.createElement('div');
     plateauTypeList.className = 'import-plateau-category-list';
     descPane.appendChild(plateauTypeList);
+
+    // -- Local copy --
+    const downloadRow = document.createElement('label');
+    downloadRow.className = 'import-plateau-category-row import-plateau-download-row';
+    const downloadCheckbox = document.createElement('input');
+    downloadCheckbox.type = 'checkbox';
+    downloadCheckbox.checked = plateauDownloadEnabled && plateauCacheAvailable !== false;
+    downloadCheckbox.disabled = plateauCacheAvailable === false;
+    downloadCheckbox.addEventListener('change', () => {
+      plateauDownloadEnabled = downloadCheckbox.checked;
+    });
+    const downloadText = document.createElement('span');
+    downloadText.className = 'import-plateau-category-text';
+    const downloadName = document.createElement('span');
+    downloadName.className = 'import-plateau-category-name';
+    downloadName.textContent = t('plateau.downloadLabel');
+    const downloadMeta = document.createElement('span');
+    downloadMeta.className = 'import-plateau-category-meta';
+    downloadMeta.textContent = plateauCacheAvailable === false
+      ? t('plateau.downloadUnavailable')
+      : t('plateau.downloadHint');
+    downloadText.appendChild(downloadName);
+    downloadText.appendChild(downloadMeta);
+    downloadRow.appendChild(downloadCheckbox);
+    downloadRow.appendChild(downloadText);
+    descPane.appendChild(downloadRow);
   }
 
   function renderPlateauControls() {
     if (!plateauAreaInput || !plateauTypeList || !plateauStatus) return;
 
-    plateauAreaInput.value = selectedPlateauAreas.length === 1
+    plateauAreaInput.value = plateauSelectionMode === 'area' && selectedPlateauAreas.length === 1
       ? formatPlateauAreaInput(selectedPlateauAreas[0])
       : '';
     populatePlateauAreaDatalist();
+    if (plateauGridStatus) {
+      plateauGridStatus.textContent = plateauSelectionMode === 'area'
+        ? t('plateau.gridInactive')
+        : selectedMeshCodes.length
+        ? t('plateau.gridCount', { count: selectedMeshCodes.length })
+        : t('plateau.gridNone');
+    }
 
     if (plateauCatalogError) {
       plateauStatus.textContent = t('plateau.catalogError', { message: plateauCatalogError.message });
@@ -298,9 +389,15 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
       return;
     }
 
+    if (plateauAreaResolving && selectedPlateauAreas.length === 0) {
+      plateauStatus.textContent = t('plateau.gridResolving');
+      renderPlateauEmptyTypeList(t('plateau.noCategories'));
+      return;
+    }
+
     if (selectedPlateauAreas.length === 0) {
-      plateauStatus.textContent = plateauAreaDetectionAttempted && plateauAreaSelectionMode === 'auto'
-        ? t('plateau.areaNotDetected')
+      plateauStatus.textContent = plateauSelectionMode === 'grid' && selectedMeshCodes.length > 0
+        ? t('plateau.gridNoArea')
         : t('plateau.areaRequired');
       renderPlateauEmptyTypeList(t('plateau.noCategories'));
       return;
@@ -310,11 +407,15 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
       getTypeLabel: getPlateauTypeLabel,
     });
     syncPlateauTypeSelection(choices);
-    const sourceLabel = getPlateauAreaSourceLabel(selectedPlateauAreaSource);
-    plateauStatus.textContent = t('plateau.areaStatus', {
-      area: formatPlateauAreasLabel(selectedPlateauAreas),
-      source: sourceLabel,
-    });
+    plateauStatus.textContent = plateauSelectionMode === 'area'
+      ? t('plateau.areaStatus', {
+        area: formatPlateauAreasLabel(selectedPlateauAreas),
+        source: t('plateau.areaManual'),
+      })
+      : t('plateau.gridStatus', {
+        area: formatPlateauAreasLabel(selectedPlateauAreas),
+        source: getPlateauGridSourceLabel(plateauGridSource),
+      });
 
     plateauTypeList.innerHTML = '';
     if (choices.length === 0) {
@@ -405,9 +506,10 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
     currentBounds = bounds;
     for (const src of SOURCES) {
       if (src.id === 'plateau-3dtiles') {
-        areaSpans[src.id].textContent = selectedPlateauAreas.length
-          ? formatPlateauAreasLabel(selectedPlateauAreas)
-          : t('modal.areaUnknown');
+        const areas = selectedPlateauAreas.length ? formatPlateauAreasLabel(selectedPlateauAreas) : null;
+        areaSpans[src.id].textContent = plateauSelectionMode === 'grid' && selectedMeshCodes.length
+          ? t('plateau.gridSourceArea', { count: selectedMeshCodes.length, area: areas ?? '–' })
+          : areas ?? t('modal.areaUnknown');
       } else if (src.areaCapKm2 !== null && bounds) {
         areaSpans[src.id].textContent = t('modal.areaKm2', { area: bboxAreaKm2(bounds).toFixed(2) });
       }
@@ -419,6 +521,10 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   applyTranslationsToDom(overlay);
   updateDescPane(SOURCES[0]);
   initializePlateauCatalogAndArea();
+  isPlateauCacheAvailable().then((available) => {
+    plateauCacheAvailable = available;
+    if (!closed && selectedSourceId === 'plateau-3dtiles') updateDescPane(SOURCES.find(s => s.id === selectedSourceId));
+  });
 
   setTimeout(() => {
     if (closed || !overlay.isConnected) return;
@@ -433,89 +539,155 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
       attribution: '© OpenStreetMap contributors',
       maxZoom: 19,
     }).addTo(leafletMap);
+    plateauGridLayer = L.layerGroup().addTo(leafletMap);
 
-    let bboxRect = L.rectangle(leafletMap.getBounds(), {
+    const onMapChange = () => {
+      renderBboxRect();
+      renderPlateauGrid();
+      updateAreaLabels(leafletMap.getBounds());
+    };
+
+    leafletMap.on('moveend zoomend', onMapChange);
+    leafletMap.on('click', (e) => {
+      if (selectedSourceId !== 'plateau-3dtiles') return;
+      const code = meshCodeFor(e.latlng.lat, e.latlng.lng);
+      if (!code) return;
+      const base = plateauSelectionMode === 'grid' ? selectedMeshCodes : [];
+      const next = base.includes(code) ? base.filter(c => c !== code) : [...base, code];
+      setSelectedMeshCodes(next, 'manual');
+    });
+    onMapChange();
+    if (selectedMeshCodes.length) fitMapToCells(selectedMeshCodes);
+    leafletMap.invalidateSize();
+  }, 0);
+
+  // The dashed extent box only means something for the bbox-based sources.
+  function renderBboxRect() {
+    if (!leafletMap) return;
+    if (bboxRect) {
+      leafletMap.removeLayer(bboxRect);
+      bboxRect = null;
+    }
+    if (selectedSourceId === 'plateau-3dtiles') return;
+    bboxRect = L.rectangle(leafletMap.getBounds(), {
       color: '#4da6ff',
       weight: 2,
       fillOpacity: 0.08,
       interactive: false,
     }).addTo(leafletMap);
+  }
 
-    const onMapChange = () => {
-      leafletMap.removeLayer(bboxRect);
-      bboxRect = L.rectangle(leafletMap.getBounds(), {
-        color: '#4da6ff',
-        weight: 2,
-        fillOpacity: 0.08,
+  function renderPlateauGrid() {
+    if (!leafletMap || !plateauGridLayer) return;
+    plateauGridLayer.clearLayers();
+    mapPane.classList.toggle('plateau-grid-active', selectedSourceId === 'plateau-3dtiles');
+    if (selectedSourceId !== 'plateau-3dtiles') return;
+
+    const active = plateauSelectionMode === 'grid';
+    const selected = new Set(active ? selectedMeshCodes : []);
+    const view = leafletMap.getBounds();
+    const visible = leafletMap.getZoom() >= PLATEAU_GRID_MIN_ZOOM
+      ? meshCodesInBounds({
+        south: view.getSouth(),
+        west: view.getWest(),
+        north: view.getNorth(),
+        east: view.getEast(),
+      }, PLATEAU_GRID_MAX_CELLS) ?? []
+      : [];
+
+    for (const code of new Set([...visible, ...selected])) {
+      const b = meshBounds(code);
+      const isSelected = selected.has(code);
+      const rect = L.rectangle([[b.south, b.west], [b.north, b.east]], {
+        color: isSelected ? '#ff9f1c' : '#4da6ff',
+        weight: isSelected ? 2 : 1,
+        opacity: isSelected ? 0.95 : 0.45,
+        fillColor: isSelected ? '#ff9f1c' : '#4da6ff',
+        fillOpacity: isSelected ? 0.25 : 0.02,
         interactive: false,
-      }).addTo(leafletMap);
-      updateAreaLabels(leafletMap.getBounds());
-      detectPlateauAreasFromCurrentMap();
-    };
+      });
+      plateauGridLayer.addLayer(rect);
+    }
+  }
 
-    leafletMap.on('moveend zoomend', onMapChange);
-    updateAreaLabels(leafletMap.getBounds());
-    detectPlateauAreasFromCurrentMap();
-    leafletMap.invalidateSize();
-  }, 0);
+  function fitMapToCells(codes) {
+    if (!leafletMap || codes.length === 0) return;
+    const bounds = codes.map(meshBounds).filter(Boolean);
+    leafletMap.fitBounds([
+      [Math.min(...bounds.map(b => b.south)), Math.min(...bounds.map(b => b.west))],
+      [Math.max(...bounds.map(b => b.north)), Math.max(...bounds.map(b => b.east))],
+    ], { padding: [24, 24], maxZoom: 15 });
+  }
+
+  function setSelectedMeshCodes(codes, source) {
+    plateauSelectionMode = 'grid';
+    selectedMeshCodes = normalizeMeshCodes(codes);
+    plateauGridSource = source;
+    renderPlateauGrid();
+    resolveAreasForSelectedCells();
+  }
+
+  function useGridSelection() {
+    plateauSelectionMode = 'grid';
+    renderPlateauGrid();
+    resolveAreasForSelectedCells();
+  }
+
+  function selectCellsAroundPreferredPosition() {
+    const position = getPreferredPlateauPosition();
+    const center = meshCodeFor(position.lat, position.lng);
+    setSelectedMeshCodes(center ? meshNeighborhood(center) : [], position.source);
+    fitMapToCells(selectedMeshCodes);
+  }
 
   async function initializePlateauCatalogAndArea() {
+    const position = getPreferredPlateauPosition();
+    const center = meshCodeFor(position.lat, position.lng);
+    selectedMeshCodes = center ? meshNeighborhood(center) : [];
+    plateauGridSource = position.source;
+    renderPlateauGrid();
+    if (leafletMap && selectedMeshCodes.length) fitMapToCells(selectedMeshCodes);
+
     try {
       plateauCatalog = await fetchPlateauCatalog();
       if (closed || !overlay.isConnected) return;
-      const position = getPreferredPlateauPosition();
-      const detectedArea = position
-        ? await detectPlateauAreaFromPosition(position, plateauCatalog)
-        : null;
-      if (closed || !overlay.isConnected) return;
-      if (detectedArea && selectedPlateauAreas.length === 0 && plateauAreaSelectionMode === 'auto') {
-        selectedPlateauAreas = [detectedArea.area];
-        selectedPlateauAreaSource = detectedArea.source;
-      } else if (!detectedArea && selectedPlateauAreas.length === 0 && plateauAreaSelectionMode === 'auto') {
-        plateauAreaDetectionAttempted = true;
-      }
     } catch (e) {
       plateauCatalogError = e instanceof Error ? e : new Error(String(e));
     }
-    syncPlateauTypeSelection();
-    updateAreaLabels(currentBounds);
     renderPlateauControls();
-    if (leafletMap && plateauAreaSelectionMode === 'auto') detectPlateauAreasFromCurrentMap();
+    await resolveAreasForSelectedCells();
   }
 
-  async function detectPlateauAreasFromCurrentMap() {
-    if (!plateauCatalog || plateauAreaSelectionMode === 'manual') return;
-
-    const positions = leafletMap
-      ? samplePlateauPositionsForBounds(leafletMap.getBounds())
-      : [getPreferredPlateauPosition()].filter(Boolean);
-    if (positions.length === 0) return;
-
-    const seq = ++plateauAreaDetectionSeq;
-    if (plateauStatus && selectedPlateauAreas.length === 0) {
-      plateauStatus.textContent = t('plateau.areaDetecting');
+  // Municipalities come from reverse-geocoding each cell's centre and
+  // corners; a cell on a ward boundary pulls in both wards, and the tileset
+  // cut later drops whichever has no tiles inside the cells.
+  async function resolveAreasForSelectedCells() {
+    const seq = ++plateauAreaResolveSeq;
+    if (plateauSelectionMode !== 'grid') return;
+    if (!plateauCatalog || selectedMeshCodes.length === 0) {
+      selectedPlateauAreas = [];
+      plateauAreaResolving = false;
+      renderPlateauControls();
+      updateAreaLabels(currentBounds);
+      return;
     }
 
+    plateauAreaResolving = true;
+    renderPlateauControls();
+    updateAreaLabels(currentBounds);
     try {
-      const detected = await detectPlateauAreasFromPositions(positions, plateauCatalog);
-      if (closed || !overlay.isConnected || seq !== plateauAreaDetectionSeq || plateauAreaSelectionMode === 'manual') return;
-
-      const selection = resolveAutoPlateauAreaSelection({
-        selectionMode: plateauAreaSelectionMode,
-        currentAreas: selectedPlateauAreas,
-        currentSource: selectedPlateauAreaSource,
-        detected,
-        fallbackSource: leafletMap ? 'map' : detected[0]?.source,
-      });
-      selectedPlateauAreas = selection.areas;
-      selectedPlateauAreaSource = selection.source;
-      plateauAreaDetectionAttempted = true;
-      syncPlateauTypeSelection();
-      updateAreaLabels(currentBounds);
-      renderPlateauControls();
+      const detected = await detectPlateauAreasFromPositions(meshSamplePoints(selectedMeshCodes), plateauCatalog);
+      if (closed || !overlay.isConnected || seq !== plateauAreaResolveSeq || plateauSelectionMode !== 'grid') return;
+      selectedPlateauAreas = uniquePlateauAreas(detected.map(entry => entry.area));
     } catch (e) {
       console.warn('PLATEAU area detection failed:', e);
+      if (seq !== plateauAreaResolveSeq) return;
+      selectedPlateauAreas = [];
     }
+    plateauAreaResolving = false;
+    syncPlateauTypeSelection();
+    renderPlateauControls();
+    updateAreaLabels(currentBounds);
   }
 
   function getPreferredPlateauPosition() {
@@ -585,16 +757,17 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
           const result = await addSelectedPlateauLayers(
             loadTilesetFromUrl,
             onLayerAdded,
-            (current, total) => {
-              progressEl.max = total;
-              progressEl.value = current;
+            ({ done, total, message }) => {
+              progressEl.max = Math.max(total, 1);
+              progressEl.value = done;
               statusLine.style.color = '';
-              statusLine.textContent = t('loading.plateau.progress', { current, total });
+              statusLine.textContent = message;
             },
           );
           statusLine.style.color = result.failures.length ? '#f39c12' : '#3db84b';
           statusLine.textContent = result.failures.length
             ? t('modal.loadedLayersWithFailures', { count: result.loaded, failures: result.failures.length })
+              + ' ' + result.failures[0].message
             : t('modal.loadedLayers', { count: result.loaded });
         } finally {
           progressEl.hidden = true;
@@ -644,28 +817,60 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
       .filter(choice => selectedPlateauTypes.has(choice.code));
     if (choices.length === 0) throw new Error(t('plateau.selectCategoryRequired'));
 
+    const meshCodes = plateauSelectionMode === 'grid' ? [...selectedMeshCodes] : [];
+    const download = plateauDownloadEnabled && plateauCacheAvailable !== false;
     const failures = [];
     let loaded = 0;
+    let empty = 0;
     const total = choices.length;
-    onProgress?.(0, total);
 
     for (const [i, choice] of choices.entries()) {
+      const name = `${choice.label} – ${choice.area.label}`;
+      const layerProgress = t('loading.plateau.progress', { current: i + 1, total });
+      onProgress?.({ done: i, total, message: `${layerProgress} ${name}` });
       try {
-        const tileset = await loadTileset(viewer, choice.url);
+        const source = await preparePlateauSource(choice, meshCodes, download, name, (progress) => {
+          onProgress?.({
+            done: progress.done,
+            total: progress.total,
+            message: t('plateau.downloadProgress', {
+              layer: layerProgress,
+              name,
+              done: progress.done,
+              total: progress.total,
+              mb: formatMegabytes(progress.bytes),
+            }),
+          });
+        });
+        // A ward pulled in by a boundary cell may have no tiles inside the cells.
+        if (!source) {
+          empty++;
+          continue;
+        }
+
+        const tileset = await loadTileset(viewer, source.loadUrl, { tilesetOptions: PLATEAU_TILESET_OPTIONS });
+        const labelParams = {
+          area: choice.area.label,
+          type: choice.label,
+          lod: choice.lod ?? '-',
+          textureLabel: choice.texture === true ? t('modal.textured') : t('modal.notTextured'),
+          cells: meshCodes.length,
+        };
         addLayer({
           id: crypto.randomUUID(),
-          label: t('modal.plateauLayerLabel', {
-            area: choice.area.label,
-            type: choice.label,
-            lod: choice.lod ?? '-',
-            textureLabel: choice.texture === true ? t('modal.textured') : t('modal.notTextured'),
-          }),
+          label: t(meshCodes.length ? 'modal.plateauGridLayerLabel' : 'modal.plateauLayerLabel', labelParams),
           type: 'tileset',
           data: tileset,
           visible: true,
           sourceConfig: {
             kind: 'plateau-3dtiles',
-            url: choice.url,
+            // Streamed grid subsets load from a blob URL that cannot be saved,
+            // so persist the PLATEAU URL and rebuild the cut on restore.
+            url: source.storage === 'local' ? source.loadUrl : choice.url,
+            remoteUrl: choice.url,
+            storage: source.storage,
+            ...(meshCodes.length ? { meshCodes } : {}),
+            ...(source.cacheKey ? { cacheKey: source.cacheKey } : {}),
             areaCode: choice.area.code,
             areaLabel: choice.area.label,
             featureType: choice.code,
@@ -677,16 +882,35 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
         loaded++;
       } catch (e) {
         console.error(e);
-        failures.push(choice.label);
+        failures.push({ label: name, message: e instanceof Error ? e.message : String(e) });
       }
-      onProgress?.(i + 1, total);
+      onProgress?.({ done: i + 1, total, message: layerProgress });
     }
 
     if (loaded === 0 && failures.length > 0) {
-      throw new Error(t('modal.plateauAllFailed'));
+      throw new Error(`${t('modal.plateauAllFailed')} ${failures[0].message}`);
+    }
+    if (loaded === 0 && empty > 0) {
+      throw new Error(t('plateau.nothingInCells'));
     }
 
     return { loaded, failures };
+  }
+
+  async function preparePlateauSource(choice, meshCodes, download, name, onDownloadProgress) {
+    if (download) {
+      const entry = await downloadPlateauToCache(
+        { sourceUrl: choice.url, meshCodes, label: name },
+        onDownloadProgress,
+      );
+      if (entry.fileCount === 0) return null;
+      return { loadUrl: entry.url, storage: 'local', cacheKey: entry.key };
+    }
+    if (meshCodes.length > 0) {
+      const subset = await createPlateauSubsetUrl({ url: choice.url, meshCodes });
+      return subset.url ? { loadUrl: subset.url, storage: 'remote' } : null;
+    }
+    return { loadUrl: choice.url, storage: 'remote' };
   }
 }
 
@@ -757,38 +981,56 @@ async function fetchPlateauCatalog() {
   return plateauCatalogPromise;
 }
 
-async function detectPlateauAreaFromPosition(position, catalog) {
-  const url = new URL(GSI_REVERSE_GEOCODER_API);
-  url.searchParams.set('lat', String(position.lat));
-  url.searchParams.set('lon', String(position.lng));
+const reverseGeocodeCache = new Map();
 
-  const resp = await fetch(url.toString());
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  const code = normalizeCode(data?.results?.muniCd);
+function reverseGeocodeMuniCode(position) {
+  const key = `${position.lat.toFixed(6)},${position.lng.toFixed(6)}`;
+  if (!reverseGeocodeCache.has(key)) {
+    const url = new URL(GSI_REVERSE_GEOCODER_API);
+    url.searchParams.set('lat', String(position.lat));
+    url.searchParams.set('lon', String(position.lng));
+    const promise = fetch(url.toString())
+      .then(resp => (resp.ok ? resp.json() : null))
+      .then(data => normalizeCode(data?.results?.muniCd))
+      .catch((e) => {
+        reverseGeocodeCache.delete(key);
+        throw e;
+      });
+    reverseGeocodeCache.set(key, promise);
+  }
+  return reverseGeocodeCache.get(key);
+}
+
+async function detectPlateauAreaFromPosition(position, catalog) {
+  const code = await reverseGeocodeMuniCode(position);
   if (!code) return null;
 
   const area = catalog.findAreaByCode(code);
   if (!area) return null;
-
-  return {
-    area,
-    source: position.source === 'camera' ? 'camera' : position.source === 'map' ? 'map' : 'model',
-  };
+  return { area };
 }
 
 async function detectPlateauAreasFromPositions(positions, catalog) {
+  const results = new Array(positions.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < positions.length) {
+      const index = next++;
+      try {
+        results[index] = await detectPlateauAreaFromPosition(positions[index], catalog);
+      } catch {
+        // Ignore individual reverse-geocode failures; other sampled points may still resolve.
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: REVERSE_GEOCODE_CONCURRENCY }, worker));
+
   const seen = new Set();
   const detected = [];
-  for (const position of positions) {
-    try {
-      const result = await detectPlateauAreaFromPosition(position, catalog);
-      if (!result?.area?.code || seen.has(result.area.code)) continue;
-      seen.add(result.area.code);
-      detected.push(result);
-    } catch {
-      // Ignore individual reverse-geocode failures; other sampled points may still resolve.
-    }
+  for (const result of results) {
+    if (!result?.area?.code || seen.has(result.area.code)) continue;
+    seen.add(result.area.code);
+    detected.push(result);
   }
   return detected;
 }
@@ -828,43 +1070,10 @@ function formatPlateauAreasLabel(areas) {
   return t('plateau.areaCount', { count: unique.length });
 }
 
-function getPlateauAreaSourceLabel(source) {
-  if (source === 'manual') return t('plateau.areaManual');
-  if (source === 'camera') return t('plateau.areaFromCamera');
-  if (source === 'map') return t('plateau.areaFromMap');
-  return t('plateau.areaFromModel');
-}
-
-function samplePlateauPositionsForBounds(bounds) {
-  if (!bounds) return [];
-  const south = bounds.getSouth();
-  const west = bounds.getWest();
-  const north = bounds.getNorth();
-  const east = bounds.getEast();
-  const midLat = (south + north) / 2;
-  const midLng = (west + east) / 2;
-  const points = [
-    [midLat, midLng],
-    [north, west],
-    [north, midLng],
-    [north, east],
-    [midLat, west],
-    [midLat, east],
-    [south, west],
-    [south, midLng],
-    [south, east],
-  ];
-
-  const seen = new Set();
-  return points
-    .map(([lat, lng]) => ({ lat, lng, source: 'map' }))
-    .filter((point) => {
-      if (!isFiniteLatLng(point)) return false;
-      const key = `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+function getPlateauGridSourceLabel(source) {
+  if (source === 'manual') return t('plateau.gridFromManual');
+  if (source === 'camera') return t('plateau.gridFromCamera');
+  return t('plateau.gridFromModel');
 }
 
 function isFiniteLatLng(value) {
@@ -941,7 +1150,7 @@ export async function restoreImportedLayer(viewer, loadTilesetFromUrl, savedLaye
   if (!sourceConfig) return null;
 
   if (sourceConfig.kind === 'plateau-buildings' || sourceConfig.kind === 'plateau-3dtiles') {
-    const tileset = await loadTilesetFromUrl(viewer, sourceConfig.url);
+    const tileset = await loadSavedPlateauTileset(viewer, loadTilesetFromUrl, sourceConfig);
     tileset.show = visible;
     return { id: crypto.randomUUID(), label, type: 'tileset', data: tileset, visible, sourceConfig };
   }

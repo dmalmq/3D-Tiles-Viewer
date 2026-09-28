@@ -3,6 +3,7 @@ dist/
 data/tilesets/
 data/sessions/
 data/packages/
+data/plateau-cache/
 terminals/
 public/tiles/*
 !public/tiles/.gitkeep
