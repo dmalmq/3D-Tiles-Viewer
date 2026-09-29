@@ -39,6 +39,7 @@ import {
   normalizeIconFloor,
 } from "./gdbZoomVisibility.js";
 import { formatFloorNumber } from "./floorSplit.js";
+import { createViewExportTool, normalizeSavedViews } from "./viewExport.js";
 import {
   loadTilesetFromUrl,
   loadTilesetFromFiles,
@@ -223,6 +224,8 @@ let gdbIconsVisible = true;
 let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
 let gdbIconSampler = null;
 let gdbIconFloor = null; // floor number whose GDB icons show; null = all floors
+let savedViews = []; // named camera views for "Export view"
+let viewExportTool = null;
 
 const layerTypeFilters = { space: true, unit: true, opening: true, detail: true, level: true };
 
@@ -420,6 +423,13 @@ function init() {
     getLayers: () => [...unassignedLayers, ...buildings.flatMap((building) => building.shapefileLayers)],
     getDetail: () => gdbIconDetail,
     includeLayer: (layer) => gdbIconFloor == null || gdbLayerFloorNumber(layer) === gdbIconFloor,
+  });
+  viewExportTool = createViewExportTool({
+    viewer,
+    t,
+    getFileBaseName: () => buildings[0]?.name ?? "view",
+    onViewsChanged: (views) => { savedViews = views; },
+    notify: notifyUser,
   });
 
   switchImagery();
@@ -994,6 +1004,7 @@ function bindLanguageRerendering() {
   if (transient.languageRerenderingBound) return;
   transient.languageRerenderingBound = true;
   onLanguageChange(() => {
+    viewExportTool?.refreshLabels();
     invalidateAndRerender();
     renderImportedLayersList();
     renderCityGmlList();
@@ -5254,6 +5265,7 @@ function buildSessionSnapshot() {
     gdbIconsVisible,
     gdbIconDetail,
     gdbIconFloor,
+    savedViews,
     modelLevels,
     activeModelLevelIndex,
     venues,
@@ -5308,6 +5320,10 @@ function createSessionRestoreContext() {
     setGdbIconFloor: (floor) => {
       gdbIconFloor = normalizeIconFloor(floor);
       syncEnvironmentVisibilityControls();
+    },
+    setSavedViews: (views) => {
+      savedViews = normalizeSavedViews(views);
+      viewExportTool?.setViews(savedViews);
     },
     setSelectedPlateauFeature: (v) => { selectedPlateauFeature = v; },
     setImageryChoice: (v) => { imagerySelect.value = v; },
@@ -5432,6 +5448,7 @@ function getPublishState() {
     gdbIconsVisible,
     gdbIconDetail,
     gdbIconFloor,
+    savedViews,
     modelLevels,
     activeModelLevelIndex,
     buildings,

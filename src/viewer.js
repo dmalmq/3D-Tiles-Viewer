@@ -29,6 +29,7 @@ import {
   normalizeIconFloor,
 } from "./gdbZoomVisibility.js";
 import { formatFloorNumber } from "./floorSplit.js";
+import { createViewExportTool, normalizeSavedViews } from "./viewExport.js";
 import {
   initializeTerrainProviders,
   switchImagery as switchImageryProvider,
@@ -116,6 +117,8 @@ let gdbIconsVisible = true;
 let gdbIconDetail = 0; // zoom-level offset for GDB marker visibility
 let gdbIconSampler = null;
 let gdbIconFloor = null; // floor number whose GDB icons show; null = all floors
+let savedViews = []; // named camera views for "Export view"
+let viewExportTool = null;
 let manifest = null;
 let venues = [];
 let currentVenueId = null;
@@ -212,6 +215,13 @@ function init() {
     getDetail: () => gdbIconDetail,
     includeLayer: (layer) => gdbIconFloor == null || gdbLayerFloorNumber(layer) === gdbIconFloor,
   });
+  viewExportTool = createViewExportTool({
+    viewer,
+    t,
+    getFileBaseName: () => buildings[0]?.name ?? "view",
+    onViewsChanged: (views) => { savedViews = views; },
+    notify: notifyUser,
+  });
 
   switchImagery();
   initializeTerrainProviders(savedToken).then((providers) => {
@@ -278,7 +288,10 @@ function init() {
   });
   lodFilterToggle.addEventListener("change", handleLodFilterToggle);
   initSearch();
-  onLanguageChange(() => invalidateAndRerender());
+  onLanguageChange(() => {
+    viewExportTool?.refreshLabels();
+    invalidateAndRerender();
+  });
 
   void bootstrapFromUrl();
 }
@@ -659,6 +672,10 @@ function buildRestoreContext() {
     setGdbIconFloor: (floor) => {
       gdbIconFloor = normalizeIconFloor(floor);
       syncEnvironmentVisibilityControls();
+    },
+    setSavedViews: (views) => {
+      savedViews = normalizeSavedViews(views);
+      viewExportTool?.setViews(savedViews);
     },
     setSelectedPlateauFeature: () => {},
     setImageryChoice: (v) => { imagerySelect.value = v; },
