@@ -525,6 +525,8 @@ function mountTray({
         if (idx >= 0) groups.splice(idx, 1);
       }
       if (groups.length === 0) {
+        // close() ignores calls while submitting, so leave that state first.
+        submitting = false;
         close();
       } else {
         submitting = false;
