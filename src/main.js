@@ -2434,9 +2434,15 @@ function rebuildModelLevels() {
   next.sort((a, b) => a.floorNumber - b.floorNumber);
   // Keep the same floor selected even if its index moved (e.g. a new
   // building added a lower floor).
-  activeModelLevelIndex = remapActiveLevelIndex(modelLevels, activeModelLevelIndex, next);
+  const remapped = remapActiveLevelIndex(modelLevels, activeModelLevelIndex, next);
+  const lostActiveFloor = activeModelLevelIndex >= 0 && remapped === -1;
+  activeModelLevelIndex = remapped;
   modelLevels = next;
   populateGdbIconFloorSelect();
+  // The selected floor no longer exists (its last level was removed or
+  // renamed): go through the normal "All floors" path so clipping, tile
+  // visibility and per-building selections are reset too.
+  if (lostActiveFloor) selectModelLevel(-1);
 }
 
 // Set the global active model level and fan out to each building's
