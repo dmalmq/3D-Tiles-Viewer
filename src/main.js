@@ -31,6 +31,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "@fontsource-variable/figtree";
 import "./style.css";
+import { remapActiveLevelIndex, sortLevelsKeepingActive } from "./modelLevelSelection.js";
 import { initPublishDialog } from "./publishDialog.js";
 import {
   computeBreadcrumb,
@@ -2062,10 +2063,15 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
     tileset._buildings = [b];
     createdBuildings = [b];
   }
+  // populateLevelsForBuilding rebuilt the model levels before the new
+  // building(s) were pushed, so rebuild now that they are in `buildings`.
+  rebuildModelLevels();
 
   bindTilesetTileLoad(tileset);
   applyFiltersForTileset(tileset);
   refreshLodFilterIfEnabled();
+  // A floor may already be selected: apply it to the new building(s) too.
+  if (activeModelLevelIndex >= 0) selectModelLevel(activeModelLevelIndex);
 
   selectedBuildingIndex = buildings.indexOf(createdBuildings[0]);
   invalidateAndRerender();
@@ -2394,7 +2400,7 @@ function handleAddLevel(building, name, floor) {
   if (!building) return;
   if (!name || !Number.isFinite(floor)) return;
   building.levels.push({ name, key: null, floor });
-  building.levels.sort((a, b) => a.floor - b.floor);
+  building.activeLevelIndex = sortLevelsKeepingActive(building.levels, building.activeLevelIndex);
   rebuildModelLevels();
   invalidateAndRerender();
 }
@@ -2426,9 +2432,17 @@ function rebuildModelLevels() {
       : { floorNumber: fn, name: derived.name, elevation: derived.elevation });
   }
   next.sort((a, b) => a.floorNumber - b.floorNumber);
+  // Keep the same floor selected even if its index moved (e.g. a new
+  // building added a lower floor).
+  const remapped = remapActiveLevelIndex(modelLevels, activeModelLevelIndex, next);
+  const lostActiveFloor = activeModelLevelIndex >= 0 && remapped === -1;
+  activeModelLevelIndex = remapped;
   modelLevels = next;
-  if (activeModelLevelIndex >= modelLevels.length) activeModelLevelIndex = -1;
   populateGdbIconFloorSelect();
+  // The selected floor no longer exists (its last level was removed or
+  // renamed): go through the normal "All floors" path so clipping, tile
+  // visibility and per-building selections are reset too.
+  if (lostActiveFloor) selectModelLevel(-1);
 }
 
 // Set the global active model level and fan out to each building's
@@ -5279,7 +5293,7 @@ function showLevelContextMenu(event, building, bi, levelIndex) {
         const v = parseFloat(floor);
         if (!Number.isFinite(v)) return;
         level.floor = v;
-        building.levels.sort((a, b) => a.floor - b.floor);
+        building.activeLevelIndex = sortLevelsKeepingActive(building.levels, building.activeLevelIndex);
         applyShapefileLayerHeights(building);
         if (building.activeLevelIndex !== -1) applyActiveLevelForBuilding(building);
         rebuildModelLevels();
