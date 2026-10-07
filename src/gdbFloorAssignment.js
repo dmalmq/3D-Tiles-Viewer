@@ -1,5 +1,11 @@
 import { detectSource, matchLevelRefToBuildingLevel } from "./gdbAutoMatch.js";
-import { extractFloorNumber, groupFeaturesByFloor, levelNameToNumber, matchLevelByText } from "./floorSplit.js";
+import {
+  extractFloorNumber,
+  formatFloorNumber,
+  groupFeaturesByFloor,
+  levelNameToNumber,
+  matchLevelByText,
+} from "./floorSplit.js";
 import {
   featureGroupAltitude,
   levelTpOffset,
@@ -22,8 +28,7 @@ export function planGdbFloorParts(features, levels, altitudeHints = null) {
   if (groups.length === 0 || (groups.length === 1 && !groups[0].floorValue)) return null;
   return splitByFloorLevel(features, levels, { altitudeHints }).map((part) => ({
     ...part,
-    levelKey: part.level && part.reason !== "canonical" &&
-      !altitudeConflictsWithLevel(part.features, part.level, levels)
+    levelKey: part.level && !altitudeConflictsWithLevel(part.features, part.level, levels)
       ? (part.level.key ?? "")
       : null,
   }));
@@ -59,13 +64,12 @@ export function resolveGdbLayerLevel({ fc, building, levelRef = null, altitudeHi
       (levelRef?.name && metadataLevel &&
         String(levelRef.name).toLowerCase() === String(metadataLevel.name).toLowerCase() &&
         metadataLevel !== resolved.level);
-    if (resolved.reason === "canonical") {
-      return { levelKey: null, confidence: "medium", reason: "ambiguousFloor" };
-    }
+    if (conflict) return { levelKey: null, confidence: "medium", reason: "conflictingFloor" };
+    const ambiguous = resolved.reason === "canonical";
     return {
-      levelKey: conflict ? null : (resolved.level.key ?? ""),
-      confidence: conflict ? "medium" : "high",
-      reason: conflict ? "conflictingFloor" : resolved.reason,
+      levelKey: resolved.level.key ?? "",
+      confidence: ambiguous ? "medium" : "high",
+      reason: ambiguous ? "ambiguousFloor" : resolved.reason,
     };
   }
 
@@ -87,10 +91,15 @@ export function resolveGdbLayerLevel({ fc, building, levelRef = null, altitudeHi
   const exactMetadata = levelRef?.name &&
     String(levelRef.name).toLowerCase() === String(metadataLevel?.name).toLowerCase();
   const conflict = filenameFloor != null && metadataFloor != null && filenameFloor !== metadataFloor;
-  const confident = !conflict && (uniqueNamedFloor || exactMetadata);
-  return {
-    levelKey: confident ? (level.key ?? "") : null,
-    confidence: confident ? "high" : "medium",
-    reason: conflict ? "conflictingFloor" : confident ? "namedFloor" : "ambiguousFloor",
-  };
+  if (conflict) return { levelKey: null, confidence: "medium", reason: "conflictingFloor" };
+  if (uniqueNamedFloor || exactMetadata) {
+    return { levelKey: level.key ?? "", confidence: "high", reason: "namedFloor" };
+  }
+  const ranked = resolveFloorLevel({
+    floorValue: formatFloorNumber(namedFloor),
+    features,
+    levels,
+    altitudeHints,
+  })?.level ?? level;
+  return { levelKey: ranked.key ?? "", confidence: "medium", reason: "ambiguousFloor" };
 }

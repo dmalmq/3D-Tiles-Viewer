@@ -9,6 +9,7 @@ import {
   PolygonHierarchy,
 } from "cesium";
 import { levelNameToNumber } from "./floorSplit.js";
+import { resolveFloorLevel } from "./gdbLevelMatch.js";
 
 export const SHAPEFILE_FLOOR_CLEARANCE_M = 0.05;
 export const POINT_EXTRA_HEIGHT_M = 0.25;
@@ -220,14 +221,20 @@ function levelSetUsesAbsoluteElevations(building, levels) {
   return Math.abs(minFloor - base) <= ABSOLUTE_LEVEL_ELEVATION_TOLERANCE_M;
 }
 
+// "All floors" layers sit on the ground floor. The tileset's local Z = 0 is
+// often the bounding-box centre, which can be tens of metres above ground.
+function groundLevel(levels) {
+  return resolveFloorLevel({ floorValue: "1F", levels })?.level ?? null;
+}
+
 function layerLevelContext(building, layer) {
   const sourceLevels = resolveShapefileLevels(building, layer);
+  const levels = sourceLevels?.length ? sourceLevels : building?.levels;
   const lvl =
     layer.levelKey == null
-      ? null
+      ? groundLevel(levels)
       : findLevelInLevels(sourceLevels, layer.levelKey) ??
         findLevelInLevels(building?.levels, layer.levelKey);
-  const levels = sourceLevels?.length ? sourceLevels : building?.levels;
   const absolute = levelSetUsesAbsoluteElevations(building, levels);
   const base = levelBaseElevationForLevels(building, levels);
   const sourceLocalLevel =

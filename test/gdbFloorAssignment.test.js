@@ -27,13 +27,27 @@ test("an unknown floor in a mixed layer stays unassigned", () => {
   ]);
 });
 
-test("a duplicate floor without altitude stays unassigned", () => {
+test("a duplicate floor without altitude lands on the plain level, not on no level", () => {
   const levels = [
-    { key: "upper", name: "B1F upper", floor: 98 },
-    { key: "lower", name: "B1F lower", floor: 90 },
+    { key: "line", name: "B1F_丸の内線コンコース", floor: 98, elementCount: 900 },
+    { key: "plain", name: "B1FL", floor: 90, elementCount: 100 },
   ];
   const parts = planGdbFloorParts([{ properties: { floor: "B1" } }], levels);
-  assert.equal(parts[0].levelKey, null);
+  assert.equal(parts[0].levelKey, "plain");
+});
+
+test("a floor named only in the layer name picks the plain level but stays reviewable", () => {
+  const building = {
+    levels: [
+      { key: "line", name: "B1F_丸の内線コンコース", floor: 98, elementCount: 900 },
+      { key: "plain", name: "B1FL", floor: 90, elementCount: 100 },
+    ],
+  };
+  const result = resolveGdbLayerLevel({
+    fc: { fileName: "KITTE_B1_Space.shp", features: [{ properties: {} }] },
+    building,
+  });
+  assert.deepEqual(result, { levelKey: "plain", confidence: "medium", reason: "ambiguousFloor" });
 });
 
 test("a unique floor with contradictory TP altitude stays unassigned", () => {

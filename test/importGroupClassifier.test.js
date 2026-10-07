@@ -218,13 +218,13 @@ test("floor altitudes from one building do not decide another building's B1", ()
     },
   ];
   const classes = [
-    { fileName: "Tower_A_B1_poi.shp", features: [{ properties: { source: "Tower A", floor: "B1", altitude: -2 } }] },
+    { fileName: "Tower_A_B1_poi.shp", features: [{ properties: { source: "Tower A", floor: "B1", altitude: -10 } }] },
     { fileName: "Tower_B_B1_poi.shp", features: [{ properties: { source: "Tower B", floor: "B1" } }] },
   ];
   const result = partitionForReview(classes, buildings);
   assert.equal(result.needsReview.length, 1);
   assert.equal(result.needsReview[0].fc, classes[1]);
-  assert.equal(result.needsReview[0].match.levelKey, null);
+  assert.equal(result.needsReview[0].match.levelKey, "b-upper", "Tower A's -10 m would have picked b-lower");
 });
 
 test("handles empty / missing inputs without throwing", () => {
