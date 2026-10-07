@@ -97,6 +97,7 @@ export function openImportReviewTray({
 
   return mountTray({
     needsReview,
+    autoCount,
     buildings,
     viewer,
     mode,
@@ -107,8 +108,12 @@ export function openImportReviewTray({
   });
 }
 
+const CLOSE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const CHEVRON_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 function mountTray({
   needsReview,
+  autoCount = 0,
   buildings,
   viewer,
   mode,
@@ -123,17 +128,35 @@ function mountTray({
   const showMap = !!viewer;
   let focusedGroupKey = groups[0]?.key ?? null;
 
+  // Centered dialog over a scrim. The scrim does not close the tray: closing
+  // by accident would drop the user's picks.
+  const scrim = document.createElement("div");
+  scrim.className = "import-tray-scrim";
+
   const tray = document.createElement("aside");
   tray.id = "importReviewTray";
   tray.className = "import-tray" + (showMap ? " with-map" : "");
+  tray.setAttribute("role", "dialog");
+  tray.setAttribute("aria-modal", "true");
+  tray.setAttribute("aria-labelledby", "importReviewTrayTitle");
 
   // ── Header ──────────────────────────────────────────────────────────
   const header = document.createElement("div");
   header.className = "import-tray-header";
-  const title = document.createElement("span");
+  const titleBlock = document.createElement("div");
+  titleBlock.className = "import-tray-title-block";
+  const title = document.createElement("h2");
+  title.id = "importReviewTrayTitle";
   title.className = "import-tray-title";
   title.textContent = t(mode === "reassign" ? "import.tray.reassignTitle" : "import.tray.title");
-  header.appendChild(title);
+  titleBlock.appendChild(title);
+  const subtitle = document.createElement("p");
+  subtitle.className = "import-tray-subtitle";
+  subtitle.textContent = autoCount > 0
+    ? `${t("import.tray.subtitleReview", { count: needsReview.length })} ${t("import.tray.subtitleAuto", { count: autoCount })}`
+    : t("import.tray.subtitleReview", { count: needsReview.length });
+  titleBlock.appendChild(subtitle);
+  header.appendChild(titleBlock);
 
   if (onOpenClassicTable) {
     const tableBtn = document.createElement("button");
@@ -150,8 +173,9 @@ function mountTray({
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "import-tray-close";
-  closeBtn.textContent = "x";
+  closeBtn.innerHTML = CLOSE_ICON;
   closeBtn.title = t("modal.close");
+  closeBtn.setAttribute("aria-label", t("modal.close"));
   closeBtn.addEventListener("click", () => close());
   header.appendChild(closeBtn);
   tray.appendChild(header);
@@ -197,8 +221,19 @@ function mountTray({
   tray.appendChild(sizeWarning);
   tray.appendChild(footer);
 
+  const onKeydown = (e) => {
+    if (e.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKeydown);
+
+  document.body.appendChild(scrim);
   document.body.appendChild(tray);
-  requestAnimationFrame(() => tray.classList.add("open"));
+  requestAnimationFrame(() => {
+    tray.classList.add("open");
+    scrim.classList.add("open");
+  });
+  tray.tabIndex = -1;
+  tray.focus({ preventScroll: true });
 
   if (mapPane) {
     // Leaflet measures its container on init; defer past the layout reflow.
@@ -220,6 +255,8 @@ function mountTray({
   function close() {
     if (submitting) return;
     mapContext?.destroy();
+    document.removeEventListener("keydown", onKeydown);
+    scrim.remove();
     if (tray.parentNode) tray.parentNode.removeChild(tray);
     if (activeTray?.tray === tray) activeTray = null;
   }
@@ -296,9 +333,11 @@ function mountTray({
 
     const chevron = document.createElement("button");
     chevron.type = "button";
-    chevron.className = "import-tray-chevron";
-    chevron.textContent = group.collapsed ? "›" : "⌄";
+    chevron.className = "import-tray-chevron" + (group.collapsed ? " collapsed" : "");
+    chevron.innerHTML = CHEVRON_ICON;
     chevron.title = t(group.collapsed ? "import.tray.expand" : "import.tray.collapse");
+    chevron.setAttribute("aria-label", chevron.title);
+    chevron.setAttribute("aria-expanded", String(!group.collapsed));
     chevron.addEventListener("click", (e) => {
       e.stopPropagation();
       group.collapsed = !group.collapsed;
@@ -363,8 +402,8 @@ function mountTray({
 
     const acceptBtn = document.createElement("button");
     acceptBtn.type = "button";
-    acceptBtn.className = "import-tray-icon-btn accept";
-    acceptBtn.textContent = "✓";
+    acceptBtn.className = "import-tray-group-btn accept";
+    acceptBtn.textContent = t("import.tray.group.accept");
     acceptBtn.title = t("import.tray.group.acceptTitle");
     acceptBtn.disabled =
       buildingIndexFromValue(buildings, buildingSel.value) == null &&
@@ -374,8 +413,8 @@ function mountTray({
 
     const skipBtn = document.createElement("button");
     skipBtn.type = "button";
-    skipBtn.className = "import-tray-icon-btn skip";
-    skipBtn.textContent = "✗";
+    skipBtn.className = "import-tray-group-btn skip";
+    skipBtn.textContent = t("import.tray.group.skip");
     skipBtn.title = t("import.tray.group.skip");
     skipBtn.addEventListener("click", () => {
       for (const m of group.members) {
@@ -422,9 +461,11 @@ function mountTray({
     name.title = name.textContent;
     li.appendChild(name);
 
+    const level = member.match?.confidence ?? "none";
     const confidence = document.createElement("span");
-    confidence.className = `import-tray-confidence conf-${member.match?.confidence ?? "none"}`;
-    confidence.title = t(`import.tray.confidence.${member.match?.confidence ?? "none"}`);
+    confidence.className = `import-tray-confidence conf-${level}`;
+    confidence.textContent = t(`import.tray.badge.${level}`);
+    confidence.title = t(`import.tray.confidence.${level}`);
     li.appendChild(confidence);
 
     const buildingSel = buildBuildingSelect(buildings, member.buildingValue);
@@ -484,6 +525,8 @@ function mountTray({
         if (idx >= 0) groups.splice(idx, 1);
       }
       if (groups.length === 0) {
+        // close() ignores calls while submitting, so leave that state first.
+        submitting = false;
         close();
       } else {
         submitting = false;

@@ -20,12 +20,9 @@ export async function prepareCleanApp(page, { language = "en", e2eHooks = true }
 
 export async function loadSampleTileset(page) {
   await page.locator("#addDataBtn").click();
-  const menu = page.locator("#leftAddDataMenu");
-  await expect(menu).toBeVisible();
-  await menu.locator('[data-action="add-url"]').click();
-
-  await expect(page.locator("#urlLoadPopover")).toBeVisible();
-  await page.locator("#urlInput").fill("/tiles/tokyo/tileset.json");
+  const dialog = page.locator("#addDataDialog");
+  await expect(dialog).toBeVisible();
+  await dialog.locator("#urlInput").fill("/tiles/tokyo/tileset.json");
   await page.locator("#loadUrlBtn").click();
 
   const buildingName = page.locator(".bldg-row .bldg-name").filter({ hasText: SAMPLE_TILESET_BUILDING_NAME }).first();

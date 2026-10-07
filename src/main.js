@@ -31,6 +31,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "@fontsource-variable/figtree";
 import "./style.css";
+import { initPublishDialog } from "./publishDialog.js";
 import {
   computeBreadcrumb,
   computeWorkflowState,
@@ -321,8 +322,7 @@ const sceneFilterInput = document.getElementById("sceneFilter");
 const sceneItemCountEl = document.getElementById("sceneItemCount");
 const noScenePlaceholder = document.getElementById("noScenePlaceholder");
 const addDataBtn = document.getElementById("addDataBtn");
-const leftAddDataMenu = document.getElementById("leftAddDataMenu");
-const urlLoadPopover = document.getElementById("urlLoadPopover");
+const addDataDialog = document.getElementById("addDataDialog");
 const leftSettingsBtn = document.getElementById("leftSettingsBtn");
 const leftSettingsPopover = document.getElementById("leftSettingsPopover");
 const lodFilterToggle = document.getElementById("lodFilterToggle");
@@ -455,7 +455,7 @@ function init() {
   }));
   exportViewerBtn?.addEventListener("click", handleExportViewerPackage);
   exportWebsiteBtn?.addEventListener("click", handleExportWebsiteBundle);
-  publishBtn?.addEventListener("click", handlePublishToServer);
+  publishBtn?.addEventListener("click", () => publishDialog.open());
   loadSessionBtn.addEventListener("click", () => sessionInput.click());
   sessionInput.addEventListener("change", handleLoadSession);
   applyTokenBtn.addEventListener("click", applyToken);
@@ -466,7 +466,6 @@ function init() {
   });
   imagerySelect.addEventListener("change", switchImagery);
   terrainSelect.addEventListener("change", switchTerrain);
-  loadUrlBtn.addEventListener("click", handleLoadUrl);
   loadFileBtn.addEventListener("click", () => {
     if (isFileSystemAccessSupported()) {
       handleDirectoryPick();
@@ -646,6 +645,24 @@ function activateLeftTab(panelId) {
 // -- Shell chrome: header menu, workflow stepper, breadcrumb, map picker --
 let syncMapStylePicker = () => {};
 
+const publishDialog = initPublishDialog({
+  dialog: document.getElementById("publishDialog"),
+  getState: () => ({ buildings, venues, unassignedLayers }),
+  handlers: {
+    server: handlePublishToServer,
+    viewer: handleExportViewerPackage,
+    website: handleExportWebsiteBundle,
+  },
+  onAction: (action) => {
+    activateLeftTab("tabScene");
+    if (action === "venues") {
+      const section = document.getElementById("venuesSection");
+      section?.classList.remove("collapsed");
+      section?.scrollIntoView({ block: "nearest" });
+    }
+  },
+});
+
 function initShellChrome() {
   initHeaderMenu(document.getElementById("exportMenuBtn"), document.getElementById("exportMenu"));
   initSearchShortcut(searchInput);
@@ -655,7 +672,7 @@ function initShellChrome() {
       e.stopPropagation();
       switch (btn.dataset.step) {
         case "load":
-          openAddDataMenu();
+          addDataBtn?.click();
           break;
         case "author":
           activateLeftTab("tabScene");
@@ -684,19 +701,6 @@ function initShellChrome() {
   });
   onLanguageChange(() => syncMapStylePicker());
   updateShellChrome();
-}
-
-// The Add data menu is positioned from the button's on-screen rect, so a
-// collapsed panel is shown instantly (no slide-in) before the menu opens.
-function openAddDataMenu() {
-  const panel = document.getElementById("leftPanel");
-  if (panel && document.body.classList.contains("left-collapsed")) {
-    panel.style.transition = "none";
-    document.body.classList.remove("left-collapsed");
-    void panel.offsetWidth; // apply the expanded layout before measuring
-    requestAnimationFrame(() => { panel.style.transition = ""; });
-  }
-  addDataBtn?.click();
 }
 
 function updateShellChrome() {
@@ -759,45 +763,35 @@ function initLeftPanelResizer() {
   resizer.addEventListener("pointercancel", stop);
 }
 
-// Wires the left panel's action bar: + Add Data dropdown + settings gear.
-// Each Add Data menu item dispatches to an existing handler (file input
-// click or button click) — no new import logic is added here.
+// Wires the Add data dialog and the settings gear. Each Add data tile
+// dispatches to an existing handler (file input click or button click) — no
+// new import logic is added here.
 function initLeftActionBar() {
-  if (!addDataBtn || !leftAddDataMenu) return;
+  if (!addDataBtn || !addDataDialog) return;
 
-  const positionPopover = (anchorBtn, popoverEl) => {
-    const rect = anchorBtn.getBoundingClientRect();
-    popoverEl.style.top = `${rect.bottom + 4}px`;
-    popoverEl.style.left = `${rect.left}px`;
-  };
-
-  const closeAllLeftPopovers = () => {
-    leftAddDataMenu.style.display = "none";
-    if (urlLoadPopover) urlLoadPopover.style.display = "none";
+  const closeSettingsPopover = () => {
     if (leftSettingsPopover) leftSettingsPopover.style.display = "none";
   };
 
   addDataBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const open = leftAddDataMenu.style.display !== "none";
-    closeAllLeftPopovers();
-    if (open) return;
-    positionPopover(addDataBtn, leftAddDataMenu);
-    leftAddDataMenu.style.display = "";
+    closeSettingsPopover();
+    if (!addDataDialog.open) addDataDialog.showModal();
   });
 
-  leftAddDataMenu.querySelectorAll("li[data-action]").forEach((li) => {
-    li.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const action = li.getAttribute("data-action");
-      closeAllLeftPopovers();
+  addDataDialog.querySelectorAll("[data-close-dialog]").forEach((btn) => {
+    btn.addEventListener("click", () => addDataDialog.close());
+  });
+  // A click on the backdrop lands on the <dialog> element itself.
+  addDataDialog.addEventListener("click", (e) => {
+    if (e.target === addDataDialog) addDataDialog.close();
+  });
+
+  addDataDialog.querySelectorAll("[data-action]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const action = el.getAttribute("data-action");
+      addDataDialog.close();
       switch (action) {
-        case "add-url":
-          positionPopover(addDataBtn, urlLoadPopover);
-          urlLoadPopover.style.display = "";
-          urlInput.focus();
-          urlInput.select();
-          break;
         case "add-folder":
           loadFileBtn.click();
           break;
@@ -823,11 +817,22 @@ function initLeftActionBar() {
     });
   });
 
+  // Loading a URL closes the dialog; progress shows in the scene as before.
+  document.getElementById("urlLoadForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!urlInput.value.trim()) {
+      urlInput.focus();
+      return;
+    }
+    addDataDialog.close();
+    handleLoadUrl();
+  });
+
   if (leftSettingsBtn && leftSettingsPopover) {
     leftSettingsBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const open = leftSettingsPopover.style.display !== "none";
-      closeAllLeftPopovers();
+      closeSettingsPopover();
       if (open) return;
       // The gear sits in the panel footer: open upwards, left-aligned to it.
       const rect = leftSettingsBtn.getBoundingClientRect();
@@ -837,28 +842,14 @@ function initLeftActionBar() {
       leftSettingsPopover.style.top = `${top}px`;
       leftSettingsPopover.style.left = `${Math.max(8, rect.left)}px`;
     });
-  }
 
-  // Close popovers on outside click and Escape.
-  document.addEventListener("click", (e) => {
-    if (
-      leftAddDataMenu.contains(e.target) ||
-      (urlLoadPopover && urlLoadPopover.contains(e.target)) ||
-      (leftSettingsPopover && leftSettingsPopover.contains(e.target)) ||
-      addDataBtn.contains(e.target) ||
-      (leftSettingsBtn && leftSettingsBtn.contains(e.target))
-    ) {
-      return;
-    }
-    closeAllLeftPopovers();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeAllLeftPopovers();
-  });
-  // After a tileset URL load attempt, hide the popover.
-  if (loadUrlBtn && urlLoadPopover) {
-    loadUrlBtn.addEventListener("click", () => {
-      urlLoadPopover.style.display = "none";
+    // Close the settings popover on outside click and Escape.
+    document.addEventListener("click", (e) => {
+      if (leftSettingsPopover.contains(e.target) || leftSettingsBtn.contains(e.target)) return;
+      closeSettingsPopover();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeSettingsPopover();
     });
   }
 }

@@ -91,10 +91,9 @@
 
       <!-- Add data: opens the source menu; files can also be dropped on the map -->
       <div id="leftAddDataCard">
-        <button id="addDataBtn" class="primary-btn" type="button" data-i18n-title="leftBar.addData.title" title="Add data to the scene" aria-haspopup="menu">
+        <button id="addDataBtn" class="primary-btn" type="button" data-i18n-title="leftBar.addData.title" title="Add data to the scene" aria-haspopup="dialog">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
           <span data-i18n="leftBar.addData">Add data</span>
-          <svg class="add-data-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <p class="add-data-hint" data-i18n="leftBar.dropHint">Or drop tilesets, CityGML, GDB, GeoPackage or Shapefile anywhere on the map.</p>
       </div>
@@ -312,29 +311,109 @@
     <!-- Left panel resize handle (drag to widen the panel) -->
     <div id="leftPanelResizer" aria-hidden="true"></div>
 
-    <!-- Floating Add Data menu (positioned under #addDataBtn at runtime) -->
-    <div id="leftAddDataMenu" class="floating-menu" style="display:none">
-      <ul>
-        <li data-action="add-url" data-i18n="addData.url">Tileset URL…</li>
-        <li data-action="add-folder" data-i18n="addData.folder">Tileset folder…</li>
-        <li data-action="add-citygml" data-i18n="addData.cityGml">CityGML (.gml)…</li>
-        <li data-action="add-gdb-zip" data-i18n="addData.gdbZip">Geodatabase / GeoPackage (.gdb.zip, .gpkg)…</li>
-        <li data-action="add-gdb-folder" data-i18n="addData.gdbFolder">Geodatabase folder…</li>
-        <li data-action="add-shp" data-i18n="addData.shp">Shapefile (.zip)…</li>
-        <li data-action="review-gdb" data-i18n="addData.gdbReassign">Reassign GDB layers…</li>
-        <li class="menu-sep"></li>
-        <li data-action="add-catalog" data-i18n="addData.catalog">PLATEAU catalog…</li>
-      </ul>
-    </div>
-
-    <!-- Floating URL load popover -->
-    <div id="urlLoadPopover" class="left-popover" style="display:none">
-      <label class="field-label" for="urlInput" data-i18n="addData.url">Tileset URL…</label>
-      <div class="input-row">
-        <input type="text" id="urlInput" placeholder="Tileset URL…" data-i18n-placeholder="models.urlPlaceholder" />
-        <button id="loadUrlBtn" class="secondary-btn compact" type="button" data-i18n="models.loadUrl">Load</button>
+    <!-- Add data dialog: one tile per source; each tile triggers the
+         existing hidden input or handler (see initLeftActionBar). -->
+    <dialog id="addDataDialog" class="app-dialog add-data-dialog" aria-labelledby="addDataTitle">
+      <div class="app-dialog-head">
+        <div>
+          <h2 id="addDataTitle" class="app-dialog-title" data-i18n="addData.title">Add data</h2>
+          <p class="app-dialog-subtitle" data-i18n="addData.subtitle">Pick a source, or drop files anywhere on the map.</p>
+        </div>
+        <button type="button" class="app-dialog-close" data-close-dialog data-i18n-aria-label="modal.close" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
-    </div>
+      <div class="add-data-grid">
+        <button type="button" class="add-data-tile" data-action="add-folder">
+          <span class="add-data-tile-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7L8 1.5zM2.5 4.5L8 7.5l5.5-3M8 7.5v7"/></svg></span>
+          <span class="add-data-tile-title" data-i18n="addData.tile.folder">3D Tiles folder</span>
+          <span class="add-data-tile-hint" data-i18n="addData.tile.folderHint">Folder with tileset.json</span>
+        </button>
+        <button type="button" class="add-data-tile" data-action="add-gdb-zip">
+          <span class="add-data-tile-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4l5-2 6 3-1 7-7 2-3-5z"/></svg></span>
+          <span class="add-data-tile-title" data-i18n="addData.tile.gdbFile">Geodatabase / GeoPackage</span>
+          <span class="add-data-tile-hint" data-i18n="addData.tile.gdbFileHint">.gdb.zip or .gpkg file</span>
+        </button>
+        <button type="button" class="add-data-tile" data-action="add-gdb-folder">
+          <span class="add-data-tile-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5H7.5l-1.5-1.5z"/></svg></span>
+          <span class="add-data-tile-title" data-i18n="addData.tile.gdbFolder">Geodatabase folder</span>
+          <span class="add-data-tile-hint" data-i18n="addData.tile.gdbFolderHint">Unzipped .gdb folder</span>
+        </button>
+        <button type="button" class="add-data-tile" data-action="add-shp">
+          <span class="add-data-tile-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5h12v9H2zM2 8h12M6 3.5v9M10 3.5v9"/></svg></span>
+          <span class="add-data-tile-title" data-i18n="addData.tile.shp">Shapefile</span>
+          <span class="add-data-tile-hint" data-i18n="addData.tile.shpHint">Zipped .shp set</span>
+        </button>
+        <button type="button" class="add-data-tile" data-action="add-citygml">
+          <span class="add-data-tile-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14V3h6v11M9 6h4v8M5 5.5h2M5 8h2M5 10.5h2M2 14h12"/></svg></span>
+          <span class="add-data-tile-title" data-i18n="addData.tile.cityGml">CityGML</span>
+          <span class="add-data-tile-hint" data-i18n="addData.tile.cityGmlHint">.gml or .xml file</span>
+        </button>
+        <button type="button" class="add-data-tile add-data-tile-featured" data-action="add-catalog">
+          <span class="add-data-tile-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg></span>
+          <span class="add-data-tile-text">
+            <span class="add-data-tile-title" data-i18n="addData.tile.catalog">PLATEAU catalog</span>
+            <span class="add-data-tile-hint" data-i18n="addData.tile.catalogHint">City buildings, trees, roads and terrain. Pick an area on a map.</span>
+          </span>
+        </button>
+      </div>
+      <form id="urlLoadForm" class="add-data-url">
+        <label class="field-label" for="urlInput" data-i18n="addData.urlLabel">Or load a tileset from a URL</label>
+        <div class="input-row">
+          <input type="text" id="urlInput" placeholder="https://…/tileset.json" data-i18n-placeholder="addData.urlPlaceholder" autocomplete="off" />
+          <button id="loadUrlBtn" class="primary-btn" type="submit" data-i18n="models.loadUrl">Load</button>
+        </div>
+      </form>
+      <div class="app-dialog-foot add-data-foot">
+        <span data-i18n="addData.reassignHint">Imported GDB layers on the wrong floor?</span>
+        <button type="button" class="link-btn" data-action="review-gdb" data-i18n="addData.gdbReassign">Reassign GDB layers…</button>
+      </div>
+    </dialog>
+
+    <!-- Publish: pre-flight checklist + destination. Confirming runs the
+         existing publish/export handler for the chosen destination. -->
+    <dialog id="publishDialog" class="app-dialog publish-dialog" aria-labelledby="publishDialogTitle">
+      <div class="publish-dialog-grid">
+        <section class="publish-check">
+          <p id="publishDialogVenue" class="publish-eyebrow"></p>
+          <h2 id="publishDialogTitle" class="app-dialog-title" data-i18n="publish.dialog.title">Ready to publish?</h2>
+          <p class="app-dialog-subtitle" data-i18n="publish.dialog.subtitle">A quick check of what goes into the package.</p>
+          <ul id="publishChecklist" class="publish-checklist"></ul>
+        </section>
+        <section class="publish-options">
+          <div class="publish-options-head">
+            <h3 class="publish-options-title" data-i18n="publish.dialog.destination">Where should it go?</h3>
+            <button type="button" class="app-dialog-close" data-close-dialog data-i18n-aria-label="modal.close" aria-label="Close">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <div class="publish-destinations" role="radiogroup" data-i18n-aria-label="publish.dialog.destination" aria-label="Where should it go?">
+            <label class="publish-destination">
+              <input type="radio" name="publishDestination" value="server" checked />
+              <span><span class="publish-destination-title" data-i18n="publish.dest.server">Publish to server</span>
+              <span class="publish-destination-hint" data-i18n="publish.dest.serverHint">A link colleagues open in the browser. Nothing to install.</span></span>
+            </label>
+            <label class="publish-destination">
+              <input type="radio" name="publishDestination" value="viewer" />
+              <span><span class="publish-destination-title" data-i18n="venue.exportPackage">Export for Viewer</span>
+              <span class="publish-destination-hint" data-i18n="publish.dest.viewerHint">Session files plus venues.json, to host anywhere.</span></span>
+            </label>
+            <label class="publish-destination">
+              <input type="radio" name="publishDestination" value="website" />
+              <span><span class="publish-destination-title" data-i18n="venue.exportWebsite">Export for website</span>
+              <span class="publish-destination-hint" data-i18n="publish.dest.websiteHint">A zipped bundle for an existing website.</span></span>
+            </label>
+          </div>
+          <div class="publish-dialog-foot">
+            <p id="publishDialogNote" class="publish-dialog-note"></p>
+            <button id="publishConfirmBtn" class="primary-btn" type="button">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 11V2.5M4.5 6L8 2.5 11.5 6M2.5 10.5v3h11v-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="publishConfirmLabel"></span>
+            </button>
+          </div>
+        </section>
+      </div>
+    </dialog>
 
     <div id="leftSettingsPopover" class="left-popover" style="display:none">
       <label class="field-label" for="tokenInput" data-i18n="basemap.tokenLabel">Cesium Ion Token</label>
