@@ -576,16 +576,16 @@ function initMapPane(mapPane, viewer, buildings, groups, { onAssignBuildingToFoc
       radiusMeters > 10 && radiusMeters < 5000
         ? L.circle([lat, lng], {
             radius: radiusMeters,
-            color: "#0696D7",
+            color: "#2f6bff",
             weight: 2,
-            fillColor: "#0696D7",
+            fillColor: "#2f6bff",
             fillOpacity: 0.12,
           })
         : L.circleMarker([lat, lng], {
             radius: 8,
-            color: "#0696D7",
+            color: "#2f6bff",
             weight: 2,
-            fillColor: "#0696D7",
+            fillColor: "#2f6bff",
             fillOpacity: 0.35,
           });
     marker.addTo(buildingLayer);

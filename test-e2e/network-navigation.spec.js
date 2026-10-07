@@ -21,6 +21,9 @@ test("network navigation points restore, export, and render responsively", async
   await expect(page.locator("#editorBuildingSelect option:checked")).toHaveText("Network QA Tower");
   await expect(page.locator("#networkStatus")).toHaveText("3 nodes · 1 links · 1 authored");
 
+  // Network controls live in their own left-panel tab.
+  await page.locator('[data-panel="tabNetwork"]').click();
+  await expect(page.locator("#networkSection")).toBeVisible();
   await expect(page.locator("#networkVisibleToggle")).toBeEnabled();
   await page.locator("#networkSection .toggle-label").click();
   await expect(page.locator("#networkVisibleToggle")).not.toBeChecked();
