@@ -4010,20 +4010,22 @@ html[data-theme="light"] .notification {
 
 /* ── Viewport map-style picker (bottom left) ──────────────── */
 .map-style-picker {
+  /* Horizontal room for the open options: the viewport minus the panel, the
+     side margins and the floor picker on the right. */
+  --picker-room: calc(100vw - var(--panel-width) - 108px);
   position: fixed;
   left: calc(var(--panel-width) + 16px);
   bottom: 40px;
   z-index: 950;
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
   transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-body.left-collapsed .map-style-picker { left: 16px; }
+body.left-collapsed .map-style-picker {
+  --picker-room: calc(100vw - 108px);
+  left: 16px;
+}
 
 .map-style-current {
-  order: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4067,10 +4069,15 @@ body.left-collapsed .map-style-picker { left: 16px; }
 .map-style-chevron { color: var(--text-secondary); transition: transform 0.15s; }
 .map-style-picker.open .map-style-chevron { transform: rotate(180deg); }
 
+/* Opens above the current-map button and wraps to fewer columns when the
+   viewport is narrow, so every choice stays on screen. */
 .map-style-options {
-  order: 1;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: min(376px, var(--picker-room));
   display: grid;
-  grid-template-columns: repeat(4, 84px);
+  grid-template-columns: repeat(auto-fill, 84px);
   gap: 8px;
   padding: 8px;
   border-radius: var(--radius-lg);
@@ -4122,10 +4129,9 @@ body.left-collapsed .map-style-picker { left: 16px; }
 }
 
 @media (max-width: 760px) {
-  .map-style-picker { left: 16px; bottom: 36px; }
+  .map-style-picker { --picker-room: calc(100vw - 108px); left: 16px; bottom: 36px; }
   .map-style-text, .map-style-chevron { display: none; }
   .map-style-current { padding: 6px; }
-  .map-style-options { grid-template-columns: repeat(2, 72px); }
 }
 
 .viewer-session-banner {

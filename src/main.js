@@ -655,7 +655,7 @@ function initShellChrome() {
       e.stopPropagation();
       switch (btn.dataset.step) {
         case "load":
-          addDataBtn?.click();
+          openAddDataMenu();
           break;
         case "author":
           activateLeftTab("tabScene");
@@ -684,6 +684,19 @@ function initShellChrome() {
   });
   onLanguageChange(() => syncMapStylePicker());
   updateShellChrome();
+}
+
+// The Add data menu is positioned from the button's on-screen rect, so a
+// collapsed panel is shown instantly (no slide-in) before the menu opens.
+function openAddDataMenu() {
+  const panel = document.getElementById("leftPanel");
+  if (panel && document.body.classList.contains("left-collapsed")) {
+    panel.style.transition = "none";
+    document.body.classList.remove("left-collapsed");
+    void panel.offsetWidth; // apply the expanded layout before measuring
+    requestAnimationFrame(() => { panel.style.transition = ""; });
+  }
+  addDataBtn?.click();
 }
 
 function updateShellChrome() {
