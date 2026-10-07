@@ -1470,6 +1470,21 @@ select option {
   background: rgba(0, 0, 0, 0.15);
 }
 
+@media (max-width: 1020px) {
+  .import-tray.with-map { width: 380px; }
+  .import-tray-map { display: none; }
+}
+
+@media (max-width: 640px) {
+  .import-tray,
+  .import-tray.with-map {
+    left: 0;
+    width: 100vw;
+  }
+
+  .import-tray.with-map .import-tray-body { width: 100%; }
+}
+
 /* ── Floating context menu ────────────────────────────────── */
 .floating-menu {
   position: absolute;

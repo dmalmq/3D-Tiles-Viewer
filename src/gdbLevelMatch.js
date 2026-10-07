@@ -93,7 +93,7 @@ export function floorCodeKey(floorValue) {
  * @param {Array<{ features }>} featureCollections
  * @returns {Map<string, number>} floorCodeKey → altitude
  */
-export function buildFloorAltitudeHints(featureCollections) {
+export function buildFloorAltitudeHints(featureCollections, { maxSpreadMeters = Infinity } = {}) {
   const byKey = new Map();
   for (const fc of featureCollections ?? []) {
     for (const group of groupFeaturesByFloor(fc?.features ?? [])) {
@@ -104,7 +104,17 @@ export function buildFloorAltitudeHints(featureCollections) {
       byKey.get(key).push(...Array(group.features.length).fill(altitude));
     }
   }
-  return new Map([...byKey].map(([key, values]) => [key, median(values)]));
+  return new Map([...byKey]
+    .filter(([, values]) => {
+      let min = Infinity;
+      let max = -Infinity;
+      for (const value of values) {
+        min = Math.min(min, value);
+        max = Math.max(max, value);
+      }
+      return max - min <= maxSpreadMeters;
+    })
+    .map(([key, values]) => [key, median(values)]));
 }
 
 /**

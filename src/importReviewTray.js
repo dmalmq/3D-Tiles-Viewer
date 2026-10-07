@@ -11,6 +11,8 @@ import { t } from "./i18n.js";
 import { notifyUser } from "./notifications.js";
 import { detectSource, summarizeGeometry } from "./gdbAutoMatch.js";
 import { partitionForReview } from "./importGroupClassifier.js";
+import { resolveGdbLayerLevel } from "./gdbFloorAssignment.js";
+import { groupFeaturesByFloor } from "./floorSplit.js";
 import {
   TARGET_SKIP,
   TARGET_UNASSIGNED,
@@ -326,9 +328,7 @@ function mountTray({
     buildingSel.addEventListener("change", () => {
       for (const m of group.members) {
         if (m.buildingManual) continue;
-        m.buildingValue = buildingSel.value;
-        m.levelValue = FLOOR_ALL;
-        m.floorManual = false;
+        setMemberBuilding(m, buildingSel.value, buildings);
       }
       renderGroups();
     });
@@ -342,6 +342,7 @@ function mountTray({
         if (m.floorManual) continue;
         if (m.buildingValue !== groupBuildingValue) continue;
         m.levelValue = floorSel.value;
+        m.floorManual = true;
       }
       renderGroups();
     });
@@ -415,10 +416,8 @@ function mountTray({
 
     const buildingSel = buildBuildingSelect(buildings, member.buildingValue);
     buildingSel.addEventListener("change", () => {
-      member.buildingValue = buildingSel.value;
+      setMemberBuilding(member, buildingSel.value, buildings);
       member.buildingManual = true;
-      member.levelValue = FLOOR_ALL;
-      member.floorManual = false;
       renderGroups();
     });
     li.appendChild(buildingSel);
@@ -452,6 +451,7 @@ function mountTray({
           buildingIndex: bi,
           levelKey: m.levelValue === FLOOR_ALL ? null : m.levelValue,
         },
+        allFloorsExplicit: m.floorManual && m.levelValue === FLOOR_ALL,
       });
     }
     return decisions;
@@ -727,8 +727,31 @@ function buildGroups(needsReview, buildings, { defaultBuildingIndex, defaultLeve
     if (!groupsByKey.has(key)) {
       groupsByKey.set(key, { key, label: key, members: [], collapsed: false, geometrySummary: "" });
     }
-    const member = buildMember(item, buildings, { defaultBuildingIndex, defaultLevelKey });
-    groupsByKey.get(key).members.push(member);
+    const floorGroups = item.needsFloorSplit
+      ? groupFeaturesByFloor(item.fc.features ?? [])
+      : null;
+    const rows = floorGroups
+      ? floorGroups.map((group) => {
+          const fc = {
+            ...item.fc,
+            originalFileName: item.fc.originalFileName ?? item.fc.fileName,
+            fileName: `${stripExt(item.fc.fileName)} (${group.floorValue ?? t("level.allFloors")})`,
+            features: group.features,
+          };
+          const building = buildings[item.match?.buildingIndex];
+          const floor = building
+            ? resolveGdbLayerLevel({ fc, building, levelRef: item.levelRef })
+            : null;
+          return {
+            ...item,
+            fc,
+            match: { ...item.match, levelKey: floor?.levelKey ?? null, confidence: "medium" },
+          };
+        })
+      : [item];
+    for (const row of rows) {
+      groupsByKey.get(key).members.push(buildMember(row, buildings, { defaultBuildingIndex, defaultLevelKey }));
+    }
   }
   const groups = Array.from(groupsByKey.values());
   for (const g of groups) {
@@ -755,7 +778,7 @@ function deriveGroupKey(fc) {
 }
 
 function buildMember(item, buildings, { defaultBuildingIndex, defaultLevelKey }) {
-  const { fc, match } = item;
+  const { fc, match, levelRef } = item;
   let buildingValue;
   let levelValue = FLOOR_ALL;
   let buildingManual = false;
@@ -767,6 +790,8 @@ function buildMember(item, buildings, { defaultBuildingIndex, defaultLevelKey })
     if (defaultLevelKey != null) {
       levelValue = String(defaultLevelKey);
       floorManual = true;
+    } else {
+      levelValue = resolveGdbLayerLevel({ fc, building: buildings[defaultBuildingIndex], levelRef }).levelKey ?? FLOOR_ALL;
     }
   } else if (match?.buildingIndex >= 0) {
     buildingValue = String(match.buildingIndex);
@@ -778,11 +803,25 @@ function buildMember(item, buildings, { defaultBuildingIndex, defaultLevelKey })
   return {
     fc,
     match,
+    levelRef,
     buildingValue,
     levelValue,
     buildingManual,
     floorManual,
   };
+}
+
+function setMemberBuilding(member, value, buildings) {
+  member.buildingValue = value;
+  member.floorManual = false;
+  const index = buildingIndexFromValue(buildings, value);
+  member.levelValue = index == null
+    ? FLOOR_ALL
+    : resolveGdbLayerLevel({
+        fc: member.fc,
+        building: buildings[index],
+        levelRef: member.levelRef,
+      }).levelKey ?? FLOOR_ALL;
 }
 
 function summarizeGroupGeometry(members) {

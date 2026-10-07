@@ -42,6 +42,84 @@ test("high-confidence single-floor layers go to autoImport with a building decis
   assert.equal(autoImport[0].target.levelKey, "l2");
 });
 
+test("a single feature floor selects that building's level without a floor in the filename", () => {
+  const fc = {
+    fileName: "point_facility.shp",
+    features: [{ properties: { source: "Shinjuku LUMINE", floor: "2F" } }],
+  };
+  const result = partitionForReview([fc], [SHINJUKU_BUILDING]);
+  assert.equal(result.autoImport.length, 1);
+  assert.deepEqual(result.autoImport[0].target, {
+    kind: "building", buildingIndex: 0, levelKey: "l2",
+  });
+});
+
+test("conflicting filename and feature floors require review", () => {
+  const fc = {
+    fileName: "Shinjuku_1F_unit.shp",
+    features: [{ properties: { source: "Shinjuku LUMINE", floor: "2F" } }],
+  };
+  const result = partitionForReview([fc], [SHINJUKU_BUILDING]);
+  assert.equal(result.autoImport.length, 0);
+  assert.equal(result.needsReview.length, 1);
+  assert.equal(result.needsReview[0].match.levelKey, null);
+});
+
+test("feature altitude resolves duplicate floor numbers before silent import", () => {
+  const building = {
+    name: "Tower",
+    aliases: [],
+    levels: [
+      { key: "upper", name: "B1F upper (TP-2.00)", floor: 98 },
+      { key: "lower", name: "B1F lower (TP-10.00)", floor: 90 },
+      { key: "datum", name: "TP±0", floor: 100 },
+    ],
+  };
+  const fc = {
+    fileName: "Tower_B1_point_facility.shp",
+    features: [{ properties: { source: "Tower", floor: "B1", altitude: -10 } }],
+  };
+  const result = partitionForReview([fc], [building]);
+  assert.equal(result.autoImport.length, 1);
+  assert.equal(result.autoImport[0].target.levelKey, "lower");
+});
+
+test("ambiguous duplicate floors without altitude require review", () => {
+  const building = {
+    name: "Tower",
+    aliases: [],
+    levels: [
+      { key: "upper", name: "B1F upper", floor: 98 },
+      { key: "lower", name: "B1F lower", floor: 90 },
+    ],
+  };
+  const fc = {
+    fileName: "Tower_B1_point_facility.shp",
+    features: [{ properties: { source: "Tower", floor: "B1" } }],
+  };
+  const result = partitionForReview([fc], [building]);
+  assert.equal(result.autoImport.length, 0);
+  assert.equal(result.needsReview.length, 1);
+});
+
+test("a unique floor with contradictory TP altitude requires review", () => {
+  const building = {
+    name: "Tower",
+    aliases: [],
+    levels: [
+      { key: "b1", name: "B1F (TP-2.00)", floor: 98 },
+      { key: "datum", name: "TP±0", floor: 100 },
+    ],
+  };
+  const fc = {
+    fileName: "Tower_B1_poi.shp",
+    features: [{ properties: { source: "Tower", floor: "B1", altitude: -20 } }],
+  };
+  const result = partitionForReview([fc], [building]);
+  assert.equal(result.autoImport.length, 0);
+  assert.equal(result.needsReview[0].match.levelKey, null);
+});
+
 test("multi-floor features stay in needsReview with needsFloorSplit flagged", () => {
   const fc = {
     fileName: "facility.shp",
@@ -99,6 +177,54 @@ test("_level feature classes are dropped into metadataOnly", () => {
   assert.equal(autoImport.length, 0);
   assert.equal(needsReview.length, 0);
   assert.equal(metadataOnly.length, 1);
+});
+
+test("a single-row _level class supplies a level hint in the normal review path", () => {
+  const classes = [
+    { fileName: "shinjuku_level.shp", features: [{ properties: { name: "2F", ordinal: 1 } }] },
+    { fileName: "shinjuku_fixture.shp", features: [{ properties: { source: "Shinjuku LUMINE" } }] },
+  ];
+  const result = partitionForReview(classes, [SHINJUKU_BUILDING]);
+  assert.equal(result.metadataOnly.length, 1);
+  assert.equal(result.autoImport[0].target.levelKey, "l2");
+});
+
+test("a multi-row _level class does not pin every layer to its first level", () => {
+  const classes = [
+    {
+      fileName: "shinjuku_level.shp",
+      features: [
+        { properties: { name: "1F", ordinal: 0 } },
+        { properties: { name: "2F", ordinal: 1 } },
+      ],
+    },
+    { fileName: "shinjuku_fixture.shp", features: [{ properties: { source: "Shinjuku LUMINE" } }] },
+  ];
+  const result = partitionForReview(classes, [SHINJUKU_BUILDING]);
+  assert.equal(result.autoImport.length, 0);
+  assert.equal(result.needsReview.length, 1);
+  assert.equal(result.needsReview[0].match.levelKey, null);
+});
+
+test("floor altitudes from one building do not decide another building's B1", () => {
+  const buildings = [
+    { name: "Tower A", aliases: [], levels: [{ key: "a", name: "B1F", floor: 0 }] },
+    {
+      name: "Tower B", aliases: [], levels: [
+        { key: "b-upper", name: "B1F upper (TP-2.00)", floor: 98 },
+        { key: "b-lower", name: "B1F lower (TP-10.00)", floor: 90 },
+        { key: "datum", name: "TP±0", floor: 100 },
+      ],
+    },
+  ];
+  const classes = [
+    { fileName: "Tower_A_B1_poi.shp", features: [{ properties: { source: "Tower A", floor: "B1", altitude: -2 } }] },
+    { fileName: "Tower_B_B1_poi.shp", features: [{ properties: { source: "Tower B", floor: "B1" } }] },
+  ];
+  const result = partitionForReview(classes, buildings);
+  assert.equal(result.needsReview.length, 1);
+  assert.equal(result.needsReview[0].fc, classes[1]);
+  assert.equal(result.needsReview[0].match.levelKey, null);
 });
 
 test("handles empty / missing inputs without throwing", () => {

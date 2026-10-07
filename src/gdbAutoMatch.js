@@ -71,6 +71,7 @@ export function matchLayerToTarget({ filename, features, buildings, buildingFoot
   const source = detectSource(features);
   const featureBbox = buildingFootprints?.length ? computeFeaturesBbox(features) : null;
   let best = { buildingIndex: -1, score: 0, nameScore: 0, text: "" };
+  let runnerUpNameScore = 0;
 
   for (let i = 0; i < (buildings ?? []).length; i++) {
     const b = buildings[i];
@@ -94,7 +95,10 @@ export function matchLayerToTarget({ filename, features, buildings, buildingFoot
       : spatialScore * 0.5;
 
     if (score > best.score) {
+      runnerUpNameScore = Math.max(runnerUpNameScore, best.nameScore);
       best = { buildingIndex: i, score, nameScore, text: [source, fileText].filter(Boolean).join(" ") };
+    } else {
+      runnerUpNameScore = Math.max(runnerUpNameScore, nameScore);
     }
   }
 
@@ -111,11 +115,13 @@ export function matchLayerToTarget({ filename, features, buildings, buildingFoot
   const levelText = [fileText, levelSource].filter(Boolean).join(" ");
   const level = multiFloor ? null : matchLevelByText(levelText, building.levels);
   // Spatial-only matches stay "medium" — preselects the building in review but never auto-imports
-  const confidence = best.nameScore > 0 && level ? "high" : "medium";
+  const buildingConfidence = best.nameScore > runnerUpNameScore ? "high" : "medium";
+  const confidence = buildingConfidence === "high" && level ? "high" : "medium";
   return {
     buildingIndex: best.buildingIndex,
     levelKey: level ? (level.key ?? "") : null,
     confidence,
+    buildingConfidence,
   };
 }
 
@@ -324,20 +330,21 @@ export function splitFeaturesBySource(fc) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
   }
-  if (groups.size <= 1) return [fc];
+  if (groups.size === 0 || (groups.size === 1 &&
+    (noSource.length === 0 || /^\d+$/.test(groups.keys().next().value)))) return [fc];
 
   const result = [];
   for (const [source, sourceFeatures] of groups) {
-    result.push({ ...fc, fileName: `${stripExt(fc.fileName)} [${source}]`, features: sourceFeatures });
+    result.push({ ...fc, originalFileName: fc.originalFileName ?? fc.fileName, fileName: `${stripExt(fc.fileName)} [${source}]`, features: sourceFeatures });
   }
   if (noSource.length > 0) {
-    result.push({ ...fc, fileName: `${stripExt(fc.fileName)} [unknown]`, features: noSource });
+    result.push({ ...fc, originalFileName: fc.originalFileName ?? fc.fileName, fileName: `${stripExt(fc.fileName)} [unknown]`, features: noSource });
   }
   return result;
 }
 
 function stripFcExt(name) {
-  return String(name ?? "").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
+  return String(name ?? "").replace(/ \[[^\]]+\]$/, "").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
 }
 
 export function isLevelFeatureClass(fileName) {
@@ -346,6 +353,7 @@ export function isLevelFeatureClass(fileName) {
 
 export function buildLevelsByPrefix(featureCollections) {
   const map = new Map();
+  const invalidPrefixes = new Set();
   const ensure = (prefix) => {
     let entry = map.get(prefix);
     if (!entry) {
@@ -356,12 +364,16 @@ export function buildLevelsByPrefix(featureCollections) {
   };
 
   for (const fc of featureCollections ?? []) {
-    const base = stripFcExt(fc?.fileName);
+    const base = stripFcExt(fc?.originalFileName ?? fc?.fileName);
     if (!base) continue;
     const row = (fc.features ?? [])[0]?.properties ?? {};
 
     if (/_level$/i.test(base)) {
       const prefix = base.replace(/_level$/i, "").toLowerCase();
+      if ((fc.features ?? []).length !== 1) {
+        invalidPrefixes.add(prefix);
+        continue;
+      }
       const entry = ensure(prefix);
       const ordinalRaw = readProp(row, ["ordinal", "Ordinal", "ORDINAL", "VERTICAL_ORDER"]);
       const nameRaw = readProp(row, [
@@ -373,16 +385,28 @@ export function buildLevelsByPrefix(featureCollections) {
         "SHORT_NAME",
       ]);
       const ordinal = ordinalRaw == null ? null : Number(ordinalRaw);
+      if ((entry.ordinal != null && Number.isFinite(ordinal) && entry.ordinal !== ordinal) ||
+          (entry.name != null && nameRaw != null && entry.name.toLowerCase() !== String(nameRaw).toLowerCase())) {
+        invalidPrefixes.add(prefix);
+      }
       if (Number.isFinite(ordinal)) entry.ordinal = ordinal;
       if (nameRaw != null) entry.name = String(nameRaw);
     } else if (/_floor$/i.test(base)) {
       const prefix = base.replace(/_floor$/i, "").toLowerCase();
+      if ((fc.features ?? []).length !== 1) {
+        invalidPrefixes.add(prefix);
+        continue;
+      }
       const entry = ensure(prefix);
       const floorRaw = readProp(row, ["floor", "Floor", "FLOOR"]);
+      if (entry.floor != null && floorRaw != null && entry.floor.toLowerCase() !== String(floorRaw).toLowerCase()) {
+        invalidPrefixes.add(prefix);
+      }
       if (floorRaw != null) entry.floor = String(floorRaw);
     }
   }
 
+  for (const prefix of invalidPrefixes) map.delete(prefix);
   return map;
 }
 
