@@ -19,6 +19,7 @@ import {
   DistanceDisplayCondition,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
+import "@fontsource-variable/figtree";
 import "./style.css";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
 import {

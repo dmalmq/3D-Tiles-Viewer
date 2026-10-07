@@ -29,7 +29,17 @@ import {
   PolylineDashMaterialProperty,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
+import "@fontsource-variable/figtree";
 import "./style.css";
+import {
+  computeBreadcrumb,
+  computeWorkflowState,
+  initHeaderMenu,
+  initMapStylePicker,
+  initSearchShortcut,
+  renderBreadcrumb,
+  renderWorkflowStepper,
+} from "./shellChrome.js";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
 import {
   applyGdbLayerZoomVisibility,
@@ -580,6 +590,7 @@ function init() {
   initLeftPanelResizer();
   initFileDropZone();
   initLeftPanelTabs();
+  initShellChrome();
   initPackageEvents();
 }
 
@@ -615,13 +626,78 @@ function initPackageEvents() {
 function initLeftPanelTabs() {
   const tabs = document.querySelectorAll("#leftPanelTabStrip .left-tab");
   tabs.forEach(tab => {
-    tab.addEventListener("click", () => {
-      tabs.forEach(t => t.classList.remove("active"));
-      document.querySelectorAll(".left-tab-panel").forEach(p => p.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(tab.dataset.panel)?.classList.add("active");
+    tab.setAttribute("aria-selected", String(tab.classList.contains("active")));
+    tab.addEventListener("click", () => activateLeftTab(tab.dataset.panel));
+  });
+}
+
+function activateLeftTab(panelId) {
+  document.querySelectorAll("#leftPanelTabStrip .left-tab").forEach((tab) => {
+    const on = tab.dataset.panel === panelId;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", String(on));
+  });
+  document.querySelectorAll(".left-tab-panel").forEach((p) => {
+    p.classList.toggle("active", p.id === panelId);
+  });
+  document.body.classList.remove("left-collapsed");
+}
+
+// -- Shell chrome: header menu, workflow stepper, breadcrumb, map picker --
+let syncMapStylePicker = () => {};
+
+function initShellChrome() {
+  initHeaderMenu(document.getElementById("exportMenuBtn"), document.getElementById("exportMenu"));
+  initSearchShortcut(searchInput);
+
+  document.querySelectorAll("#workflowStepper .workflow-step").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      switch (btn.dataset.step) {
+        case "load":
+          addDataBtn?.click();
+          break;
+        case "author":
+          activateLeftTab("tabScene");
+          break;
+        case "venue": {
+          activateLeftTab("tabScene");
+          const section = document.getElementById("venuesSection");
+          section?.classList.remove("collapsed");
+          section?.scrollIntoView({ block: "nearest" });
+          break;
+        }
+        case "publish":
+          publishBtn?.click();
+          break;
+      }
     });
   });
+
+  syncMapStylePicker = initMapStylePicker({
+    root: document.getElementById("mapStylePicker"),
+    toggle: document.getElementById("mapStyleToggle"),
+    options: document.getElementById("mapStyleOptions"),
+    swatch: document.getElementById("mapStyleSwatch"),
+    nameEl: document.getElementById("mapStyleName"),
+    select: imagerySelect,
+  });
+  onLanguageChange(() => syncMapStylePicker());
+  updateShellChrome();
+}
+
+function updateShellChrome() {
+  renderWorkflowStepper(
+    document.getElementById("workflowStepper"),
+    computeWorkflowState({ buildings, venues })
+  );
+  renderBreadcrumb(
+    {
+      venueEl: document.getElementById("breadcrumbVenue"),
+      buildingEl: document.getElementById("breadcrumbBuilding"),
+    },
+    computeBreadcrumb({ buildings, venues, selectedBuildingIndex, activeVenueFilter })
+  );
 }
 
 async function initializeTerrainProviders(savedToken) {
@@ -740,12 +816,13 @@ function initLeftActionBar() {
       const open = leftSettingsPopover.style.display !== "none";
       closeAllLeftPopovers();
       if (open) return;
-      // Right-align to the gear so the popover doesn't overflow the panel.
+      // The gear sits in the panel footer: open upwards, left-aligned to it.
       const rect = leftSettingsBtn.getBoundingClientRect();
-      leftSettingsPopover.style.top = `${rect.bottom + 4}px`;
-      // Defer to measure width.
       leftSettingsPopover.style.display = "";
-      leftSettingsPopover.style.left = `${Math.max(8, rect.right - leftSettingsPopover.offsetWidth)}px`;
+      const height = leftSettingsPopover.offsetHeight;
+      const top = rect.top - height - 8 >= 8 ? rect.top - height - 8 : rect.bottom + 4;
+      leftSettingsPopover.style.top = `${top}px`;
+      leftSettingsPopover.style.left = `${Math.max(8, rect.left)}px`;
     });
   }
 
@@ -1151,6 +1228,7 @@ async function applyToken() {
 
 // -- Imagery / terrain (shared helpers in cesiumInit.js) --
 async function switchImagery() {
+  syncMapStylePicker();
   await switchImageryImpl(viewer, imagerySelect.value, {
     onAfterSwitch: applyUndergroundMode,
     cartoKey: cartoKeyInput.value.trim(),
@@ -2842,6 +2920,7 @@ function getBuildingsForSceneTree() {
 }
 
 function renderVenuesSection() {
+  updateShellChrome();
   renderVenuesPanel({
     container: venuesSectionBody,
     venues,
@@ -2929,6 +3008,7 @@ function renderLevelPills() {
 }
 
 function renderLevelList() {
+  updateShellChrome();
   renderEditorBuildingSelect();
   renderLevelPills();
   const filterRaw = (sceneFilterInput?.value ?? "").trim().toLowerCase();
@@ -5863,12 +5943,12 @@ function styleInfoBoxIframe() {
       }
 
       const isLight = document.documentElement.getAttribute("data-theme") === "light";
-      const bg = isLight ? "#fcfcff" : "#121218";
-      const bgAlt = isLight ? "#f4f4f7" : "#0f0f14";
-      const text = isLight ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.87)";
-      const muted = isLight ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.3)";
-      const border = isLight ? "rgba(0,0,0,0.09)" : "rgba(255,255,255,0.07)";
-      const accent = "#0696D7";
+      const bg = isLight ? "#ffffff" : "#161a22";
+      const bgAlt = isLight ? "#f6f8fb" : "#1b2029";
+      const text = isLight ? "#1b2230" : "#e7eaf0";
+      const muted = isLight ? "#8a93a3" : "#6b7487";
+      const border = isLight ? "#e3e7ee" : "#262c38";
+      const accent = isLight ? "#2f6bff" : "#5a8bff";
 
       const styleId = "app-theme-info-box";
       let style = doc.getElementById(styleId);
