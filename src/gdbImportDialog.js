@@ -16,6 +16,7 @@ import {
 } from "./gdbAutoMatch.js";
 import { resolveGdbLayerLevel } from "./gdbFloorAssignment.js";
 import { partitionForReview } from "./importGroupClassifier.js";
+import { isBasemapLayerName } from "./gdbImportBudget.js";
 import {
   TARGET_SKIP,
   TARGET_UNASSIGNED,
@@ -76,7 +77,7 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
           buildingFootprints,
         });
 
-    const buildingValue = metadataOnly
+    const buildingValue = metadataOnly || isBasemapLayerName(fc?.originalFileName ?? fc?.fileName)
       ? TARGET_SKIP
       : match.buildingIndex >= 0
         ? String(match.buildingIndex)

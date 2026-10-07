@@ -11,6 +11,7 @@ import {
 import { groupFeaturesByFloor } from "./floorSplit.js";
 import { buildFloorAltitudeHints } from "./gdbLevelMatch.js";
 import { resolveGdbLayerLevel } from "./gdbFloorAssignment.js";
+import { isBasemapLayerName } from "./gdbImportBudget.js";
 
 // Partition feature collections into three buckets:
 //   metadataOnly — `_level` feature classes; dropped silently (consistent
@@ -79,7 +80,8 @@ export function partitionForReview(featureCollections, buildings, buildingFootpr
       match.confidence === "high" &&
       match.buildingIndex >= 0 &&
       match.levelKey != null &&
-      !needsFloorSplit
+      !needsFloorSplit &&
+      !isBasemapLayerName(fc.originalFileName ?? fc.fileName)
     ) {
       autoImport.push({
         fc,

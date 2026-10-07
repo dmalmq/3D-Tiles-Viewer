@@ -3359,7 +3359,29 @@ async function runGdbLoad(input, defaults = null) {
   transient.gdbBusy = false;
 }
 
+// Below this many layers the import is quick enough to run without progress.
+const GDB_IMPORT_PROGRESS_MIN_LAYERS = 10;
+
+// Rendering is paused while layers are added: drawing every partial state of
+// a large import is what made it take minutes and exhaust the tab.
 async function applyGdbDecisions(decisions) {
+  const total = (decisions ?? []).filter((d) => d.target.kind !== "skip").length;
+  const showProgress = total >= GDB_IMPORT_PROGRESS_MIN_LAYERS;
+  const overlayWasVisible = !loadingOverlay.hidden;
+  if (showProgress && !overlayWasVisible) showLoadingOverlay(t("gdb.importing"));
+  const renderLoop = viewer.useDefaultRenderLoop;
+  viewer.useDefaultRenderLoop = false;
+  try {
+    await addGdbDecisionLayers(decisions, showProgress ? total : 0);
+  } finally {
+    viewer.useDefaultRenderLoop = renderLoop;
+    if (showProgress && !overlayWasVisible) hideLoadingOverlay();
+    viewer.scene.requestRender();
+  }
+}
+
+async function addGdbDecisionLayers(decisions, progressTotal) {
+  let progressCurrent = 0;
   const touchedBuildings = new Set();
   const networkImportsByBuilding = new Map();
   let duplicateSkipped = 0;
@@ -3380,6 +3402,11 @@ async function applyGdbDecisions(decisions) {
 
   for (const { fc, target, nameOverride, allFloorsExplicit = false } of decisions ?? []) {
     if (target.kind === "skip") continue;
+    if (progressTotal) {
+      progressCurrent++;
+      updateLoadingOverlay(t("gdb.importProgress", { current: progressCurrent, total: progressTotal }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
 
     if (target.kind === "unassigned") {
       const layer = await addUnassignedLayer(fc, { nameOverride });
