@@ -415,17 +415,25 @@
       </div>
     </dialog>
 
-    <div id="leftSettingsPopover" class="left-popover" style="display:none">
+    <div id="leftSettingsPopover" class="left-popover settings-popover" role="dialog" aria-labelledby="settingsTitle" style="display:none">
+      <div class="settings-head">
+        <h2 id="settingsTitle" data-i18n="leftBar.settings.title">Settings</h2>
+        <button type="button" class="app-dialog-close" data-close-popover data-i18n-aria-label="modal.close" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
       <label class="field-label" for="tokenInput" data-i18n="basemap.tokenLabel">Cesium Ion Token</label>
       <div class="input-row">
-        <input type="text" id="tokenInput" placeholder="Paste token here…" data-i18n-placeholder="basemap.tokenPlaceholder" />
-        <button id="applyTokenBtn" class="secondary-btn compact" type="button" data-i18n="basemap.applyToken">Apply</button>
+        <input type="password" id="tokenInput" placeholder="Paste token here…" data-i18n-placeholder="basemap.tokenPlaceholder" autocomplete="off" spellcheck="false" />
+        <button id="applyTokenBtn" class="secondary-btn" type="button" data-i18n="basemap.applyToken">Apply</button>
       </div>
+      <p class="field-help" data-i18n="settings.tokenHint">Needed for the Ion imagery and Cesium World Terrain options.</p>
       <label class="field-label" for="cartoKeyInput" data-i18n="basemap.cartoKeyLabel">CARTO Basemaps API Key</label>
       <div class="input-row">
-        <input type="text" id="cartoKeyInput" placeholder="Paste CARTO key here…" data-i18n-placeholder="basemap.cartoKeyPlaceholder" />
-        <button id="applyCartoKeyBtn" class="secondary-btn compact" type="button" data-i18n="basemap.applyToken">Apply</button>
+        <input type="password" id="cartoKeyInput" placeholder="Paste CARTO key here…" data-i18n-placeholder="basemap.cartoKeyPlaceholder" autocomplete="off" spellcheck="false" />
+        <button id="applyCartoKeyBtn" class="secondary-btn" type="button" data-i18n="basemap.applyToken">Apply</button>
       </div>
+      <p class="field-help" data-i18n="settings.cartoHint">Sent with CARTO basemap tile requests.</p>
     </div>
 
     <!-- Hidden legacy buttons kept so existing handlers still fire (Add Data menu triggers .click() on them) -->
@@ -447,6 +455,9 @@
     <!-- Revit link split confirmation dialog -->
     <dialog id="splitConfirmDialog" class="link-split-dialog">
       <form method="dialog">
+        <span class="link-split-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7L8 1.5zM2.5 4.5L8 7.5l5.5-3M8 7.5v7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
         <h3 data-i18n="split.title">Multiple Revit links detected</h3>
         <p data-i18n-html="split.bodyHtml">
           This tileset contains
@@ -455,8 +466,8 @@
         </p>
         <ul id="splitGroupList" class="link-split-group-list"></ul>
         <div class="link-split-actions">
-          <button id="splitConfirmBtn" value="split" class="primary-btn" type="submit" data-i18n="split.split">Split</button>
           <button id="splitMergeBtn" value="merge" class="secondary-btn" type="submit" data-i18n="split.merge">Keep merged</button>
+          <button id="splitConfirmBtn" value="split" class="primary-btn" type="submit">Split</button>
         </div>
       </form>
     </dialog>

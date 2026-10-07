@@ -1,4 +1,4 @@
-import { t } from "./i18n.js";
+import { t, applyTranslationsToDom } from "./i18n.js";
 import { diffSessions } from "./sessionDiff.js";
 
 let dialogEl = null;
@@ -7,13 +7,16 @@ function ensureDialog() {
   if (dialogEl) return dialogEl;
   dialogEl = document.createElement("dialog");
   dialogEl.id = "sessionDiffDialog";
-  dialogEl.className = "modal-dialog";
+  dialogEl.className = "app-dialog diff-dialog";
+  dialogEl.setAttribute("aria-labelledby", "sessionDiffTitle");
   dialogEl.innerHTML = `
-    <div class="modal-dialog-header">
-      <h2 data-i18n="diff.title">Compare versions</h2>
-      <button type="button" class="modal-close-btn" data-action="close" aria-label="Close">×</button>
+    <div class="app-dialog-head">
+      <div><h2 id="sessionDiffTitle" class="app-dialog-title" data-i18n="diff.title">Compare versions</h2></div>
+      <button type="button" class="app-dialog-close" data-action="close" data-i18n-aria-label="modal.close" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
     </div>
-    <div class="modal-dialog-body">
+    <div class="diff-body">
       <div class="diff-pickers">
         <label><span data-i18n="diff.left">Left</span><select id="diffLeftSelect"></select></label>
         <label><span data-i18n="diff.right">Right</span><select id="diffRightSelect"></select></label>
@@ -31,7 +34,7 @@ function ensureDialog() {
   return dialogEl;
 }
 
-function describeChange(change) {
+export function describeChange(change) {
   switch (change.category) {
     case "venues":
       if (change.type === "added") return t("diff.venueAdded", { name: change.name });
@@ -90,6 +93,7 @@ export function openSessionDiffDialog({ backups, getCurrentSession, initialLeftI
   const resultsEl = dialog.querySelector("#diffResultsList");
   const noChangesEl = dialog.querySelector("#diffNoChanges");
 
+  applyTranslationsToDom(dialog);
   fillSelect(leftSelect, backups, getCurrentSession);
   fillSelect(rightSelect, backups, getCurrentSession);
   if (initialLeftId) leftSelect.value = initialLeftId;

@@ -115,17 +115,24 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
 
   const modal = document.createElement('div');
   modal.id = 'importModal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'importModalTitle');
   overlay.appendChild(modal);
 
   // Header
   const header = document.createElement('div');
   header.className = 'import-modal-header';
-  const titleEl = document.createElement('span');
+  const titleEl = document.createElement('h2');
+  titleEl.id = 'importModalTitle';
+  titleEl.className = 'import-modal-title';
   titleEl.textContent = t('modal.title');
   const closeBtn = document.createElement('button');
   closeBtn.className = 'import-modal-close';
-  closeBtn.textContent = '×';
+  closeBtn.type = 'button';
+  closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
   closeBtn.title = t('modal.close');
+  closeBtn.setAttribute('aria-label', t('modal.close'));
   closeBtn.addEventListener('click', closeModal);
   header.appendChild(titleEl);
   header.appendChild(closeBtn);
