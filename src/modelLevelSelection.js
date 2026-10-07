@@ -14,3 +14,19 @@ export function remapActiveLevelIndex(prevLevels, prevIndex, nextLevels) {
   if (floorNumber == null) return -1;
   return nextLevels.findIndex((level) => level.floorNumber === floorNumber);
 }
+
+/**
+ * Sorts a building's levels by elevation in place and returns the index the
+ * previously active level now has (-1 stays -1), so a building's
+ * activeLevelIndex keeps pointing at the same level after an insert or an
+ * elevation edit.
+ *
+ * @param {{floor: number}[]} levels
+ * @param {number} activeIndex
+ * @returns {number}
+ */
+export function sortLevelsKeepingActive(levels, activeIndex) {
+  const active = activeIndex >= 0 ? levels[activeIndex] : null;
+  levels.sort((a, b) => a.floor - b.floor);
+  return active ? levels.indexOf(active) : -1;
+}
