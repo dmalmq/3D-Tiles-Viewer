@@ -231,6 +231,7 @@ const en = {
   // GDB import review dialog
   "gdb.dialog.title": "Import GDB layers",
   "gdb.floorSplitDone": "Split {layers} layers by floor: {matched} of {floors} floors were placed on a level automatically.",
+  "gdb.floorUnresolved": "{count} layer(s) could not be matched to a level and stay in staging. Drop them on a level to place them.",
   "gdb.iconDetail": "Icon detail",
   "gdb.iconDetailHint": "How many GDB icons to show at once. Higher shows more icons, closer together.",
   "gdb.iconFloor": "Icon floor",
@@ -841,6 +842,7 @@ const ja = {
   // GDB インポート確認ダイアログ
   "gdb.dialog.title": "GDB レイヤをインポート",
   "gdb.floorSplitDone": "{layers} 件のレイヤを階ごとに分割しました：{floors} 階中 {matched} 階を自動でレベルに割り当てました。",
+  "gdb.floorUnresolved": "{count} 件のレイヤはレベルを特定できなかったため、未割当のままです。レベルにドロップして配置してください。",
   "gdb.iconDetail": "アイコンの表示量",
   "gdb.iconDetailHint": "一度に表示する GDB アイコンの数です。高くすると、より多くのアイコンを間隔を詰めて表示します。",
   "gdb.iconFloor": "アイコンの階",

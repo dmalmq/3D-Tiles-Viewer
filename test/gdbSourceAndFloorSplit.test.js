@@ -18,6 +18,18 @@ test("real distinct sources still split", () => {
   assert.deepEqual(splitFeaturesBySource(fc).map((part) => part.fileName), ["rooms [TowerA]", "rooms [TowerB]"]);
 });
 
+test("unnamed features stay separate from a single named building source", () => {
+  const fc = {
+    fileName: "unit",
+    features: [feature({ source: "TowerA" }), feature({})],
+  };
+  const parts = splitFeaturesBySource(fc);
+  assert.deepEqual(parts.map((part) => [part.fileName, part.features.length]), [
+    ["unit [TowerA]", 1],
+    ["unit [unknown]", 1],
+  ]);
+});
+
 test("a multi-floor layer is not pinned to one level by a numeric source", () => {
   const building = { name: "Facility", levels: [{ name: "1FL", key: "1fl" }, { name: "B1FL", key: "b1fl" }] };
   const match = matchLayerToTarget({

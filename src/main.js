@@ -76,7 +76,8 @@ import { snapshotAndClearFileInput } from "./fileInputSnapshot.js";
 import { openColorConfigDialog } from "./colorConfigDialog.js";
 import { t, setLanguage, getLanguage, onLanguageChange, applyTranslationsToDom } from "./i18n.js";
 import { groupFeaturesByFloor, levelNameToNumber, shortLevelName } from "./floorSplit.js";
-import { buildFloorAltitudeHints, splitByFloorLevel } from "./gdbLevelMatch.js";
+import { buildFloorAltitudeHints } from "./gdbLevelMatch.js";
+import { planGdbFloorParts } from "./gdbFloorAssignment.js";
 import { resolveTilesetTopClipLocalZ } from "./levelClipping.js";
 import {
   normalizeLevelRecords,
@@ -3246,22 +3247,21 @@ async function handleGdbDirSelect(e) {
   await routeDroppedFiles({ kind: "files", files }, null);
 }
 
-// Drop a staged layer onto a building. If the source features carry a `floor`
-// property with multiple distinct values, split into one child layer per
-// floor — each matched to a building level via splitByFloorLevel, falling back
-// to the drop target's levelKey when the floor string doesn't resolve.
-//
-// Returns the array of newly-created layer objects in the target building so
-// the caller can update the multi-select set.
 async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
   const target = buildings[toBi];
   if (!target) return [];
 
   const groups = groupFeaturesByFloor(stagedLayer.features ?? []);
-  // No features, or every feature lacks a floor column / shares one floor →
-  // honor the user's drop target as a single layer.
   if (groups.length <= 1) {
-    const moved = moveUnassignedLayerToBuilding(stagedLayer, toBi, targetLevelKey);
+    const planned = targetLevelKey == null
+      ? planGdbFloorParts(stagedLayer.features ?? [], target.levels)
+      : null;
+    const resolvedKey = planned ? planned[0].levelKey : targetLevelKey;
+    if (planned && resolvedKey == null) {
+      notifyUser("warn", "gdb.floorUnresolved", { count: 1 });
+      return [];
+    }
+    const moved = moveUnassignedLayerToBuilding(stagedLayer, toBi, resolvedKey);
     return moved ? [moved] : [];
   }
 
@@ -3271,20 +3271,20 @@ async function dropStagedLayerOnBuilding(stagedLayer, toBi, targetLevelKey) {
   removeUnassignedLayer(stagedLayer);
 
   const levelByFloor = new Map(
-    splitByFloorLevel(stagedLayer.features ?? [], target.levels, { altitudeHints: gdbFloorAltitudeHints })
-      .map((part) => [part.floorValue, part.level]),
+    (planGdbFloorParts(stagedLayer.features ?? [], target.levels) ?? [])
+      .map((part) => [part.floorValue, part.levelKey]),
   );
   const created = [];
   for (const g of groups) {
     const matched = g.floorValue ? levelByFloor.get(g.floorValue) ?? null : null;
     const suffix = g.floorValue || t("level.allFloors");
     const nameOverride = `${baseName} (${suffix})`;
-    if (matched) {
+    if (matched != null) {
       const layer = await addFeatureCollectionLayer(
         target,
         { fileName: baseName, features: g.features },
         {
-          levelKeyOverride: matched.key ?? "",
+          levelKeyOverride: matched,
           origin: stagedLayer._origin ?? "gdb",
           nameOverride,
         },
@@ -3364,9 +3364,21 @@ async function applyGdbDecisions(decisions) {
   const networkImportsByBuilding = new Map();
   let duplicateSkipped = 0;
   const floorSplit = { layers: 0, floors: 0, matched: 0 };
-  rememberFloorAltitudeHints((decisions ?? []).map((d) => d.fc));
+  let unresolvedStaged = 0;
+  const donorsByBuilding = new Map();
+  for (const decision of decisions ?? []) {
+    if (decision.target.kind !== "building") continue;
+    const index = decision.target.buildingIndex;
+    const donors = donorsByBuilding.get(index) ?? [];
+    donors.push(decision.fc);
+    donorsByBuilding.set(index, donors);
+  }
+  const hintsByBuilding = new Map([...donorsByBuilding].map(([index, donors]) => [
+    index,
+    buildFloorAltitudeHints(donors, { maxSpreadMeters: 1 }),
+  ]));
 
-  for (const { fc, target, nameOverride } of decisions ?? []) {
+  for (const { fc, target, nameOverride, allFloorsExplicit = false } of decisions ?? []) {
     if (target.kind === "skip") continue;
 
     if (target.kind === "unassigned") {
@@ -3386,13 +3398,21 @@ async function applyGdbDecisions(decisions) {
         touchedBuildings.add(target.buildingIndex);
         continue;
       }
-      if (target.levelKey == null) {
+      if (target.levelKey == null && !allFloorsExplicit) {
         // "All floors" + a floor column → one layer per floor on its level.
-        const split = await addFeatureCollectionSplitByFloor(building, fc, { origin: "gdb", nameOverride });
+        const split = await addFeatureCollectionSplitByFloor(building, fc, {
+          origin: "gdb",
+          nameOverride,
+          altitudeHints: hintsByBuilding.get(target.buildingIndex),
+        });
         if (split) {
-          floorSplit.layers++;
-          floorSplit.floors += split.floors;
-          floorSplit.matched += split.matched;
+          if (split.floors > 1) {
+            floorSplit.layers++;
+            floorSplit.floors += split.floors;
+            floorSplit.matched += split.matched;
+          } else if (split.matched === 0) {
+            unresolvedStaged++;
+          }
           duplicateSkipped += split.duplicates;
           if (split.created > 0) touchedBuildings.add(target.buildingIndex);
           continue;
@@ -3427,43 +3447,32 @@ async function applyGdbDecisions(decisions) {
   if (floorSplit.layers > 0) {
     notifyUser("info", "gdb.floorSplitDone", floorSplit);
   }
-}
-
-// Altitudes per floor code learned from every GDB imported this session, so
-// a layer without an altitude column (dragged in later, too) can still pick
-// the right one of several same-numbered levels.
-const gdbFloorAltitudeHints = new Map();
-
-function rememberFloorAltitudeHints(featureCollections) {
-  for (const [key, altitude] of buildFloorAltitudeHints(featureCollections)) {
-    gdbFloorAltitudeHints.set(key, altitude);
+  if (unresolvedStaged > 0) {
+    notifyUser("warn", "gdb.floorUnresolved", { count: unresolvedStaged });
   }
 }
 
-// Split a feature collection with several floor values into one layer per
-// floor, each on its resolved level; floors that don't resolve stay on "All
-// floors" so they can be dragged to a level. Returns null when there is
-// nothing to split (fewer than two floor values).
-async function addFeatureCollectionSplitByFloor(building, fc, { origin, nameOverride = null }) {
-  const parts = splitByFloorLevel(fc.features ?? [], building.levels, { altitudeHints: gdbFloorAltitudeHints });
-  if (parts.length < 2) return null;
+async function addFeatureCollectionSplitByFloor(building, fc, { origin, nameOverride = null, altitudeHints = null }) {
+  const parts = planGdbFloorParts(fc.features ?? [], building.levels, altitudeHints);
+  if (!parts) return null;
   const baseName = (nameOverride ?? fc.fileName ?? "layer").replace(/\.(shp|dbf|prj|geojson|json)$/i, "");
   const result = { floors: parts.length, matched: 0, created: 0, duplicates: 0, layers: [] };
   for (const part of parts) {
     const suffix = part.floorValue || t("level.allFloors");
-    const layer = await addFeatureCollectionLayer(
-      building,
-      { ...fc, fileName: baseName, features: part.features },
-      {
-        levelKeyOverride: part.level ? (part.level.key ?? "") : null,
-        origin,
-        nameOverride: `${baseName} (${suffix})`,
-      },
-    );
-    if (part.level) result.matched++;
+    const subset = { ...fc, fileName: baseName, features: part.features };
+    const options = { origin, nameOverride: parts.length === 1 ? baseName : `${baseName} (${suffix})` };
+    const layer = part.levelKey == null
+      ? await addUnassignedLayer(subset, options)
+      : await addFeatureCollectionLayer(building, subset, {
+          ...options,
+          levelKeyOverride: part.levelKey,
+        });
+    if (part.levelKey != null) result.matched++;
     if (layer) {
-      result.created++;
-      result.layers.push(layer);
+      if (part.levelKey != null) {
+        result.created++;
+        result.layers.push(layer);
+      }
     } else {
       result.duplicates++;
     }

@@ -2,8 +2,15 @@
 // new import review tray can silently import the obvious cases and only
 // surface ambiguous ones to the user. Pure logic — no DOM, no Cesium.
 
-import { matchLayerToTarget, isLevelFeatureClass } from "./gdbAutoMatch.js";
+import {
+  buildLevelsByPrefix,
+  detectLayerLevelRef,
+  isLevelFeatureClass,
+  matchLayerToTarget,
+} from "./gdbAutoMatch.js";
 import { groupFeaturesByFloor } from "./floorSplit.js";
+import { buildFloorAltitudeHints } from "./gdbLevelMatch.js";
+import { resolveGdbLayerLevel } from "./gdbFloorAssignment.js";
 
 // Partition feature collections into three buckets:
 //   metadataOnly — `_level` feature classes; dropped silently (consistent
@@ -19,19 +26,52 @@ export function partitionForReview(featureCollections, buildings, buildingFootpr
   const metadataOnly = [];
   const autoImport = [];
   const needsReview = [];
+  const levelsByPrefix = buildLevelsByPrefix(featureCollections);
+  const candidates = (featureCollections ?? []).map((fc) => ({
+    fc,
+    match: isLevelFeatureClass(fc?.originalFileName ?? fc?.fileName)
+      ? null
+      : matchLayerToTarget({
+          filename: fc.fileName,
+          features: fc.features ?? [],
+          buildings,
+          buildingFootprints,
+        }),
+  }));
+  const donorsByBuilding = new Map();
+  for (const { fc, match } of candidates) {
+    if (match?.buildingConfidence !== "high") continue;
+    const donors = donorsByBuilding.get(match.buildingIndex) ?? [];
+    donors.push(fc);
+    donorsByBuilding.set(match.buildingIndex, donors);
+  }
+  const hintsByBuilding = new Map([...donorsByBuilding].map(([index, donors]) => [
+    index,
+    buildFloorAltitudeHints(donors, { maxSpreadMeters: 1 }),
+  ]));
 
-  for (const fc of featureCollections ?? []) {
-    if (isLevelFeatureClass(fc?.fileName)) {
+  for (const { fc, match: buildingMatch } of candidates) {
+    if (!buildingMatch) {
       metadataOnly.push(fc);
       continue;
     }
 
-    const match = matchLayerToTarget({
-      filename: fc.fileName,
-      features: fc.features ?? [],
-      buildings,
-      buildingFootprints,
-    });
+    const levelRef = detectLayerLevelRef(fc.originalFileName ?? fc.fileName, levelsByPrefix);
+    const floor = buildingMatch.buildingIndex >= 0
+      ? resolveGdbLayerLevel({
+          fc,
+          building: buildings[buildingMatch.buildingIndex],
+          levelRef,
+          altitudeHints: hintsByBuilding.get(buildingMatch.buildingIndex),
+        })
+      : { levelKey: null, confidence: "none" };
+    const match = {
+      ...buildingMatch,
+      levelKey: floor.levelKey,
+      confidence: buildingMatch.buildingConfidence === "high" && floor.confidence === "high"
+        ? "high"
+        : "medium",
+    };
 
     const needsFloorSplit = groupFeaturesByFloor(fc?.features ?? []).length >= 2;
 
@@ -52,7 +92,7 @@ export function partitionForReview(featureCollections, buildings, buildingFootpr
       continue;
     }
 
-    needsReview.push({ fc, match, needsFloorSplit });
+    needsReview.push({ fc, match, needsFloorSplit, levelRef });
   }
 
   return { metadataOnly, autoImport, needsReview };

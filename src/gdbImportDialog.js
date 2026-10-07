@@ -12,9 +12,10 @@ import {
   buildLevelsByPrefix,
   isLevelFeatureClass,
   detectLayerLevelRef,
-  resolveLayerLevelForBuilding,
   groupFeaturesByFloor,
 } from "./gdbAutoMatch.js";
+import { resolveGdbLayerLevel } from "./gdbFloorAssignment.js";
+import { partitionForReview } from "./importGroupClassifier.js";
 import {
   TARGET_SKIP,
   TARGET_UNASSIGNED,
@@ -24,13 +25,18 @@ import {
   buildingIndexFromValue as buildingIndexFromValueShared,
   stripExt,
 } from "./gdbAssignmentControls.js";
-import { buildFloorAltitudeHints, resolveFloorLevel } from "./gdbLevelMatch.js";
 
 export function openGdbImportDialog({ featureCollections, buildings, onImport, mode = "import", buildingFootprints = null }) {
-  // Lets layers without an altitude column borrow it for the same floor code
-  // from sibling layers in this GDB when choosing between same-numbered levels.
-  const altitudeHints = buildFloorAltitudeHints(featureCollections);
   const levelsByPrefix = buildLevelsByPrefix(featureCollections);
+  const planned = partitionForReview(featureCollections, buildings, buildingFootprints);
+  const plannedMatches = new Map([
+    ...planned.autoImport.map(({ fc, target }) => [fc, {
+      buildingIndex: target.buildingIndex,
+      levelKey: target.levelKey,
+      confidence: "high",
+    }]),
+    ...planned.needsReview.map(({ fc, match }) => [fc, match]),
+  ]);
   let filterText = "";
   let submitting = false;
 
@@ -54,16 +60,16 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
         buildingManual: false,
         floorManual: false,
         floorResolved: levelValue !== FLOOR_ALL,
-        levelRef: detectLayerLevelRef(fc?.fileName, levelsByPrefix),
+        levelRef: detectLayerLevelRef(fc?.originalFileName ?? fc?.fileName, levelsByPrefix),
         subRows: null,
         metadataOnly: false,
       };
     }
 
-    const metadataOnly = isLevelFeatureClass(fc?.fileName);
+    const metadataOnly = isLevelFeatureClass(fc?.originalFileName ?? fc?.fileName);
     const match = metadataOnly
       ? { buildingIndex: -1, levelKey: null, confidence: "none" }
-      : matchLayerToTarget({
+      : plannedMatches.get(fc) ?? matchLayerToTarget({
           filename: fc.fileName,
           features: fc.features ?? [],
           buildings,
@@ -86,7 +92,7 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
       buildingManual: false,
       floorManual: false,
       floorResolved: !metadataOnly && !subRows && match.buildingIndex >= 0 && match.levelKey != null,
-      levelRef: metadataOnly ? null : detectLayerLevelRef(fc?.fileName, levelsByPrefix),
+      levelRef: metadataOnly ? null : detectLayerLevelRef(fc?.originalFileName ?? fc?.fileName, levelsByPrefix),
       subRows,
       metadataOnly,
     };
@@ -441,15 +447,11 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
     const bi = buildingIndexFromValue(row.buildingValue);
     if (bi == null) return;
     const building = buildings[bi];
-    const matched = resolveLayerLevelForBuilding({
-      fileName: row.fc?.fileName,
-      levelRef: row.levelRef,
-      building,
-    });
-    if (matched) {
-      row.levelValue = matched.key ?? "";
+    const resolved = resolveGdbLayerLevel({ fc: row.fc, building, levelRef: row.levelRef });
+    if (resolved.levelKey != null) {
+      row.levelValue = resolved.levelKey;
       row.floorResolved = true;
-      row.confidence = "high";
+      row.confidence = resolved.confidence;
     }
   }
 
@@ -457,16 +459,15 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
     if (row.floorManual) return;
     const bi = buildingIndexFromValue(row.buildingValue);
     if (bi == null || !row.floorValue) return;
-    const matched = resolveFloorLevel({
-      floorValue: row.floorValue,
-      features: row.features,
-      levels: buildings[bi].levels,
-      altitudeHints,
-    })?.level;
-    if (matched) {
-      row.levelValue = matched.key ?? "";
+    const resolved = resolveGdbLayerLevel({
+      fc: row.fc,
+      building: buildings[bi],
+      levelRef: row.levelRef,
+    });
+    if (resolved.levelKey != null) {
+      row.levelValue = resolved.levelKey;
       row.floorResolved = true;
-      row.confidence = "high";
+      row.confidence = resolved.confidence;
     }
   }
 
@@ -479,6 +480,12 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
         key: g.key,
         count: g.features.length,
         features: g.features,
+        fc: {
+          ...fc,
+          originalFileName: fc.originalFileName ?? fc.fileName,
+          features: g.features,
+        },
+        levelRef: detectLayerLevelRef(fc.originalFileName ?? fc.fileName, levelsByPrefix),
         buildingValue: parentBuildingValue,
         levelValue: FLOOR_ALL,
         confidence: g.floorValue ? "medium" : "none",
@@ -551,6 +558,7 @@ export function openGdbImportDialog({ featureCollections, buildings, onImport, m
       target: { kind: "building", buildingIndex: bi, levelKey },
       nameOverride,
       selected: row.selected,
+      allFloorsExplicit: row.floorManual && levelKey == null,
     }];
   }
 
