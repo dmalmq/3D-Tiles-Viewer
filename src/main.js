@@ -31,6 +31,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "@fontsource-variable/figtree";
 import "./style.css";
+import { remapActiveLevelIndex } from "./modelLevelSelection.js";
 import { initPublishDialog } from "./publishDialog.js";
 import {
   computeBreadcrumb,
@@ -2069,6 +2070,8 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
   bindTilesetTileLoad(tileset);
   applyFiltersForTileset(tileset);
   refreshLodFilterIfEnabled();
+  // A floor may already be selected: apply it to the new building(s) too.
+  if (activeModelLevelIndex >= 0) selectModelLevel(activeModelLevelIndex);
 
   selectedBuildingIndex = buildings.indexOf(createdBuildings[0]);
   invalidateAndRerender();
@@ -2429,8 +2432,10 @@ function rebuildModelLevels() {
       : { floorNumber: fn, name: derived.name, elevation: derived.elevation });
   }
   next.sort((a, b) => a.floorNumber - b.floorNumber);
+  // Keep the same floor selected even if its index moved (e.g. a new
+  // building added a lower floor).
+  activeModelLevelIndex = remapActiveLevelIndex(modelLevels, activeModelLevelIndex, next);
   modelLevels = next;
-  if (activeModelLevelIndex >= modelLevels.length) activeModelLevelIndex = -1;
   populateGdbIconFloorSelect();
 }
 
