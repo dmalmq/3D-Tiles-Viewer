@@ -2,6 +2,7 @@
 // the grouping logic in importBuildingPicker.js stays unit-testable under node.
 
 import { t } from "./i18n.js";
+import { LARGE_IMPORT_FEATURE_COUNT, isBasemapLayerName } from "./gdbImportBudget.js";
 
 /**
  * Checklist dialog: pick which detected buildings to load. Resolves with the
@@ -35,7 +36,8 @@ export function openBuildingPickerDialog(groups) {
       row.className = "building-picker-row";
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = true;
+      cb.checked = !isBasemapLayerName(group.label);
+      cb.addEventListener("change", refreshSummary);
       checkboxes.set(group.key, cb);
       const text = document.createElement("span");
       text.textContent = `${group.label} — ${t("buildingPicker.counts", {
@@ -48,6 +50,10 @@ export function openBuildingPickerDialog(groups) {
     }
     dialog.appendChild(list);
 
+    const summary = document.createElement("p");
+    summary.className = "building-picker-summary";
+    dialog.appendChild(summary);
+
     const toggleAll = document.createElement("button");
     toggleAll.type = "button";
     toggleAll.className = "building-picker-toggle-all";
@@ -55,7 +61,17 @@ export function openBuildingPickerDialog(groups) {
     toggleAll.addEventListener("click", () => {
       const allChecked = [...checkboxes.values()].every((cb) => cb.checked);
       for (const cb of checkboxes.values()) cb.checked = !allChecked;
+      refreshSummary();
     });
+
+    function refreshSummary() {
+      const features = groups
+        .filter((group) => checkboxes.get(group.key)?.checked)
+        .reduce((sum, group) => sum + group.featureCount, 0);
+      const large = features > LARGE_IMPORT_FEATURE_COUNT;
+      summary.textContent = t(large ? "buildingPicker.summaryLarge" : "buildingPicker.summary", { features });
+      summary.classList.toggle("warning", large);
+    }
 
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
@@ -76,6 +92,7 @@ export function openBuildingPickerDialog(groups) {
 
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
+    refreshSummary();
 
     const close = (result) => {
       overlay.remove();

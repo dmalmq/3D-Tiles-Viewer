@@ -13,6 +13,7 @@ import { detectSource, summarizeGeometry } from "./gdbAutoMatch.js";
 import { partitionForReview } from "./importGroupClassifier.js";
 import { resolveGdbLayerLevel } from "./gdbFloorAssignment.js";
 import { groupFeaturesByFloor } from "./floorSplit.js";
+import { LARGE_IMPORT_FEATURE_COUNT, isBasemapLayerName } from "./gdbImportBudget.js";
 import {
   TARGET_SKIP,
   TARGET_UNASSIGNED,
@@ -190,6 +191,10 @@ function mountTray({
   footer.appendChild(skipRestBtn);
   footer.appendChild(cancelBtn);
   footer.appendChild(importBtn);
+  const sizeWarning = document.createElement("p");
+  sizeWarning.className = "import-tray-warning";
+  sizeWarning.hidden = true;
+  tray.appendChild(sizeWarning);
   tray.appendChild(footer);
 
   document.body.appendChild(tray);
@@ -246,6 +251,14 @@ function mountTray({
   function refreshFooter() {
     importBtn.textContent = t("import.tray.import", { n: pendingMemberCount() });
     importBtn.disabled = pendingMemberCount() === 0;
+    let features = 0;
+    for (const g of groups) {
+      for (const m of g.members) {
+        if (m.buildingValue !== TARGET_SKIP) features += m.fc.features?.length ?? 0;
+      }
+    }
+    sizeWarning.hidden = features <= LARGE_IMPORT_FEATURE_COUNT;
+    sizeWarning.textContent = t("import.tray.largeImport", { features });
   }
 
   function renderGroups() {
@@ -784,7 +797,9 @@ function buildMember(item, buildings, { defaultBuildingIndex, defaultLevelKey })
   let buildingManual = false;
   let floorManual = false;
 
-  if (typeof defaultBuildingIndex === "number" && buildings[defaultBuildingIndex]) {
+  if (isBasemapLayerName(fc?.originalFileName ?? fc?.fileName)) {
+    buildingValue = TARGET_SKIP;
+  } else if (typeof defaultBuildingIndex === "number" && buildings[defaultBuildingIndex]) {
     buildingValue = String(defaultBuildingIndex);
     buildingManual = true;
     if (defaultLevelKey != null) {

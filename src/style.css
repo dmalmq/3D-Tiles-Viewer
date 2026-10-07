@@ -1193,6 +1193,24 @@ select option {
   background: var(--bg-hover);
 }
 
+.building-picker-summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.building-picker-summary.warning,
+.import-tray-warning {
+  color: var(--warning);
+}
+
+.import-tray-warning {
+  margin: 0;
+  padding: 8px 12px 0;
+  font-size: 11px;
+  border-top: 1px solid var(--border);
+}
+
 .building-picker-footer {
   display: flex;
   align-items: center;
