@@ -2062,6 +2062,9 @@ async function addBuilding(tileset, name, levelsData, sourceUrl = null, director
     tileset._buildings = [b];
     createdBuildings = [b];
   }
+  // populateLevelsForBuilding rebuilt the model levels before the new
+  // building(s) were pushed, so rebuild now that they are in `buildings`.
+  rebuildModelLevels();
 
   bindTilesetTileLoad(tileset);
   applyFiltersForTileset(tileset);
