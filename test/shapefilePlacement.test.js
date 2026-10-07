@@ -218,6 +218,24 @@ test("GDB/shapefile all-floor placement keeps the building base for absolute lev
   assert.ok(Math.abs(layerPointHeight(layer) - expected) < 0.001);
 });
 
+test("all-floor placement sits on the ground floor when local Z 0 is the model's centre", () => {
+  const building = makeBuilding({
+    baseHeight: 124,
+    rootHeight: 124,
+    levels: [
+      { key: "b1", name: "B1FL", floor: -90.9 },
+      { key: "1f", name: "1FL", floor: -84.3 },
+      { key: "35f", name: "35FL", floor: 68 },
+    ],
+  });
+  const layer = makeAllFloorsPointLayer();
+
+  applyShapefileLayerHeight(building, layer);
+
+  const expected = 124 - 84.3 + SHAPEFILE_FLOOR_CLEARANCE_M + POINT_EXTRA_HEIGHT_M;
+  assert.ok(Math.abs(layerPointHeight(layer) - expected) < 0.001, `got ${layerPointHeight(layer)}`);
+});
+
 test("TP level names derive Shinjuku world heights instead of adding stale base elevation", () => {
   const building = {
     levelBaseElevation: 93.3,
