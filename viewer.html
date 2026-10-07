@@ -11,20 +11,21 @@
 
     <!-- ── Top header ──────────────────────────────────────── -->
     <header id="appHeader">
-      <div id="appLogo">
-        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <path d="M11 2L20 7V15L11 20L2 15V7L11 2Z" stroke="#2f6bff" stroke-width="1.6" stroke-linejoin="round"/>
-          <path d="M11 20V11M2 7L11 11L20 7" stroke="#2f6bff" stroke-width="1.1" stroke-opacity="0.45" stroke-linejoin="round"/>
-        </svg>
-        <span data-i18n="header.title">3D Tiles Viewer</span>
+      <div id="appLogo" class="app-logo-with-title">
+        <span class="app-logo-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7L8 1.5zM2.5 4.5L8 7.5l5.5-3M8 7.5v7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="app-logo-title" data-i18n="header.title">3D Tiles Viewer</span>
       </div>
       <div id="headerSearch">
-        <input type="text" id="searchInput" data-i18n-placeholder="search.placeholder" placeholder="Search points…" autocomplete="off" />
+        <svg class="header-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input type="text" id="searchInput" data-i18n-placeholder="search.placeholder" placeholder="Search points…" autocomplete="off" data-i18n-aria-label="search.placeholder" aria-label="Search points" />
+        <kbd class="header-search-kbd" aria-hidden="true">/</kbd>
         <div id="searchDropdown" style="display:none"></div>
       </div>
       <div id="headerActions">
-        <button id="viewerLoadSessionBtn" class="header-btn">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 9.5V11.5H12V9.5M6.5 8V0.5M3.5 3.5L6.5 0.5L9.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button id="viewerLoadSessionBtn" class="header-btn" type="button">
+          <svg width="14" height="14" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M1 9.5V11.5H12V9.5M6.5 8V0.5M3.5 3.5L6.5 0.5L9.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span data-i18n="header.load">Load</span>
         </button>
         <input type="file" id="viewerSessionInput" accept=".json" style="display:none" />
@@ -34,8 +35,8 @@
           <span id="languageToggleLabel">あ</span>
         </button>
         <button id="themeToggle" class="header-btn header-icon-btn" data-i18n-title="header.theme.title" data-i18n-aria-label="header.theme.aria" title="Toggle light/dark theme" aria-label="Toggle theme">
-          <svg class="theme-icon theme-icon-dark" width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M7.5 1.5a6 6 0 1 0 0 12 5 5 0 0 1 0-10 6 6 0 0 0 0-2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
-          <svg class="theme-icon theme-icon-light" width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><circle cx="7.5" cy="7.5" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M7.5 1v1.5M7.5 12.5V14M1 7.5h1.5M12.5 7.5H14M3.1 3.1l1.1 1.1M10.8 10.8l1.1 1.1M10.8 3.1l-1.1 1.1M4.2 10.8l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <svg class="theme-icon theme-icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.8a6.2 6.2 0 1 0 6.2 7.4A5 5 0 0 1 8 1.8z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <svg class="theme-icon theme-icon-light" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.1 3.1l1.1 1.1M11.8 11.8l1.1 1.1M11.8 4.2l1.1-1.1M4.2 11.8l-1.1 1.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
       </div>
     </header>
@@ -179,6 +180,19 @@
     </aside>
 
     <div id="leftPanelResizer" aria-hidden="true"></div>
+
+    <!-- Map style (bottom left of the viewport), same control as the editor -->
+    <div id="mapStylePicker" class="map-style-picker">
+      <div id="mapStyleOptions" class="map-style-options" role="radiogroup" data-i18n-aria-label="map.picker.group" aria-label="Map style" hidden></div>
+      <button id="mapStyleToggle" class="map-style-current" type="button" aria-expanded="false" aria-controls="mapStyleOptions">
+        <span id="mapStyleSwatch" class="map-style-swatch" aria-hidden="true"></span>
+        <span class="map-style-text">
+          <span class="map-style-label" data-i18n="map.picker.label">Map</span>
+          <span id="mapStyleName" class="map-style-name"></span>
+        </span>
+        <svg class="map-style-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
 
     <button id="leftPanelToggle" class="panel-toggle panel-toggle-left" type="button" title="Toggle left panel" aria-label="Collapse left panel" data-i18n-title="panel.left.title" data-i18n-aria-label="panel.left.aria">
       <svg class="toggle-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><polyline points="7,1 3,5 7,9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -21,6 +21,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "@fontsource-variable/figtree";
 import "./style.css";
+import { initMapStylePicker, initSearchShortcut } from "./shellChrome.js";
 import { setGdbLayerIconsVisible } from "./gdbIconVisibility.js";
 import {
   applyGdbLayerZoomVisibility,
@@ -247,6 +248,16 @@ function init() {
     if (selectedBuildingIndex >= 0) zoomToBuilding(selectedBuildingIndex);
   });
   imagerySelect.addEventListener("change", () => switchImagery());
+  syncMapStylePicker = initMapStylePicker({
+    root: document.getElementById("mapStylePicker"),
+    toggle: document.getElementById("mapStyleToggle"),
+    options: document.getElementById("mapStyleOptions"),
+    swatch: document.getElementById("mapStyleSwatch"),
+    nameEl: document.getElementById("mapStyleName"),
+    select: imagerySelect,
+  });
+  onLanguageChange(() => syncMapStylePicker());
+  initSearchShortcut(document.getElementById("searchInput"));
   terrainSelect.addEventListener("change", () => switchTerrain());
   plateauTransparencyToggle.addEventListener("change", () => {
     plateauTransparencyEnabled = plateauTransparencyToggle.checked;
@@ -751,7 +762,12 @@ function clearUnassignedLayers(rerender = true) {
 }
 
 // -- Basemap --
+// Set once the map-style picker exists (see init); keeps it in step with
+// programmatic imagery changes such as a session load.
+let syncMapStylePicker = () => {};
+
 async function switchImagery(choice = imagerySelect.value) {
+  syncMapStylePicker();
   await switchImageryProvider(viewer, choice, {
     onAfterSwitch: applyUndergroundMode,
     cartoKey: readSavedCartoKey() || import.meta.env.VITE_CARTO_API_KEY || "",

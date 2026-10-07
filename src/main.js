@@ -351,7 +351,6 @@ const cityGmlInput = document.getElementById("cityGmlInput");
 const cityGmlListEl = document.getElementById("cityGmlList");
 const noCityGmlMsg = document.getElementById("noCityGmlMsg");
 const splitConfirmDialog = document.getElementById("splitConfirmDialog");
-const splitGroupCountEl = document.getElementById("splitGroupCount");
 const splitGroupListEl = document.getElementById("splitGroupList");
 const buildingOverlapToggle = document.getElementById("buildingOverlapToggle");
 const plateauTransparencyToggle = document.getElementById("plateauTransparencyToggle");
@@ -841,6 +840,11 @@ function initLeftActionBar() {
       const top = rect.top - height - 8 >= 8 ? rect.top - height - 8 : rect.bottom + 4;
       leftSettingsPopover.style.top = `${top}px`;
       leftSettingsPopover.style.left = `${Math.max(8, rect.left)}px`;
+    });
+
+    leftSettingsPopover.querySelector("[data-close-popover]")?.addEventListener("click", () => {
+      closeSettingsPopover();
+      leftSettingsBtn.focus();
     });
 
     // Close the settings popover on outside click and Escape.
@@ -2154,7 +2158,12 @@ function promptSplitConfirm(split, baseName) {
       return;
     }
     const groupEntries = describeSplitGroups(split, baseName);
-    splitGroupCountEl.textContent = String(groupEntries.length);
+    // Look the count up each time: re-applying translations replaces the
+    // span that split.bodyHtml contains.
+    const countEl = splitConfirmDialog.querySelector("#splitGroupCount");
+    if (countEl) countEl.textContent = String(groupEntries.length);
+    const splitBtn = splitConfirmDialog.querySelector("#splitConfirmBtn");
+    if (splitBtn) splitBtn.textContent = t("split.splitInto", { count: groupEntries.length });
     splitGroupListEl.innerHTML = "";
     for (const entry of groupEntries) {
       const li = document.createElement("li");
@@ -2946,8 +2955,6 @@ function renderVenuesSection() {
       renderVenuesSection();
       invalidateAndRerender();
     },
-    onExportViewer: handleExportViewerPackage,
-    onExportWebsite: handleExportWebsiteBundle,
   });
 }
 
