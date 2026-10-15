@@ -5,6 +5,7 @@ import {
   HEX_COLOR_RE,
   isColorConfigurableLayer,
   isSpaceLayerName,
+  lookupMappedColor,
   OPENING_FILL_COLOR,
   SPACE_STROKE_COLOR,
 } from "./layerColorConfig.js";
@@ -86,7 +87,7 @@ function configuredFeatureStyle(layer, properties) {
   const colorMappings = layer?.colorMappings || (isSpace ? COLOR2_LOOKUP : {});
   if (colorColumn && (isSpace || isColorConfigurableLayer(layer))) {
     const key = String(properties?.[colorColumn] ?? "").trim();
-    const color = colorMappings[key] || (HEX_COLOR_RE.test(key) ? key : COLOR2_DEFAULT);
+    const color = lookupMappedColor(colorMappings, key, properties?.category) || (HEX_COLOR_RE.test(key) ? key : COLOR2_DEFAULT);
     return { color, outlineColor: isSpace ? SPACE_STROKE_COLOR : null };
   }
   if (/_opening/i.test(layer?.name ?? "")) {

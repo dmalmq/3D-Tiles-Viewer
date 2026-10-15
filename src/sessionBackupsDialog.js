@@ -4,9 +4,10 @@ import { diffSessions } from "./sessionDiff.js";
 import { openSessionDiffDialog, describeChange } from "./sessionDiffDialog.js";
 import { groupBackupsByDay } from "./backupGroups.js";
 
+import { icon } from "./icons.js";
 const MAX_INLINE_CHANGES = 4;
-const CLOSE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const CLOSE_ICON = icon("close", 16);
+const TRASH_ICON = icon("delete", 16);
 
 let dialogEl = null;
 

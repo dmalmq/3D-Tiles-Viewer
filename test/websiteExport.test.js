@@ -209,7 +209,7 @@ test("raw GDB fallback strips source Z, computes color2, and warns", () => {
   const [feature] = result.layerDocs[0].json.features;
 
   assert.deepEqual(feature.geometry.coordinates, [139.75, 35.64]);
-  assert.equal(feature.properties.__viewerColor, "#FFC090");
+  assert.equal(feature.properties.__viewerColor, "#E5EFF7");
   assert.ok(result.warnings.some((warning) => warning.reason === "layerNotPlaced"));
 });
 

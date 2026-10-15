@@ -116,6 +116,7 @@ import {
   HEX_COLOR_RE,
   isColorConfigurableLayer,
   isSpaceLayerName,
+  lookupMappedColor,
   OPENING_FILL_COLOR,
   SPACE_STROKE_COLOR,
 } from "./layerColorConfig.js";
@@ -4650,7 +4651,7 @@ function applyEntityStyling(dataSource, layerName = "", layer = null) {
       const key = String(raw ?? "").trim();
       // Explicit user mapping wins; otherwise, if the column value is itself a
       // hex literal, use it directly; otherwise fall back to neutral gray.
-      let hex = colorMappings[key];
+      let hex = lookupMappedColor(colorMappings, key, entity.properties?.category?.getValue?.());
       if (!hex && HEX_COLOR_RE.test(key)) hex = key;
       if (!hex) hex = COLOR2_DEFAULT;
       const c = safeColorFromHex(hex, COLOR2_DEFAULT);

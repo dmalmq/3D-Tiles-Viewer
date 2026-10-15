@@ -24,6 +24,7 @@ import {
   stripExt,
 } from "./gdbAssignmentControls.js";
 
+import { icon } from "./icons.js";
 // Stable palette cycled by group index so list swatches and map geometries
 // match. Picked to stay readable on both dark and light tray themes.
 const GROUP_COLORS = ["#FFC090", "#80CBC4", "#C5CAE9", "#F8BBD0", "#A5D6A7", "#FFE082"];
@@ -108,8 +109,8 @@ export function openImportReviewTray({
   });
 }
 
-const CLOSE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-const CHEVRON_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const CLOSE_ICON = icon("close", 16);
+const CHEVRON_ICON = icon("keyboard_arrow_down", 18);
 
 function mountTray({
   needsReview,

@@ -7,11 +7,12 @@
 
 import { t } from "./i18n.js";
 import { computePublishChecklist } from "./publishChecklist.js";
+import { icon as renderIcon } from "./icons.js";
 
 const STATUS_ICONS = {
-  ok: '<path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
-  warn: '<path d="M8 4v5M8 11.8v.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
-  block: '<path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  ok: "check",
+  warn: "priority_high",
+  block: "close",
 };
 
 const ACTION_LABELS = {
@@ -67,7 +68,7 @@ export function initPublishDialog({ dialog, getState, handlers, onAction }) {
 
       const icon = document.createElement("span");
       icon.className = "publish-check-icon";
-      icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">${STATUS_ICONS[item.status]}</svg>`;
+      icon.innerHTML = renderIcon(STATUS_ICONS[item.status], 14);
 
       const text = document.createElement("span");
       text.className = "publish-check-text";
