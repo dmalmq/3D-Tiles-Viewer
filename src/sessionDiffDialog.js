@@ -1,6 +1,7 @@
 import { t, applyTranslationsToDom } from "./i18n.js";
 import { diffSessions } from "./sessionDiff.js";
 
+import { icon } from "./icons.js";
 let dialogEl = null;
 
 function ensureDialog() {
@@ -13,7 +14,7 @@ function ensureDialog() {
     <div class="app-dialog-head">
       <div><h2 id="sessionDiffTitle" class="app-dialog-title" data-i18n="diff.title">Compare versions</h2></div>
       <button type="button" class="app-dialog-close" data-action="close" data-i18n-aria-label="modal.close" aria-label="Close">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        ${icon("close", 16)}
       </button>
     </div>
     <div class="diff-body">

@@ -6,21 +6,13 @@ import {
   collectLayerTypes,
 } from "./sceneTreeView.js";
 
-const CHEVRON_SVG =
-  '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polyline points="3,2 7,5 3,8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const SECTION_CHEVRON_SVG =
-  '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,4 6,8 10,4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const ZOOM_SVG =
-  '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
-  '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
-  '<path d="M5 8h6M8 5v6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
-  "</svg>";
-const EYE_VISIBLE_SVG =
-  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/></svg>';
-const EYE_HIDDEN_SVG =
-  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="2"/><path d="M3 13L13 3" stroke-linecap="round"/></svg>';
-const ISOLATE_SVG =
-  '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/></svg>';
+import { icon } from "./icons.js";
+const CHEVRON_SVG = icon("chevron_right", 14);
+const SECTION_CHEVRON_SVG = icon("keyboard_arrow_down", 16);
+const ZOOM_SVG = icon("zoom_in_map", 12);
+const EYE_VISIBLE_SVG = icon("visibility", 14);
+const EYE_HIDDEN_SVG = icon("visibility_off", 14);
+const ISOLATE_SVG = icon("filter_center_focus", 12);
 
 const LAYER_TYPE_ORDER = ["space", "unit", "opening", "detail", "level"];
 

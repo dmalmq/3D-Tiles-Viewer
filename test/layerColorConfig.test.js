@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   chooseDefaultColorColumn,
+  COLOR2_LOOKUP,
   getLayerColumnNames,
   isColorConfigurableLayer,
   isShapefileUnitLayer,
+  lookupMappedColor,
 } from "../src/layerColorConfig.js";
 
 test("shapefile layers ending in _unit are color configurable", () => {
@@ -49,4 +51,17 @@ test("default color column prefers known color-like columns", () => {
     chooseDefaultColorColumn({ features: [{ properties: { zone: "A", type: "retail" } }] }),
     "type",
   );
+});
+
+test("old color2 names draw in the new area palette, as the converter rewrites them", () => {
+  assert.equal(lookupMappedColor(COLOR2_LOOKUP, "黄"), lookupMappedColor(COLOR2_LOOKUP, "在来線改札内"));
+  assert.equal(lookupMappedColor(COLOR2_LOOKUP, "黄"), "#F2F7FB");
+  assert.equal(lookupMappedColor(COLOR2_LOOKUP, "橙"), "#E5EFF7");
+  assert.equal(lookupMappedColor(COLOR2_LOOKUP, "トイレ"), "#DDEBEC");
+});
+
+test("濃鼠 is a free area except on toilet categories, and only in the default table", () => {
+  assert.equal(lookupMappedColor(COLOR2_LOOKUP, "濃鼠", "A001"), "#FFFFFF");
+  assert.equal(lookupMappedColor(COLOR2_LOOKUP, "濃鼠", "B010"), "#DDEBEC");
+  assert.equal(lookupMappedColor({ "濃鼠": "#123456" }, "濃鼠", "B010"), "#123456");
 });

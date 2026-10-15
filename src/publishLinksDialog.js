@@ -1,5 +1,6 @@
 import { t } from "./i18n.js";
 
+import { icon } from "./icons.js";
 let dialogEl = null;
 
 function ensureDialog() {
@@ -11,7 +12,7 @@ function ensureDialog() {
   dialogEl.innerHTML = `
     <div class="app-dialog-head">
       <span class="publish-success-icon" aria-hidden="true">
-        <svg width="22" height="22" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        ${icon("check", 22)}
       </span>
       <div>
         <h2 id="publishLinksTitle" class="app-dialog-title"></h2>
@@ -34,7 +35,7 @@ function ensureDialog() {
     </div>
   `;
   const closeBtn = dialogEl.querySelector("[data-action=close]");
-  closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  closeBtn.innerHTML = icon("close", 16);
   document.body.appendChild(dialogEl);
   dialogEl.querySelector("[data-action=close]").addEventListener("click", () => dialogEl.close());
   dialogEl.addEventListener("click", (e) => {

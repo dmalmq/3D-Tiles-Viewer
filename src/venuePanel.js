@@ -1,9 +1,10 @@
 import { t } from "./i18n.js";
 import { slugifyVenueId } from "./session.js";
 
-const CHEVRON_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const FILTER_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.5"/></svg>';
-const PLUS_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+import { icon } from "./icons.js";
+const CHEVRON_ICON = icon("keyboard_arrow_down", 18);
+const FILTER_ICON = icon("visibility", 16);
+const PLUS_ICON = icon("add", 14);
 
 export function renderVenuesPanel({
   container,

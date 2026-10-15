@@ -31,6 +31,7 @@ import {
   loadSavedPlateauTileset,
 } from './plateauLayerSource.js';
 
+import { icon } from "./icons.js";
 const PLATEAU_CATALOG_API = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets';
 const GSI_REVERSE_GEOCODER_API = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress';
 
@@ -130,7 +131,7 @@ export function openImportDataModal(viewer, loadTilesetFromUrl, onLayerAdded, op
   const closeBtn = document.createElement('button');
   closeBtn.className = 'import-modal-close';
   closeBtn.type = 'button';
-  closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  closeBtn.innerHTML = icon("close", 16);
   closeBtn.title = t('modal.close');
   closeBtn.setAttribute('aria-label', t('modal.close'));
   closeBtn.addEventListener('click', closeModal);
